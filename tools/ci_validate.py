@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import re
 import sys
+import subprocess
 from pathlib import Path
 
 
@@ -30,6 +31,11 @@ REQUIRED_DOCUMENTS = (
     "CODE_OF_CONDUCT.md",
     "SECURITY.md",
     "SUPPORT.md",
+)
+REQUIRED_BUILD_TEST_FILES = (
+    "build-test.bat",
+    "build-test.sh",
+    "tools/build_test.py",
 )
 REQUIRED_MANIFEST_KEYS = (
     "schema_version",
@@ -97,6 +103,15 @@ def main() -> int:
     if not (ROOT / "bump_manifest_version.py").is_file():
         fail("bump_manifest_version.py is required")
 
+    missing_build_test_files = [name for name in REQUIRED_BUILD_TEST_FILES if not (ROOT / name).is_file()]
+    if missing_build_test_files:
+        fail(f"build-test files missing: {', '.join(missing_build_test_files)}")
+    readmes_without_build_run = [
+        name for name in REQUIRED_DOCUMENTS if name.startswith("README")
+        and "## 🛠️ BUILD & RUN" not in (ROOT / name).read_text(encoding="utf-8", errors="replace")
+    ]
+    if readmes_without_build_run:
+        fail(f"README BUILD & RUN section missing: {', '.join(readmes_without_build_run)}")
     native = manifest["native_version"]
     try:
         native_path = ROOT / str(native["file"])
@@ -121,6 +136,20 @@ def main() -> int:
         fail(".gitignore must exclude .env files")
     if not re.search(r"(?m)^!\.env\.example$", ignored):
         fail(".gitignore must explicitly retain .env.example")
+
+    private_marker = "SON" + "NET"
+    private_references = subprocess.run(
+        ("git", "grep", "-n", "-I", "--", private_marker),
+        cwd=ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    if private_references.returncode == 0:
+        fail("public files must not reference private documentation")
+    if private_references.returncode not in (0, 1):
+        fail("could not check public/private documentation boundary")
 
     print(f"CI_VALIDATION=PASS project={manifest['name']} version={manifest['version']}")
     return 0

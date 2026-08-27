@@ -17,9 +17,8 @@
 //     a stop over this channel, but the firmware is what actually asserts
 //     it over CAN, independent of this protocol's own health.
 //
-// Design rationale, alternatives considered, and per-family service sketch:
-// see SONNET/13.DISENO_GRPC_NODOS_IA.txt (private planning doc, not part of
-// this public repo).
+// The protocol evolves through versioned public contract changes so that
+// producers and consumers can validate compatibility independently.
 //
 // Status: v0. HealthService (below) is meant to be implemented by every
 // node without exception - it is what lets HYDRA-UMC-NODE-HEALING probe

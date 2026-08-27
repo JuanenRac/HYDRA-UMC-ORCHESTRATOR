@@ -24,9 +24,8 @@ All notable changes to this project will be documented in this file.
   `HealthReport` message, serialize it to bytes, and parse it back -
   `identity.name` and a custom `metrics` entry both round-tripped exactly.
   Not just written to look plausible - genuinely valid protobuf3.
-- See `SONNET/13.DISENO_GRPC_NODOS_IA.txt` (private planning doc) for the
-  full design rationale, alternatives considered, and the per-family
-  service sketch this schema is meant to grow into.
+- The public protocol comments describe the current contract and its
+  compatibility boundaries.
 
 ## [0.0.2]
 ### Added

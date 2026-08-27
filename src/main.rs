@@ -15,8 +15,7 @@
 // Real minimal skeleton: prints identity and exits 0. The distributed
 // swarm coordination logic (mission queue integration, PTP-synced
 // dispatch, fleet-wide health aggregation) is built out incrementally on
-// top of this entry point - see docs/ and SONNET/HYDRA-UMC-ORCHESTRATOR/
-// for the current state of the real implementation. Keeping this skeleton
+// top of this entry point. Keeping this skeleton
 // deliberately inert (print + exit 0, no background tasks, no open ports)
 // until that logic lands means every commit up to that point stays trivially
 // buildable and runnable, instead of half-wiring a coordinator that isn't
