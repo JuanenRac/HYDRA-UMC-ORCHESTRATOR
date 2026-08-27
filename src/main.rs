@@ -59,7 +59,9 @@ fn run_mission_demo() {
         );
     }
 
-    println!("[orchestrator] node-a reported UNREACHABLE by NODE-HEALING - recovering its missions");
+    println!(
+        "[orchestrator] node-a reported UNREACHABLE by NODE-HEALING - recovering its missions"
+    );
     let requeued = registry.recover_node_unavailable("node-a");
     for id in &requeued {
         println!(
@@ -73,9 +75,15 @@ fn run_mission_demo() {
     );
 
     let outcome = registry.get_mut("mission-2").unwrap().cancel().unwrap();
-    println!("[orchestrator] mission-2: cancel() -> {outcome:?} -> {}", state_label(&registry.get("mission-2").unwrap().state));
+    println!(
+        "[orchestrator] mission-2: cancel() -> {outcome:?} -> {}",
+        state_label(&registry.get("mission-2").unwrap().state)
+    );
     let outcome = registry.get_mut("mission-2").unwrap().cancel().unwrap();
-    println!("[orchestrator] mission-2: cancel() again (idempotent) -> {outcome:?} -> {}", state_label(&registry.get("mission-2").unwrap().state));
+    println!(
+        "[orchestrator] mission-2: cancel() again (idempotent) -> {outcome:?} -> {}",
+        state_label(&registry.get("mission-2").unwrap().state)
+    );
     assert_eq!(outcome, CancelOutcome::AlreadyCancelled);
 
     registry.get_mut("mission-3").unwrap().complete().unwrap();

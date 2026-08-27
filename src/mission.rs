@@ -228,7 +228,9 @@ impl MissionRegistry {
 
     pub fn add(&mut self, id: impl Into<String>) -> &mut Mission {
         let id = id.into();
-        self.missions.entry(id.clone()).or_insert_with(|| Mission::new(id))
+        self.missions
+            .entry(id.clone())
+            .or_insert_with(|| Mission::new(id))
     }
 
     pub fn get(&self, id: &str) -> Option<&Mission> {
@@ -273,11 +275,26 @@ mod tests {
     fn full_happy_path_reaches_completed() {
         let mut m = Mission::new("m1");
         m.dispatch("node-a").unwrap();
-        assert_eq!(m.state, MissionState::Dispatched { node: "node-a".into() });
+        assert_eq!(
+            m.state,
+            MissionState::Dispatched {
+                node: "node-a".into()
+            }
+        );
         m.start().unwrap();
-        assert_eq!(m.state, MissionState::InProgress { node: "node-a".into() });
+        assert_eq!(
+            m.state,
+            MissionState::InProgress {
+                node: "node-a".into()
+            }
+        );
         m.complete().unwrap();
-        assert_eq!(m.state, MissionState::Completed { node: "node-a".into() });
+        assert_eq!(
+            m.state,
+            MissionState::Completed {
+                node: "node-a".into()
+            }
+        );
         assert!(m.is_terminal());
     }
 
@@ -289,7 +306,12 @@ mod tests {
         assert_eq!(err.from, "Dispatched");
         assert_eq!(err.attempted, "dispatch");
         // Must not have silently reassigned the node.
-        assert_eq!(m.state, MissionState::Dispatched { node: "node-a".into() });
+        assert_eq!(
+            m.state,
+            MissionState::Dispatched {
+                node: "node-a".into()
+            }
+        );
     }
 
     #[test]
@@ -344,7 +366,12 @@ mod tests {
         assert_eq!(err.from, "Completed");
         assert_eq!(err.attempted, "cancel");
         // Completion must not be retroactively undone.
-        assert_eq!(m.state, MissionState::Completed { node: "node-a".into() });
+        assert_eq!(
+            m.state,
+            MissionState::Completed {
+                node: "node-a".into()
+            }
+        );
     }
 
     #[test]
@@ -359,7 +386,12 @@ mod tests {
     fn fail_from_pending_succeeds() {
         let mut m = Mission::new("m1");
         m.fail("no healthy node available").unwrap();
-        assert_eq!(m.state, MissionState::Failed { reason: "no healthy node available".into() });
+        assert_eq!(
+            m.state,
+            MissionState::Failed {
+                reason: "no healthy node available".into()
+            }
+        );
         assert!(m.is_terminal());
     }
 
@@ -369,7 +401,12 @@ mod tests {
         m.dispatch("node-a").unwrap();
         m.start().unwrap();
         m.fail("actuator fault reported by node").unwrap();
-        assert_eq!(m.state, MissionState::Failed { reason: "actuator fault reported by node".into() });
+        assert_eq!(
+            m.state,
+            MissionState::Failed {
+                reason: "actuator fault reported by node".into()
+            }
+        );
     }
 
     #[test]
@@ -418,7 +455,12 @@ mod tests {
         m.dispatch("node-b").unwrap();
         let outcome = m.recover_from_unavailable_node("node-a");
         assert_eq!(outcome, RecoveryOutcome::NotAffected);
-        assert_eq!(m.state, MissionState::Dispatched { node: "node-b".into() });
+        assert_eq!(
+            m.state,
+            MissionState::Dispatched {
+                node: "node-b".into()
+            }
+        );
     }
 
     #[test]
@@ -437,7 +479,12 @@ mod tests {
         m.complete().unwrap();
         let outcome = m.recover_from_unavailable_node("node-a");
         assert_eq!(outcome, RecoveryOutcome::NotAffected);
-        assert_eq!(m.state, MissionState::Completed { node: "node-a".into() });
+        assert_eq!(
+            m.state,
+            MissionState::Completed {
+                node: "node-a".into()
+            }
+        );
     }
 
     #[test]
@@ -464,7 +511,9 @@ mod tests {
         assert_eq!(reg.get("m2").unwrap().state, MissionState::Pending);
         assert_eq!(
             reg.get("m3").unwrap().state,
-            MissionState::Dispatched { node: "node-b".into() }
+            MissionState::Dispatched {
+                node: "node-b".into()
+            }
         );
     }
 
@@ -476,7 +525,9 @@ mod tests {
         assert!(requeued.is_empty());
         assert_eq!(
             reg.get("m1").unwrap().state,
-            MissionState::Dispatched { node: "node-a".into() }
+            MissionState::Dispatched {
+                node: "node-a".into()
+            }
         );
     }
 }
