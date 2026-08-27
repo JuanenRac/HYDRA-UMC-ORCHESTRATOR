@@ -6,11 +6,17 @@
 # Bumps Cargo.toml (odometer rule) then builds a real release binary
 # with cargo. Copies the resulting binary into build/.
 set -euo pipefail
-python3 "$(dirname "$0")/bump_manifest_version.py" || exit 1
 cd "$(dirname "$0")"
 
 echo "=== HYDRA-UMC-ORCHESTRATOR build ==="
-python3 bump_version.py || echo "WARNING: could not bump version, continuing build anyway."
+# Bump the real, native version FIRST, then sync the manifest to match
+# (--sync) - never the other way around, or bump_manifest_version.py's
+# own no-flag path bumps native+manifest together and this next line
+# bumps native a second time, leaving it one step ahead of the manifest
+# (same fix already applied to HYDRA-UMC-HIL-BRIDGE and
+# HYDRA-UMC-NODE-HEALING's build.sh).
+python3 bump_version.py || exit 1
+python3 bump_manifest_version.py --sync || exit 1
 
 cargo build --release
 

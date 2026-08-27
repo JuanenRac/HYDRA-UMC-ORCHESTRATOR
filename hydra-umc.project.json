@@ -2,7 +2,7 @@
   "schema_version": "1.0",
   "ecosystem": "HYDRA-UMC",
   "name": "HYDRA-UMC-ORCHESTRATOR",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "role": "service",
   "stack": "rust",
   "technologies": [
@@ -11,11 +11,11 @@
     "gRPC/Protobuf"
   ],
   "deployment_target": "cm5",
-  "maturity": "functional",
+  "maturity": "established",
   "family": "Orchestration & Swarm",
   "parent": null,
   "build": "cargo build --release.",
-  "notes": "Real gRPC/Protobuf health-report schema, verified by actually compiling it with grpc_tools.protoc and round-tripping a real HealthReport message through serialize/parse - the shared service contract its 4 children build against.",
+  "notes": "Established v0: real gRPC/Protobuf health-report schema, verified by actually compiling it with grpc_tools.protoc and round-tripping a real HealthReport message through serialize/parse - the shared service contract its 4 children build against. Plus a real, pure in-memory mission state machine (src/mission.rs): Mission (Pending->Dispatched->InProgress->Completed, Cancelled/Failed terminal), idempotent cancel() (cancelling an already-cancelled mission succeeds as a no-op, never errors), and recover_from_unavailable_node()/MissionRegistry::recover_node_unavailable() (requeues a Dispatched/InProgress mission to Pending when its node is reported unreachable/invalid, e.g. by HYDRA-UMC-NODE-HEALING's watchdog). 22 tests. Exposed via the `mission-demo` CLI subcommand. Real gRPC transport to JOB-DISPATCHER/NODE-HEALING remains future work - genuinely blocked on those services not having a real API to call yet.",
   "native_version": {
     "file": "Cargo.toml",
     "pattern": "^version\\s*=\\s*\"(\\d+)\\.(\\d+)\\.(\\d+)\""

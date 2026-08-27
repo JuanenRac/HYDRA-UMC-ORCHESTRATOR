@@ -1,6 +1,6 @@
 [package]
 name = "hydra-umc-orchestrator"
-version = "0.0.2"
+version = "0.0.3"
 edition = "2021"
 description = "Distributed system manager for multi-robot swarm coordination across the HYDRA-UMC ecosystem."
 license = "GPL-3.0-only"

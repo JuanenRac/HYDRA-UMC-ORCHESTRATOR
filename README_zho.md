@@ -30,6 +30,7 @@ HydraNode（运动学大脑、视觉节点和认知节点）作为一个统一�
 * ⚖️ **负载均衡：** 自动将任务分配给最空闲或最适合的机器人。
 * 🛡️ **集中式安全：** 全局 E-STOP 管理与全车队健康监控。
 * 📡 **统一 API：** 为应用程序和 Studio 与整个工厂交互提供单一入口点。
+* 🧩 **真实 v0 —— 任务状态机：** `mission.rs` 通过 `Pending -> Dispatched -> InProgress -> Completed`（外加 `Cancelled`/`Failed` 两个终止状态）跟踪每个任务，具备幂等取消和节点被报告为不可达/无效时的真实恢复——见下方 `mission-demo`。纯内存逻辑——运行或测试都不需要与 JOB-DISPATCHER/NODE-HEALING 的实时 gRPC 对端。
 
 ---
 
@@ -50,14 +51,15 @@ flowchart TB
 
 ## 3. 🧠 架构与设计决策
 
-> 下方的内部分层是本入口点背后逻辑的规划设计——目前实际运行的内容（一个
-> 最小骨架）请见下方"🔧 构建与运行"部分。
+> 下方的内部分层是本入口点背后逻辑的规划设计——目前实际运行的内容请见
+> 下方"🔧 构建与运行"部分：一个真实的、纯内存中的任务状态机
+> （`mission.rs`），目前还没有任何实时网络对端可供通信。
 
-**计划中的内部分层**，将在当前骨架基础上逐步构建：
+**计划中的内部分层**，将在已经存在的真实状态机基础上逐步构建：
 * **API 层** —— 接收来自 Studio/应用程序的高层任务请求，并将其转化为车队级操作。
-* **任务队列集成** —— 将已接受的任务移交给 JOB-DISPATCHER，并在整个车队中跟踪其生命周期。
+* **任务队列集成** —— 将已接受的任务移交给 JOB-DISPATCHER，并使用 `mission.rs` 中已经存在的真实 `Mission`/`MissionRegistry` 状态机在整个车队中跟踪其生命周期——目前仍缺少的是通往真实 JOB-DISPATCHER、用于移交任务的 gRPC 接线。
 * **PTP 同步调度** —— 与 SWARM-SYNC 协调时序，使执行同一任务的多台机器人根据 PATH-PLANNER-3D 的检查结果保持无碰撞状态。
-* **车队健康聚合** —— 将 NODE-HEALING 提供的各节点信号整合为统一的全车队视图；这也是全局 E-STOP 到达每个节点所经过的路径。
+* **车队健康聚合** —— 将 NODE-HEALING 提供的各节点信号整合为统一的全车队视图，并在每个信号到达时调用（已经真实的）`MissionRegistry::recover_node_unavailable()`；这也是全局 E-STOP 到达每个节点所经过的路径。
 
 ### 为何这项特定服务使用 Rust
 这个进程是对整个车队拥有最高权限的进程：它将发出全局 E-STOP 并仲裁哪个
@@ -71,6 +73,8 @@ flowchart TB
 ### 设计决策
 * **唯一拥有全族 `docker-compose.yml` 的进程。** 作为 SWARM-SYNC、PATH-PLANNER-3D、JOB-DISPATCHER 和 NODE-HEALING 的集成父项目，本仓库是描述整个项目族如何协同运行的自然场所——每个子项目自身的仓库则专注于自身。
 * **为应用程序/Studio 暴露"统一 API"。** 与其让每个客户端（移动应用程序、桌面版 Studio）直接与 4 个独立的子服务通信，不如让它们与这里的一个稳定入口点通信，该入口点可自由路由到底层任何变化的子实现。
+* **为何 `cancel()` 是幂等的，而不是在已取消的任务上报错。** 一个取消请求完全可能合法地到达两次——客户端在响应丢失后重试，或操作员在看到确认之前再次点击取消。将第二次调用视为成功（`AlreadyCancelled`，而非错误）意味着调用方永远不需要区分「我的取消生效了」和「别人的取消已经生效了」——两者是同一个好结果。取消一个 `Completed`/`Failed` 的任务仍然会被拒绝：那是一种真正不同、非幂等的情形（撤销已完成的工作），而不是一次重试。
+* **为何节点故障恢复是重新排队为 `Pending`，而不是直接判任务失败。** 一个报告 `UNREACHABLE` 的节点可能只是正在重启，而非永久消失（参见 HYDRA-UMC-NODE-HEALING 自身的限次重试逻辑，它在报告节点宕机之前就已经吸收了瞬时故障）——因此卡在该节点上的任务会通过 `Pending` 在另一个节点上获得新的机会，而不是在第一个问题迹象出现时就被标记为 `Failed`。`fail()` 仍然保留，用于重新调度真正耗尽所有选项的情形。
 
 ---
 
@@ -78,16 +82,22 @@ flowchart TB
 
 ```text
 HYDRA-UMC-ORCHESTRATOR/
-├── src/              # 源代码（Core、Network、API）
+├── src/
+│   ├── mission.rs    # 真实的任务状态机（Mission、MissionRegistry）
+│   └── main.rs       # 入口点 + 真实的 `mission-demo` 子命令
 ├── proto/            # 用于整个生态系统节点间通信的共享 gRPC 契约
 │                     # （见 proto/README.md）——不仅仅是本仓库自身的 API
 ├── docs/             # 文档与架构指南
 ├── build/            # 编译后的二进制文件（build.sh/build.bat 的输出）
 ├── images/           # 媒体与图表
 ├── scripts/          # 实用脚本
+├── tools/
+│   ├── build_test.py # 不递增版本号的构建检查
+│   └── ci_validate.py # CI 使用的清单/CHANGELOG/文档校验
 ├── Cargo.toml        # Rust 包清单（名称、版本、依赖项）
 ├── bump_version.py   # 里程表式版本递增，由 build.sh/.bat 运行
 ├── build.sh/.bat     # 递增版本号，然后执行 `cargo build --release`
+├── build-test.sh/.bat # 不递增版本号的构建检查
 ├── run.sh/.bat       # 运行编译后的二进制文件
 ├── docker-compose.yml # 将本仓库与其 4 个实际子项目集成
 └── README.md
@@ -101,21 +111,51 @@ HYDRA-UMC-ORCHESTRATOR/
 
 ## 🔧 构建与运行
 
-真实的、最小化的 Rust 骨架——它今天就能编译和运行。
+裸调用仍然是一个最小骨架（打印身份信息，退出码 0）；真实的任务状态机
+今天已经可以通过 `mission-demo` 体验。
 
 ```bash
 # Windows
 build.bat
 run.bat
+run.bat mission-demo
 
 # Linux / macOS
 ./build.sh
 ./run.sh
+./run.sh mission-demo
 ```
 
 `build.sh`/`build.bat` 会递增 `Cargo.toml` 中的版本号（生态系统统一的
 里程表规则，见 `bump_version.py`），然后执行 `cargo build --release`。
 `run.sh`/`run.bat` 直接执行生成的二进制文件。
+
+`mission-demo` 会针对 `mission.rs` 的 `MissionRegistry` 完整运行一个真实
+场景，并打印每一次真实的状态转换：
+
+```text
+[orchestrator] mission-1: dispatched -> InProgress(node=node-a)
+[orchestrator] mission-2: dispatched -> Dispatched(node=node-a)
+[orchestrator] mission-3: dispatched -> InProgress(node=node-b)
+[orchestrator] node-a reported UNREACHABLE by NODE-HEALING - recovering its missions
+[orchestrator] mission-1: requeued -> Pending
+[orchestrator] mission-2: requeued -> Pending
+[orchestrator] mission-3: unaffected (different node) -> InProgress(node=node-b)
+[orchestrator] mission-2: cancel() -> Cancelled -> Cancelled
+[orchestrator] mission-2: cancel() again (idempotent) -> AlreadyCancelled -> Cancelled
+[orchestrator] mission-3: complete() -> Completed(node=node-b)
+[orchestrator] mission-4: fail() -> Failed(no healthy node accepted redispatch after 3 attempts)
+[orchestrator] final registry state:
+  mission-1: Pending (terminal=false)
+  mission-2: Cancelled (terminal=true)
+  mission-3: Completed(node=node-b) (terminal=true)
+  mission-4: Failed(no healthy node accepted redispatch after 3 attempts) (terminal=true)
+```
+
+```bash
+cargo test   # 22 个测试：每一次状态转换、每一次非法转换的拒绝、
+             # 幂等取消，以及节点故障后的恢复
+```
 
 作为生态系统的集成父项目，本仓库还提供了一个真实的 `docker-compose.yml`，
 可将本项目与其 4 个子项目（SWARM-SYNC、PATH-PLANNER-3D、JOB-DISPATCHER、

@@ -28,6 +28,7 @@ It handles global mission planning, load balancing across the fleet, and real-ti
 * ⚖️ **Load Balancing:** Automatically assigns missions to the most available or best-equipped robot.
 * 🛡️ **Centralized Safety:** Global E-STOP management and fleet-wide health monitoring.
 * 📡 **Unified API:** Provides a single entry point for APPs and Studios to interact with the entire factory.
+* 🧩 **Real v0 - Mission State Machine:** `mission.rs` tracks every mission through `Pending -> Dispatched -> InProgress -> Completed` (plus `Cancelled`/`Failed` terminal states), with idempotent cancellation and real recovery when a node is reported unreachable/invalid - see `mission-demo` below. Pure in-memory logic - no live JOB-DISPATCHER/NODE-HEALING gRPC peer needed to run or test it.
 
 ---
 
@@ -50,20 +51,25 @@ flowchart TB
 
 > The internal layers below are the planned design for the logic that will
 > sit behind this entry point - see "🔧 BUILD & RUN" further down for what
-> actually runs today (a minimal skeleton).
+> actually runs today: a real, pure in-memory mission state machine
+> (`mission.rs`), still without any live network peer to talk to.
 
 **Planned internal layers**, to be built out incrementally on top of the
-current skeleton:
+real state machine that already exists:
 * **API layer** — receives high-level mission requests from Studios/Apps
   and translates them into fleet-level actions.
 * **Mission queue integration** — hands accepted missions off to
-  JOB-DISPATCHER and tracks their lifecycle across the fleet.
+  JOB-DISPATCHER and tracks their lifecycle across the fleet using the
+  real `Mission`/`MissionRegistry` state machine that already exists in
+  `mission.rs` - what's still missing is the gRPC wiring to a real
+  JOB-DISPATCHER to hand missions off to.
 * **PTP-synced dispatch** — coordinates timing with SWARM-SYNC so multiple
   robots executing the same mission stay collision-free per
   PATH-PLANNER-3D's checks.
 * **Fleet health aggregation** — consumes NODE-HEALING's per-node signals
-  into a single fleet-wide view; this is also the path a global E-STOP
-  would travel through to reach every node at once.
+  into a single fleet-wide view and calls `MissionRegistry::recover_node_unavailable()`
+  (already real) once each signal arrives; this is also the path a global
+  E-STOP would travel through to reach every node at once.
 
 ### Why Rust for this specific service
 This process is the one with the most authority over the fleet: it is what
@@ -86,6 +92,8 @@ jobs; it is not the trade-off this particular "brain" process needs.
   (mobile apps, desktop Studios) talking to 4 separate child services
   directly, they talk to one stable entry point here, which stays free to
   route to whichever child implementation changes underneath it.
+* **Why `cancel()` is idempotent instead of erroring on an already-cancelled mission.** A cancel request can legitimately arrive twice - a client retrying after a dropped response, an operator clicking cancel again before seeing confirmation. Treating the second call as a success (`AlreadyCancelled`, not an error) means the caller never has to distinguish "my cancel worked" from "someone else's cancel already worked" - both are the same good outcome. Cancelling a `Completed`/`Failed` mission is still refused: that is a genuinely different, non-idempotent situation (undoing finished work), not a retry.
+* **Why node-failure recovery requeues to `Pending` instead of failing the mission outright.** A node reporting `UNREACHABLE` might be mid-restart rather than permanently gone (see `HYDRA-UMC-NODE-HEALING`'s own bounded-retry logic, which already absorbs transient blips before ever reporting a node down at all) - so a mission caught on that node gets a fresh shot at a different node via `Pending`, rather than being marked `Failed` on the first sign of trouble. `fail()` still exists for when redispatch genuinely runs out of options.
 
 ---
 
@@ -93,7 +101,9 @@ jobs; it is not the trade-off this particular "brain" process needs.
 
 ```text
 HYDRA-UMC-ORCHESTRATOR/
-├── src/              # Source code (Core, Network, API)
+├── src/
+│   ├── mission.rs    # Real mission state machine (Mission, MissionRegistry)
+│   └── main.rs       # Entry point + real `mission-demo` subcommand
 ├── proto/            # Shared gRPC contract for node-to-node traffic
 │                     # across the ecosystem (see proto/README.md) -
 │                     # not just this repo's own API
@@ -101,9 +111,13 @@ HYDRA-UMC-ORCHESTRATOR/
 ├── build/            # Compiled binaries (build.sh/build.bat output)
 ├── images/           # Media and diagrams
 ├── scripts/          # Utility scripts
+├── tools/
+│   ├── build_test.py # Non-versioning build/compile check
+│   └── ci_validate.py # Manifest/CHANGELOG/docs validation used by CI
 ├── Cargo.toml        # Rust package manifest (name, version, deps)
 ├── bump_version.py   # Odometer-style version bump, run by build.sh/.bat
 ├── build.sh/.bat     # Bumps version, then `cargo build --release`
+├── build-test.sh/.bat # Non-versioning build check (no CHANGELOG/version bump)
 ├── run.sh/.bat       # Runs the compiled binary
 ├── docker-compose.yml # Integrates this repo with its 4 real children
 └── README.md
@@ -117,21 +131,51 @@ firmware of its own, and no operating system image to maintain.
 
 ## 🔧 BUILD & RUN
 
-Real, minimal Rust skeleton - it compiles and runs today.
+Bare invocation stays a minimal skeleton (prints identity, exits 0); the
+real mission state machine is exercisable today via `mission-demo`.
 
 ```bash
 # Windows
 build.bat
 run.bat
+run.bat mission-demo
 
 # Linux / macOS
 ./build.sh
 ./run.sh
+./run.sh mission-demo
 ```
 
 `build.sh`/`build.bat` bump the version in `Cargo.toml` (ecosystem-wide
 odometer rule, see `bump_version.py`) and then run `cargo build --release`.
 `run.sh`/`run.bat` execute the resulting binary directly.
+
+`mission-demo` runs a real scenario end-to-end against `mission.rs`'s
+`MissionRegistry` and prints every real transition:
+
+```text
+[orchestrator] mission-1: dispatched -> InProgress(node=node-a)
+[orchestrator] mission-2: dispatched -> Dispatched(node=node-a)
+[orchestrator] mission-3: dispatched -> InProgress(node=node-b)
+[orchestrator] node-a reported UNREACHABLE by NODE-HEALING - recovering its missions
+[orchestrator] mission-1: requeued -> Pending
+[orchestrator] mission-2: requeued -> Pending
+[orchestrator] mission-3: unaffected (different node) -> InProgress(node=node-b)
+[orchestrator] mission-2: cancel() -> Cancelled -> Cancelled
+[orchestrator] mission-2: cancel() again (idempotent) -> AlreadyCancelled -> Cancelled
+[orchestrator] mission-3: complete() -> Completed(node=node-b)
+[orchestrator] mission-4: fail() -> Failed(no healthy node accepted redispatch after 3 attempts)
+[orchestrator] final registry state:
+  mission-1: Pending (terminal=false)
+  mission-2: Cancelled (terminal=true)
+  mission-3: Completed(node=node-b) (terminal=true)
+  mission-4: Failed(no healthy node accepted redispatch after 3 attempts) (terminal=true)
+```
+
+```bash
+cargo test   # 22 tests: every transition, every invalid-transition
+             # rejection, idempotent cancel, and node-failure recovery
+```
 
 As the ecosystem's integration parent, this repo also ships a real
 `docker-compose.yml` that builds and runs itself together with its 4

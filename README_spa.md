@@ -28,6 +28,7 @@ Se encarga de la planificación global de misiones, el balanceo de carga en toda
 * ⚖️ **Balanceo de Carga:** Asigna misiones automáticamente al robot más disponible o mejor equipado.
 * 🛡️ **Seguridad Centralizada:** Gestión global de E-STOP y monitorización de salud de toda la flota.
 * 📡 **API Unificada:** Proporciona un único punto de entrada para que las Apps y Studios interactúen con toda la fábrica.
+* 🧩 **Real v0 - Máquina de Estados de Misión:** `mission.rs` sigue cada misión a través de `Pending -> Dispatched -> InProgress -> Completed` (más los estados terminales `Cancelled`/`Failed`), con cancelación idempotente y recuperación real cuando un nodo se reporta inalcanzable/inválido - ver `mission-demo` más abajo. Lógica pura en memoria - no necesita un par gRPC en vivo con JOB-DISPATCHER/NODE-HEALING para ejecutarse ni testearse.
 
 ---
 
@@ -50,20 +51,27 @@ flowchart TB
 
 > Las capas internas siguientes son el diseño previsto para la lógica que se
 > situará detrás de este punto de entrada. Consulta «🔧 BUILD & RUN» más abajo
-> para conocer lo que funciona hoy (un esqueleto mínimo).
+> para conocer lo que funciona hoy: una máquina de estados de misión real y
+> pura en memoria (`mission.rs`), todavía sin ningún par de red en vivo con
+> quien hablar.
 
 **Capas internas planificadas**, que se desarrollarán de forma incremental
-sobre el esqueleto actual:
+sobre la máquina de estados real que ya existe:
 * **Capa API** — recibe solicitudes de misión de alto nivel desde Studios y
   aplicaciones, y las traduce a acciones de flota.
 * **Integración con la cola de misiones** — entrega las misiones aceptadas a
-  JOB-DISPATCHER y sigue su ciclo de vida en toda la flota.
+  JOB-DISPATCHER y sigue su ciclo de vida en toda la flota usando la máquina
+  de estados real `Mission`/`MissionRegistry` que ya existe en `mission.rs` -
+  lo que falta es el cableado gRPC hacia un JOB-DISPATCHER real al que
+  entregar las misiones.
 * **Despacho sincronizado por PTP** — coordina la temporización con
   SWARM-SYNC para que varios robots que ejecuten la misma misión permanezcan
   libres de colisiones según las comprobaciones de PATH-PLANNER-3D.
 * **Agregación de salud de la flota** — integra las señales por nodo de
-  NODE-HEALING en una única vista global; este es también el camino que
-  recorrería un E-STOP global para llegar a todos los nodos a la vez.
+  NODE-HEALING en una única vista global y llama a
+  `MissionRegistry::recover_node_unavailable()` (ya real) en cuanto llega
+  cada señal; este es también el camino que recorrería un E-STOP global
+  para llegar a todos los nodos a la vez.
 
 ### Por qué Rust para este servicio concreto
 
@@ -85,6 +93,8 @@ más simples y aislados; no es el compromiso que necesita este proceso central.
 * **Expone una «API unificada» para aplicaciones y Studios.** En vez de que
   cada cliente se comunique directamente con cuatro servicios hijos, usa este
   punto de entrada estable, libre para enrutar internamente a cada hijo.
+* **Por qué `cancel()` es idempotente en vez de fallar sobre una misión ya cancelada.** Una solicitud de cancelación puede llegar dos veces legítimamente - un cliente reintentando tras una respuesta perdida, un operador pulsando cancelar de nuevo antes de ver la confirmación. Tratar la segunda llamada como un éxito (`AlreadyCancelled`, no un error) significa que quien llama nunca tiene que distinguir "mi cancelación funcionó" de "la cancelación de otro ya funcionó" - ambos son el mismo buen resultado. Cancelar una misión `Completed`/`Failed` sigue rechazándose: eso sí es una situación genuinamente distinta, no idempotente (deshacer trabajo terminado), no un reintento.
+* **Por qué la recuperación tras fallo de nodo reencola a `Pending` en vez de fallar la misión directamente.** Un nodo que reporta `UNREACHABLE` podría estar reiniciándose en vez de haber desaparecido permanentemente (ver la propia lógica de reintentos acotados de HYDRA-UMC-NODE-HEALING, que ya absorbe baches transitorios antes de reportar siquiera un nodo caído) - así que una misión atrapada en ese nodo recibe una nueva oportunidad en otro nodo vía `Pending`, en vez de marcarse `Failed` a la primera señal de problema. `fail()` sigue existiendo para cuando el reencolado agota genuinamente las opciones.
 
 ---
 
@@ -92,7 +102,9 @@ más simples y aislados; no es el compromiso que necesita este proceso central.
 
 ```text
 HYDRA-UMC-ORCHESTRATOR/
-├── src/              # Código fuente (Núcleo, Red, API)
+├── src/
+│   ├── mission.rs    # Máquina de estados de misión real (Mission, MissionRegistry)
+│   └── main.rs       # Entry point + subcomando real `mission-demo`
 ├── proto/            # Contrato gRPC compartido para tráfico nodo-a-nodo
 │                     # en todo el ecosistema (ver proto/README.md) - no
 │                     # solo la API de este repo
@@ -100,9 +112,13 @@ HYDRA-UMC-ORCHESTRATOR/
 ├── build/            # Binarios compilados (salida de build.sh/build.bat)
 ├── images/           # Medios y diagramas
 ├── scripts/          # Scripts de utilidad
+├── tools/
+│   ├── build_test.py # Comprobación de compilación sin versionado
+│   └── ci_validate.py # Validación de manifiesto/CHANGELOG/docs usada por CI
 ├── Cargo.toml        # Manifiesto del paquete Rust (nombre, versión, deps)
 ├── bump_version.py   # Bump de versión tipo cuentakilómetros, vía build.sh/.bat
 ├── build.sh/.bat     # Sube la versión y ejecuta `cargo build --release`
+├── build-test.sh/.bat # Comprobación de compilación sin versionado
 ├── run.sh/.bat       # Ejecuta el binario compilado
 ├── docker-compose.yml # Integra este repo con sus 4 hijos reales
 └── README.md
@@ -116,22 +132,54 @@ y sin imagen de sistema operativo que mantener.
 
 ## 🔧 BUILD & RUN
 
-Esqueleto real mínimo en Rust - compila y ejecuta hoy mismo.
+La invocación básica sigue siendo un esqueleto mínimo (imprime identidad y
+sale con 0); la máquina de estados de misión real se puede probar hoy vía
+`mission-demo`.
 
 ```bash
 # Windows
 build.bat
 run.bat
+run.bat mission-demo
 
 # Linux / macOS
 ./build.sh
 ./run.sh
+./run.sh mission-demo
 ```
 
 `build.sh`/`build.bat` suben la versión en `Cargo.toml` (regla cuentakilómetros
 del ecosistema, ver `bump_version.py`) y luego ejecutan
 `cargo build --release`. `run.sh`/`run.bat` ejecutan directamente el binario
 resultante.
+
+`mission-demo` ejecuta un escenario real de principio a fin contra el
+`MissionRegistry` de `mission.rs` e imprime cada transición real:
+
+```text
+[orchestrator] mission-1: dispatched -> InProgress(node=node-a)
+[orchestrator] mission-2: dispatched -> Dispatched(node=node-a)
+[orchestrator] mission-3: dispatched -> InProgress(node=node-b)
+[orchestrator] node-a reported UNREACHABLE by NODE-HEALING - recovering its missions
+[orchestrator] mission-1: requeued -> Pending
+[orchestrator] mission-2: requeued -> Pending
+[orchestrator] mission-3: unaffected (different node) -> InProgress(node=node-b)
+[orchestrator] mission-2: cancel() -> Cancelled -> Cancelled
+[orchestrator] mission-2: cancel() again (idempotent) -> AlreadyCancelled -> Cancelled
+[orchestrator] mission-3: complete() -> Completed(node=node-b)
+[orchestrator] mission-4: fail() -> Failed(no healthy node accepted redispatch after 3 attempts)
+[orchestrator] final registry state:
+  mission-1: Pending (terminal=false)
+  mission-2: Cancelled (terminal=true)
+  mission-3: Completed(node=node-b) (terminal=true)
+  mission-4: Failed(no healthy node accepted redispatch after 3 attempts) (terminal=true)
+```
+
+```bash
+cargo test   # 22 tests: cada transición, cada rechazo de transición
+             # invalida, cancelación idempotente y recuperación tras
+             # fallo de nodo
+```
 
 Como proyecto padre de integración del ecosistema, este repo también incluye
 un `docker-compose.yml` real que levanta este servicio junto a sus 4 hijos

@@ -28,6 +28,7 @@ Er übernimmt die globale Missionsplanung, den Lastausgleich innerhalb der Flott
 * ⚖️ **Lastausgleich:** Weist Missionen automatisch dem am besten verfügbaren oder am besten ausgestatteten Roboter zu.
 * 🛡️ **Zentralisierte Sicherheit:** Globales E-STOP-Management und flottenweite Zustandsüberwachung.
 * 📡 **Einheitliche API:** Bietet einen einzigen Einstiegspunkt für Apps und Studios, um mit der gesamten Fabrik zu interagieren.
+* 🧩 **Echtes v0 - Missions-Zustandsautomat:** `mission.rs` verfolgt jede Mission durch `Pending -> Dispatched -> InProgress -> Completed` (plus die Endzustände `Cancelled`/`Failed`), mit idempotenter Stornierung und echter Wiederherstellung, wenn ein Knoten als nicht erreichbar/ungültig gemeldet wird - siehe `mission-demo` unten. Reine In-Memory-Logik - kein live gRPC-Partner mit JOB-DISPATCHER/NODE-HEALING nötig, um sie auszuführen oder zu testen.
 
 ---
 
@@ -50,20 +51,27 @@ flowchart TB
 
 > Die folgenden internen Schichten sind das geplante Design für die Logik
 > hinter diesem Einstiegspunkt. Unter „🔧 BUILD & RUN“ steht, was heute
-> tatsächlich läuft: ein minimales Grundgerüst.
+> tatsächlich läuft: ein echter, rein im Speicher lebender
+> Missions-Zustandsautomat (`mission.rs`), noch ohne einen echten
+> Netzwerkpartner, mit dem er sprechen könnte.
 
-**Geplante interne Schichten**, die schrittweise auf dem aktuellen Gerüst
-aufgebaut werden:
+**Geplante interne Schichten**, die schrittweise auf dem bereits
+existierenden echten Zustandsautomaten aufgebaut werden:
 * **API-Schicht** — empfängt Missionsanfragen von Studios/Apps und übersetzt
   sie in Aktionen auf Flottenebene.
 * **Missionswarteschlange** — übergibt angenommene Missionen an
-  JOB-DISPATCHER und verfolgt ihren Lebenszyklus in der Flotte.
+  JOB-DISPATCHER und verfolgt ihren Lebenszyklus in der Flotte mit dem
+  echten `Mission`/`MissionRegistry`-Zustandsautomaten, der bereits in
+  `mission.rs` existiert - was noch fehlt, ist die gRPC-Verdrahtung zu
+  einem echten JOB-DISPATCHER, an den Missionen übergeben werden.
 * **PTP-synchronisierte Verteilung** — koordiniert die Zeitsteuerung mit
   SWARM-SYNC, damit mehrere Roboter derselben Mission gemäß den Prüfungen von
   PATH-PLANNER-3D kollisionsfrei bleiben.
 * **Aggregierte Flottengesundheit** — fasst NODE-HEALING-Signale je Knoten in
-  einer Gesamtansicht zusammen; über diesen Weg würde auch ein globales E-STOP
-  alle Knoten zugleich erreichen.
+  einer Gesamtansicht zusammen und ruft
+  `MissionRegistry::recover_node_unavailable()` (bereits echt) auf, sobald
+  ein Signal eintrifft; über diesen Weg würde auch ein globales E-STOP alle
+  Knoten zugleich erreichen.
 
 ### Warum Rust für diesen speziellen Dienst
 
@@ -84,6 +92,8 @@ ihre einfacheren, isolierten Aufgaben passt, nicht jedoch für diesen Kernprozes
 * **Stellt eine „Unified API“ für Apps/Studios bereit.** Clients sprechen
   diesen stabilen Einstiegspunkt an statt direkt vier Kinddienste; intern kann
   er auf die jeweilige Implementierung weiterleiten.
+* **Warum `cancel()` idempotent ist, statt bei einer bereits stornierten Mission zu scheitern.** Eine Stornierungsanfrage kann legitim zweimal eintreffen - ein Client, der nach einer verlorenen Antwort erneut versucht, ein Bediener, der erneut auf Stornieren klickt, bevor er die Bestätigung sieht. Den zweiten Aufruf als Erfolg zu behandeln (`AlreadyCancelled`, kein Fehler) bedeutet, dass der Aufrufer nie unterscheiden muss zwischen „meine Stornierung hat funktioniert“ und „die Stornierung von jemand anderem hat bereits funktioniert“ - beides ist dasselbe gute Ergebnis. Das Stornieren einer `Completed`/`Failed`-Mission bleibt weiterhin verweigert: Das ist eine wirklich andere, nicht-idempotente Situation (das Rückgängigmachen abgeschlossener Arbeit), kein erneuter Versuch.
+* **Warum die Wiederherstellung nach Knotenausfall zu `Pending` zurückstellt, statt die Mission sofort scheitern zu lassen.** Ein Knoten, der `UNREACHABLE` meldet, könnte gerade neu starten, statt dauerhaft verschwunden zu sein (siehe die eigene, begrenzte Retry-Logik von HYDRA-UMC-NODE-HEALING, die vorübergehende Störungen bereits abfängt, bevor ein Knoten überhaupt als ausgefallen gemeldet wird) - eine auf diesem Knoten hängende Mission bekommt daher über `Pending` eine neue Chance auf einem anderen Knoten, statt beim ersten Anzeichen von Problemen als `Failed` markiert zu werden. `fail()` existiert weiterhin für den Fall, dass die Neuverteilung wirklich keine Optionen mehr hat.
 
 ---
 
@@ -91,7 +101,9 @@ ihre einfacheren, isolierten Aufgaben passt, nicht jedoch für diesen Kernprozes
 
 ```text
 HYDRA-UMC-ORCHESTRATOR/
-├── src/              # Quellcode (Kern, Netzwerk, API)
+├── src/
+│   ├── mission.rs    # Echter Missions-Zustandsautomat (Mission, MissionRegistry)
+│   └── main.rs       # Einstiegspunkt + echter Subbefehl `mission-demo`
 ├── proto/            # Gemeinsamer gRPC-Vertrag für Knoten-zu-Knoten-
 │                     # Verkehr im gesamten Ökosystem (siehe
 │                     # proto/README.md) - nicht nur die API dieses Repos
@@ -99,9 +111,13 @@ HYDRA-UMC-ORCHESTRATOR/
 ├── build/            # Kompilierte Binärdateien (Ausgabe von build.sh/.bat)
 ├── images/           # Medien und Diagramme
 ├── scripts/          # Utility-Skripte
+├── tools/
+│   ├── build_test.py # Nicht-versionierender Build-Check
+│   └── ci_validate.py # Manifest/CHANGELOG/Docs-Validierung, von CI genutzt
 ├── Cargo.toml        # Rust-Paketmanifest (Name, Version, Abhängigkeiten)
 ├── bump_version.py   # Versions-Bump nach Kilometerzähler-Prinzip
 ├── build.sh/.bat     # Erhöht die Version, dann `cargo build --release`
+├── build-test.sh/.bat # Nicht-versionierender Build-Check
 ├── run.sh/.bat       # Führt die kompilierte Binärdatei aus
 ├── docker-compose.yml # Integriert dieses Repo mit seinen 4 echten Kindern
 └── README.md
@@ -115,22 +131,55 @@ oder Firmware und ohne zu pflegendes Betriebssystem-Image.
 
 ## 🔧 BUILD & RUN
 
-Echtes, minimales Rust-Skelett - kompiliert und läuft schon heute.
+Der nackte Aufruf bleibt ein minimales Grundgerüst (gibt Identität aus,
+beendet sich mit 0); der echte Missions-Zustandsautomat lässt sich schon
+heute über `mission-demo` ausprobieren.
 
 ```bash
 # Windows
 build.bat
 run.bat
+run.bat mission-demo
 
 # Linux / macOS
 ./build.sh
 ./run.sh
+./run.sh mission-demo
 ```
 
 `build.sh`/`build.bat` erhöhen die Version in `Cargo.toml` (ökosystemweite
 Kilometerzähler-Regel, siehe `bump_version.py`) und führen anschließend
 `cargo build --release` aus. `run.sh`/`run.bat` führen die resultierende
 Binärdatei direkt aus.
+
+`mission-demo` führt ein echtes Szenario Ende-zu-Ende gegen den
+`MissionRegistry` aus `mission.rs` aus und gibt jede echte Zustandsänderung
+aus:
+
+```text
+[orchestrator] mission-1: dispatched -> InProgress(node=node-a)
+[orchestrator] mission-2: dispatched -> Dispatched(node=node-a)
+[orchestrator] mission-3: dispatched -> InProgress(node=node-b)
+[orchestrator] node-a reported UNREACHABLE by NODE-HEALING - recovering its missions
+[orchestrator] mission-1: requeued -> Pending
+[orchestrator] mission-2: requeued -> Pending
+[orchestrator] mission-3: unaffected (different node) -> InProgress(node=node-b)
+[orchestrator] mission-2: cancel() -> Cancelled -> Cancelled
+[orchestrator] mission-2: cancel() again (idempotent) -> AlreadyCancelled -> Cancelled
+[orchestrator] mission-3: complete() -> Completed(node=node-b)
+[orchestrator] mission-4: fail() -> Failed(no healthy node accepted redispatch after 3 attempts)
+[orchestrator] final registry state:
+  mission-1: Pending (terminal=false)
+  mission-2: Cancelled (terminal=true)
+  mission-3: Completed(node=node-b) (terminal=true)
+  mission-4: Failed(no healthy node accepted redispatch after 3 attempts) (terminal=true)
+```
+
+```bash
+cargo test   # 22 Tests: jede Zustandsänderung, jede Ablehnung einer
+             # ungültigen Zustandsänderung, idempotente Stornierung und
+             # Wiederherstellung nach Knotenausfall
+```
 
 Als übergeordnetes Integrations-Repo des Ökosystems liefert dieses Repo auch
 eine echte `docker-compose.yml`, die diesen Dienst zusammen mit seinen 4
