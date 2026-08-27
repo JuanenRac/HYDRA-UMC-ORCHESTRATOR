@@ -1,0 +1,16 @@
+[package]
+name = "hydra-umc-orchestrator"
+version = "0.0.2"
+edition = "2021"
+description = "Distributed system manager for multi-robot swarm coordination across the HYDRA-UMC ecosystem."
+license = "GPL-3.0-only"
+authors = ["JuanenRac (Electro Hobby 3D) <electrohobby3d@gmail.com>"]
+repository = "https://github.com/JuanenRac/HYDRA-UMC-ORCHESTRATOR"
+
+[[bin]]
+name = "hydra-umc-orchestrator"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = 3
+lto = true

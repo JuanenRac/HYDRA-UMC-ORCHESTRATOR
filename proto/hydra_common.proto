@@ -1,0 +1,103 @@
+// =============================================================================
+// HYDRA-UMC Ecosystem - proto/hydra_common.proto
+// Copyright (C) 2026 JuanenRac (Electro Hobby 3D) <electrohobby3d@gmail.com>
+// GPL-3.0 - see LICENSE
+//
+// Shared gRPC contract for node-to-node traffic across the ecosystem's AI
+// and orchestration nodes (Vision AI Node, Cognitive AI Node, Orchestration
+// & Swarm, Digital Twin & Simulation families).
+//
+// This does NOT replace:
+//   - REST + WebSocket between STUDIO/HYDRA-UMC-ANDROID-CONTROL/
+//     HYDRA-UMC-IOS-CONTROL and HYDRA-UMC-SERVER (human-facing client
+//     traffic, out of scope here).
+//   - CAN / CAN-OTA on the real HYDRA-UMC/URTC firmware (STM32 boards do
+//     not, and will not, speak gRPC).
+//   - The physical E-STOP signal path: HYDRA-UMC-SAFETY-ZONES may request
+//     a stop over this channel, but the firmware is what actually asserts
+//     it over CAN, independent of this protocol's own health.
+//
+// Design rationale, alternatives considered, and per-family service sketch:
+// see SONNET/13.DISENO_GRPC_NODOS_IA.txt (private planning doc, not part of
+// this public repo).
+//
+// Status: v0. HealthService (below) is meant to be implemented by every
+// node without exception - it is what lets HYDRA-UMC-NODE-HEALING probe
+// any node in the ecosystem the same way. Per-family business services
+// (vision detections, cognitive intents, job dispatch, physics stepping,
+// ...) are intentionally NOT defined here yet - they get their own .proto
+// file once each node's real logic lands, once there's an actual
+// implementation to design the exact message shape against.
+// =============================================================================
+
+syntax = "proto3";
+
+package hydra.common.v1;
+
+// Go is one of the 4 codegen targets documented in proto/README.md; each
+// consuming repo generates its own bindings locally from this same file
+// (no shared Go module dependency between repos), so this only needs to
+// be a stable, collision-free import path - not a real published module.
+option go_package = "github.com/JuanenRac/hydra-common-proto/hydracommonpb;hydracommonpb";
+
+// ---------------------------------------------------------------------------
+// Identity
+// ---------------------------------------------------------------------------
+
+// Mirrors what every node's skeleton entry point already prints today
+// (name, version, one-line role) - just structured instead of a stdout
+// string.
+message NodeIdentity {
+  string name = 1;     // e.g. "HYDRA-UMC-VISION-NODE"
+  string version = 2;  // odometer-scheme version, e.g. "0.1.4"
+  string role = 3;      // one-line role description, already exists today
+  string family = 4;    // e.g. "vision-ai-node", "cognitive-ai-node",
+                         // "orchestration-swarm", "digital-twin-simulation"
+  DeployTarget deploy = 5;
+}
+
+enum DeployTarget {
+  DEPLOY_TARGET_UNSPECIFIED = 0;
+  DEPLOY_TARGET_CM5 = 1;
+  DEPLOY_TARGET_USER_PC = 2;
+  DEPLOY_TARGET_MOBILE = 3;
+  DEPLOY_TARGET_WEARABLE = 4;
+}
+
+// ---------------------------------------------------------------------------
+// Health
+// ---------------------------------------------------------------------------
+
+enum HealthState {
+  HEALTH_STATE_UNSPECIFIED = 0;
+  HEALTH_STATE_OK = 1;
+  HEALTH_STATE_DEGRADED = 2;   // running, but flagging a real concern
+                                // (e.g. a queue backing up)
+  HEALTH_STATE_UNHEALTHY = 3;  // cannot currently fulfil its role
+}
+
+message HealthReport {
+  NodeIdentity identity = 1;
+  HealthState state = 2;
+  string detail = 3;               // free text, same convention as the
+                                    // dashboard's own "status-detail" field
+  map<string, string> metrics = 4; // open key/value pairs - each family
+                                    // adds its own without touching this
+                                    // message's own shape
+}
+
+message Empty {}
+
+// The one service every node is expected to implement, no exceptions.
+// HYDRA-UMC-NODE-HEALING is the primary client, but any node may probe
+// any other node (e.g. HYDRA-UMC-ORCHESTRATOR checking on
+// HYDRA-UMC-JOB-DISPATCHER before assigning it work).
+service HealthService {
+  rpc Check(Empty) returns (HealthReport);
+
+  // A streaming Watch() RPC would let HYDRA-UMC-NODE-HEALING avoid
+  // polling entirely - deliberately left out of v0 so no node is required
+  // to implement server-streaming just to satisfy this contract on day
+  // one. Tracked as a v2 addition once the first real consumer
+  // (HYDRA-UMC-NODE-HEALING itself) needs it.
+}

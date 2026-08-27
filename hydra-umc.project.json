@@ -1,0 +1,23 @@
+{
+  "schema_version": "1.0",
+  "ecosystem": "HYDRA-UMC",
+  "name": "HYDRA-UMC-ORCHESTRATOR",
+  "version": "0.0.2",
+  "role": "service",
+  "stack": "rust",
+  "technologies": [
+    "Rust",
+    "Tokio",
+    "gRPC/Protobuf"
+  ],
+  "deployment_target": "cm5",
+  "maturity": "functional",
+  "family": "Orchestration & Swarm",
+  "parent": null,
+  "build": "cargo build --release.",
+  "notes": "Real gRPC/Protobuf health-report schema, verified by actually compiling it with grpc_tools.protoc and round-tripping a real HealthReport message through serialize/parse - the shared service contract its 4 children build against.",
+  "native_version": {
+    "file": "Cargo.toml",
+    "pattern": "^version\\s*=\\s*\"(\\d+)\\.(\\d+)\\.(\\d+)\""
+  }
+}
