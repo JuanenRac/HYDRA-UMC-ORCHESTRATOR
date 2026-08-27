@@ -3,3 +3,7 @@
 .env
 .env.*
 !.env.example
+
+# Python bytecode (generated locally; never source)
+__pycache__/
+*.py[cod]
