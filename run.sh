@@ -51,13 +51,13 @@ cd "$(dirname "$0")"
 # Bash) binary names are checked since this same script is meant to work
 # in both environments.
 if [ -x build/hydra-umc-orchestrator ]; then
-    exec build/hydra-umc-orchestrator
+    exec build/hydra-umc-orchestrator "$@"
 elif [ -x target/release/hydra-umc-orchestrator ]; then
-    exec target/release/hydra-umc-orchestrator
+    exec target/release/hydra-umc-orchestrator "$@"
 elif [ -x build/hydra-umc-orchestrator.exe ]; then
-    exec build/hydra-umc-orchestrator.exe
+    exec build/hydra-umc-orchestrator.exe "$@"
 elif [ -x target/release/hydra-umc-orchestrator.exe ]; then
-    exec target/release/hydra-umc-orchestrator.exe
+    exec target/release/hydra-umc-orchestrator.exe "$@"
 else
     echo "No compiled binary found. Run build.sh first." >&2
     exit 1

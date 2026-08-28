@@ -36,9 +36,9 @@ REM after a version bump - the canonical "last thing actually shipped".
 REM target\release\ is kept as a fallback so a bare `cargo build --release`
 REM (no version bump, no copy step) still runs without forcing build.bat.
 if exist build\hydra-umc-orchestrator.exe (
-    build\hydra-umc-orchestrator.exe
+    build\hydra-umc-orchestrator.exe %*
 ) else if exist target\release\hydra-umc-orchestrator.exe (
-    target\release\hydra-umc-orchestrator.exe
+    target\release\hydra-umc-orchestrator.exe %*
 ) else (
     echo No compiled binary found. Run build.bat first.
     pause
