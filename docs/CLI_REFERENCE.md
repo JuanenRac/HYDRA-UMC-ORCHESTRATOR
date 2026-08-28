@@ -12,13 +12,13 @@ binary — the output shown is real, not illustrative.
 ## Usage
 
 ```
-$ target/release/hydra-umc-orchestrator mission-demo
+$ ./run.sh mission-demo
 ```
 
-`run.sh` execs the built binary (`build/hydra-umc-orchestrator` if present,
-else `target/release/hydra-umc-orchestrator`) but does **not** forward
-arguments — it only ever runs the bare/identity path. To run `mission-demo`,
-invoke the built binary directly, as shown throughout this page.
+`run.sh`/`run.bat` exec the built binary (`build/hydra-umc-orchestrator`
+if present, else `target/release/hydra-umc-orchestrator`) and forward
+every argument through, so `./run.sh mission-demo` and invoking the
+built binary directly behave identically.
 
 Bare invocation (no arguments, or any unrecognized argument) prints
 identity/version/role and exits `0`:
