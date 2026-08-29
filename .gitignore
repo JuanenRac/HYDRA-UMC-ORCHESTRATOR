@@ -1,9 +1,14 @@
 /target/
+
 # HYDRA-UMC shared secret protection
 .env
 .env.*
 !.env.example
 
-# Python bytecode (generated locally; never source)
+# Python bytecode (bump_manifest_version.py/bump_version.py are real
+# Python tooling alongside this repo's Rust core; generated locally, never source)
 __pycache__/
 *.py[cod]
+
+# Release binary copy (build.sh/.bat's own cp from target/release/ into build/)
+/build/
