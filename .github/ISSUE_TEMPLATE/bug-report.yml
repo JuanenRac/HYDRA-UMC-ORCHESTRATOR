@@ -46,7 +46,7 @@ body:
     attributes:
       label: Safety checks
       options:
-        - label: I removed credentials, personal data and private SONNET documentation.
+        - label: I removed credentials, personal data and non-public documentation.
           required: true
         - label: I did not use this report to request an unsafe physical action.
           required: true
