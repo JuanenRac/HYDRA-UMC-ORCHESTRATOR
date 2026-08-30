@@ -1,0 +1,46 @@
+# =============================================================================
+# HYDRA-UMC / URTC Ecosystem - Hardware validation form
+# Copyright (C) 2026 JuanenRac (Electro Hobby 3D) <electrohobby3d@gmail.com>
+# GPL-3.0 - see LICENSE.md
+# =============================================================================
+name: Hardware validation result
+description: Record a controlled CM5, MCU, sensor, actuator or machine validation.
+title: "[Hardware]: "
+labels: ["status: needs hardware to verify"]
+body:
+  - type: input
+    id: repository
+    attributes:
+      label: Affected repository
+      placeholder: HYDRA-UMC-OS
+    validations:
+      required: true
+  - type: dropdown
+    id: target
+    attributes:
+      label: Validation target
+      options: [CM5/Raspberry Pi OS, STM32/URTC, Camera/Hailo, Robot/actuator, CNC/laser/PnP/3D machine, Watch/mobile, Other]
+    validations:
+      required: true
+  - type: textarea
+    id: configuration
+    attributes:
+      label: Safe test configuration
+      description: Hardware revision, software version, wiring state and safety boundary. Do not publish Wi-Fi credentials, serial numbers or private network addresses.
+    validations:
+      required: true
+  - type: textarea
+    id: result
+    attributes:
+      label: Observed result and evidence
+    validations:
+      required: true
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Physical safety declaration
+      options:
+        - label: Emergency-stop and local safety procedures were available for this test.
+          required: true
+        - label: This report does not claim a simulated result as physical validation.
+          required: true
