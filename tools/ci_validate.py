@@ -55,6 +55,21 @@ REQUIRED_MANIFEST_KEYS = (
 )
 VERSION_HEADING = re.compile(r"(?im)^#{1,3}\s*\[?(\d+\.\d+\.\d+)(?:\]|\s|$)")
 SEMVER = re.compile(r"^\d+\.\d+\.\d+$")
+BUILD_RUN_SECTION_MARKERS = (
+    "BUILD & RUN",
+    "COMPILACIÓN Y EJECUCIÓN",
+    "COMPILATION ET EXÉCUTION",
+    "COMPILAZIONE ED ESECUZIONE",
+    "ERSTELLEN UND AUSFÜHREN",
+    "BUILD & AUSFÜHRUNG",
+    "ビルドと実行",
+    "构建与运行",
+)
+
+
+def has_build_run_section(text: str) -> bool:
+    """Accept the translated BUILD & RUN heading in every public README."""
+    return any(marker in text for marker in BUILD_RUN_SECTION_MARKERS)
 
 
 def fail(message: str) -> None:
@@ -77,6 +92,37 @@ def read_native_version(text: str, pattern: str | dict[str, str]) -> str:
     return ".".join(match.group(index) for index in (1, 2, 3))
 
 
+
+LOCAL_MARKDOWN_LINK = re.compile(r"(?<!!)\[[^\]]*\]\(([^)\s]+)(?:\s+[\"'][^)]*)?\)")
+MARKDOWN_EXCLUDED_DIRECTORIES = {
+    ".git", ".venv", "venv", "node_modules", "build", "dist", "target",
+    "__pycache__", ".gradle",
+}
+
+
+def validate_local_markdown_links() -> None:
+    """Reject broken relative file links without probing external URLs."""
+    broken: list[str] = []
+    for markdown_path in ROOT.rglob("*.md"):
+        if any(part in MARKDOWN_EXCLUDED_DIRECTORIES for part in markdown_path.parts):
+            continue
+        text = markdown_path.read_text(encoding="utf-8", errors="replace")
+        for line_number, line in enumerate(text.splitlines(), start=1):
+            for match in LOCAL_MARKDOWN_LINK.finditer(line):
+                reference = match.group(1).strip().strip("<>")
+                target = reference.split("#", maxsplit=1)[0].split("?", maxsplit=1)[0]
+                if not target or re.match(r"(?i)^(https?:|mailto:|tel:|data:)", target):
+                    continue
+                if target.startswith("/"):
+                    continue
+                destination = (markdown_path.parent / target).resolve()
+                if not destination.exists():
+                    relative = markdown_path.relative_to(ROOT)
+                    broken.append(f"{relative}:{line_number} -> {reference}")
+    if broken:
+        preview = "; ".join(broken[:10])
+        suffix = "" if len(broken) <= 10 else f" (+{len(broken) - 10} more)"
+        fail(f"broken local Markdown link(s): {preview}{suffix}")
 def main() -> int:
     try:
         manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
@@ -108,7 +154,7 @@ def main() -> int:
         fail(f"build-test files missing: {', '.join(missing_build_test_files)}")
     readmes_without_build_run = [
         name for name in REQUIRED_DOCUMENTS if name.startswith("README")
-        and "## 🛠️ BUILD & RUN" not in (ROOT / name).read_text(encoding="utf-8", errors="replace")
+        and not has_build_run_section((ROOT / name).read_text(encoding="utf-8", errors="replace"))
     ]
     if readmes_without_build_run:
         fail(f"README BUILD & RUN section missing: {', '.join(readmes_without_build_run)}")
@@ -136,6 +182,8 @@ def main() -> int:
         fail(".gitignore must exclude .env files")
     if not re.search(r"(?m)^!\.env\.example$", ignored):
         fail(".gitignore must explicitly retain .env.example")
+
+    validate_local_markdown_links()
 
     private_marker = "SON" + "NET"
     private_references = subprocess.run(
