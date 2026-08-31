@@ -1,6 +1,6 @@
 [package]
 name = "hydra-umc-orchestrator"
-version = "0.0.4"
+version = "0.0.5"
 edition = "2021"
 description = "Distributed system manager for multi-robot swarm coordination across the HYDRA-UMC ecosystem."
 license = "GPL-3.0-only"
@@ -21,10 +21,18 @@ lto = true
 # caller-supplied commands. server.rs exposes the exact same
 # MissionRegistry over a real HTTP API - still purely in-memory
 # bookkeeping (dispatch/start/complete/cancel/fail/recover), no real
-# gRPC wiring to JOB-DISPATCHER/NODE-HEALING and no real E-STOP-sending
-# code anywhere in this repo - main.rs's own module docs already say
-# both remain real future work, this does not add either.
+# gRPC wiring to NODE-HEALING and no real E-STOP-sending code anywhere
+# in this repo - main.rs's own module docs already say both remain real
+# future work, this does not add either.
+#
+# ureq (new) - a real, minimal, blocking HTTP *client* (tiny_http above
+# is server-only) so this repo can now call out to
+# HYDRA-UMC-JOB-DISPATCHER's own real POST /jobs/submit and POST
+# /dispatch (job_dispatcher.rs) - synchronous, no tokio/async runtime,
+# same "closest thing to this ecosystem's other services' own stdlib
+# HTTP calls" reasoning tiny_http itself was picked for.
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tiny_http = "0.12"
+ureq = { version = "2", default-features = false }

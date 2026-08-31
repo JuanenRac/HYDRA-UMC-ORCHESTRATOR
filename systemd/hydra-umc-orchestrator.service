@@ -6,24 +6,36 @@
 # Loopback-only, same as every other internal-only API on this CM5 - and
 # for a real reason beyond consistency: this is the real fleet mission
 # bookkeeping (dispatch/start/complete/cancel/fail/recover), purely
-# in-memory, no real gRPC wiring to HYDRA-UMC-JOB-DISPATCHER/
-# HYDRA-UMC-NODE-HEALING and no real E-STOP-sending code anywhere in
-# this repository - this does not grant any new physical authority over
-# the LAN, it makes the exact same state machine mission-demo already
-# exercised reachable over a real API instead of only a fixed demo
-# script. State resets on every restart (Arc<Mutex<MissionRegistry>>,
-# no persistence yet) - a real, known limitation, not silently hidden.
+# in-memory, and no real E-STOP-sending code anywhere in this repository
+# - this does not grant any new physical authority over the LAN, it
+# makes the exact same state machine mission-demo already exercised
+# reachable over a real API instead of only a fixed demo script. State
+# resets on every restart (Arc<Mutex<MissionRegistry>>, no persistence
+# yet) - a real, known limitation, not silently hidden.
+#
+# --job-dispatcher-url wires the real "full chain" this session put
+# together: a mission added here is also submitted to
+# HYDRA-UMC-JOB-DISPATCHER's own real queue (already on this CM5), and
+# POST /missions/:id/auto-dispatch asks it to run one real dispatch pass
+# and adopts whichever robot it actually assigned - the real tool-aware/
+# fairness routing this repo's own mission.rs never had.
+# HYDRA-UMC-NODE-HEALING's own --orchestrator-url points back at this
+# service's POST /nodes/:node/recover, closing the loop the other way.
 [Unit]
 Description=HYDRA-UMC-ORCHESTRATOR real mission-registry API
-After=network-online.target
+After=network-online.target hydra-umc-job-dispatcher.service
 Wants=network-online.target
+# Not a hard dependency (Requires=) - job_dispatcher.rs's own calls
+# degrade to a real, honest "not submitted"/503 rather than failing to
+# start if Job-Dispatcher isn't up, so a soft ordering hint is honest, a
+# hard requirement would not be.
 
 [Service]
 Type=simple
 User=hydra-umc-orchestrator
 Group=hydra-umc-orchestrator
 WorkingDirectory=/opt/hydra-umc/orchestrator
-ExecStart=/opt/hydra-umc/orchestrator/hydra-umc-orchestrator serve --addr 127.0.0.1 --port 8114
+ExecStart=/opt/hydra-umc/orchestrator/hydra-umc-orchestrator serve --addr 127.0.0.1 --port 8114 --job-dispatcher-url http://127.0.0.1:8090
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true

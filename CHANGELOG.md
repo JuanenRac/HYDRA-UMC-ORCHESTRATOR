@@ -27,6 +27,40 @@ All notable changes to this project will be documented in this file.
 - The public protocol comments describe the current contract and its
   compatibility boundaries.
 
+## [0.0.5] - The real "full chain": Job-Dispatcher wired in
+
+- **`src/job_dispatcher.rs`** (new) - a real, minimal client for
+  `HYDRA-UMC-JOB-DISPATCHER`'s own real HTTP API (`docs/API.md` in that
+  repo): `submit_job()` (`POST /jobs/submit`, using the mission id as
+  both id and `dedupKey` - a retried `POST /missions` call here must
+  never double-submit) and `run_dispatch()` (`POST /dispatch`, that
+  project's own real tool-aware/fairness routing pass - `mission.rs`
+  never had any matching logic of its own, it only ever recorded
+  whatever node a caller told it to). Uses `ureq` (new dependency,
+  `default-features = false` - no TLS needed for loopback-only HTTP),
+  the real HTTP *client* counterpart to `tiny_http` (server-only).
+- **`server.rs`** - `POST /missions` now also submits the new mission to
+  Job-Dispatcher when `--job-dispatcher-url` is configured (best-effort:
+  a down Job-Dispatcher doesn't stop a mission existing here, this
+  registry is the source of truth for mission STATE either way; the
+  real outcome is reported back in the response, never silently
+  swallowed). New `POST /missions/:id/auto-dispatch` runs one real
+  Job-Dispatcher dispatch pass and adopts whichever robot it actually
+  assigned into this mission's local state - the manual
+  `POST /missions/:id/dispatch {node}` (caller-supplied node) stays
+  unchanged as a direct-assignment override.
+- **`main.rs`** - new `--job-dispatcher-url` flag for `serve`; omitted,
+  behavior is unchanged from before this existed (missions stay
+  local-only, `auto-dispatch` answers `503`).
+- **`systemd/hydra-umc-orchestrator.service`** - wired to the real
+  Job-Dispatcher instance already on this CM5 (`127.0.0.1:8090`), soft-
+  ordered `After=` it (not `Requires=` - this integration degrades
+  honestly, it doesn't need Job-Dispatcher to be up to start).
+- 11 new tests (`job_dispatcher.rs`'s own `#[cfg(test)]` module against
+  a real raw-socket fake server, plus 6 new `server.rs` tests covering
+  both the best-effort submit and the full auto-dispatch path,
+  including the honest "no robot matched this pass" outcome) - 42 total.
+
 ## [0.0.4] - Real v0: JSON/HTTP server mode, plus CM5 deployment
 
 - **`mission.rs`** - `MissionState`/`TransitionError`/`CancelOutcome`/

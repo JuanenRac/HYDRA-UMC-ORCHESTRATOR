@@ -25,7 +25,21 @@
 // (dispatch -> in-progress -> node failure -> recovery -> idempotent
 // cancel -> completion) against an in-memory MissionRegistry and prints
 // every real transition, so the logic is exercisable without a server.
+//
+// `serve` (job_dispatcher.rs, new) is the real "full chain" this session
+// wired together: a mission added via POST /missions is also submitted
+// to HYDRA-UMC-JOB-DISPATCHER's own real queue when --job-dispatcher-url
+// is set, and POST /missions/:id/auto-dispatch asks Job-Dispatcher to
+// run one real scheduling pass (its own tool-aware/fairness routing -
+// mission.rs never had any of its own) and transitions this mission's
+// local state using whichever robot it actually assigned. Still no real
+// gRPC wiring and no real E-STOP-sending code - this is the mission-
+// queue integration named above, not the PTP-synced dispatch or
+// fleet-wide health aggregation, and it grants no new physical
+// authority: it makes the exact same routing decision Job-Dispatcher
+// already made for real reachable from here, not a new one.
 
+mod job_dispatcher;
 mod mission;
 mod server;
 
@@ -126,14 +140,19 @@ fn run_serve(args: &[String]) {
     let addr = find_flag(args, "--addr").unwrap_or_else(|| "127.0.0.1".to_string());
     let port = find_flag(args, "--port").unwrap_or_else(|| "8114".to_string());
     let bind_addr = format!("{addr}:{port}");
+    let job_dispatcher_url = find_flag(args, "--job-dispatcher-url");
 
     match server::bind(&bind_addr) {
         Ok(bound) => {
             eprintln!("[orchestrator] HTTP API listening on {bind_addr}");
             eprintln!("[orchestrator] POST /missions, GET /missions, GET /missions/:id,");
-            eprintln!("[orchestrator] POST /missions/:id/{{dispatch,start,complete,cancel,fail}},");
+            eprintln!("[orchestrator] POST /missions/:id/{{dispatch,auto-dispatch,start,complete,cancel,fail}},");
             eprintln!("[orchestrator] POST /nodes/:node/recover, GET /stats");
-            server::run(bound);
+            match &job_dispatcher_url {
+                Some(url) => eprintln!("[orchestrator] real jobs will be submitted to job-dispatcher at {url}"),
+                None => eprintln!("[orchestrator] --job-dispatcher-url not set - missions stay local-only, auto-dispatch disabled"),
+            }
+            server::run(bound, job_dispatcher_url);
         }
         Err(e) => {
             eprintln!("[orchestrator] fatal: could not start HTTP server on {bind_addr}: {e}");
