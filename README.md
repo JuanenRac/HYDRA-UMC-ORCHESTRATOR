@@ -129,7 +129,7 @@ firmware of its own, and no operating system image to maintain.
 
 ---
 
-## 🔧 BUILD & RUN
+## 🔧 BUILD & RUN GUIDE
 
 Bare invocation stays a minimal skeleton (prints identity, exits 0); the
 real mission state machine is exercisable today via `mission-demo`.
