@@ -27,6 +27,7 @@
 // every real transition, so the logic is exercisable without a server.
 
 mod mission;
+mod server;
 
 use mission::{CancelOutcome, MissionRegistry, MissionState};
 
@@ -114,10 +115,37 @@ fn run_mission_demo() {
     }
 }
 
+fn find_flag(args: &[String], flag: &str) -> Option<String> {
+    args.iter()
+        .position(|a| a == flag)
+        .and_then(|i| args.get(i + 1))
+        .cloned()
+}
+
+fn run_serve(args: &[String]) {
+    let addr = find_flag(args, "--addr").unwrap_or_else(|| "127.0.0.1".to_string());
+    let port = find_flag(args, "--port").unwrap_or_else(|| "8114".to_string());
+    let bind_addr = format!("{addr}:{port}");
+
+    match server::bind(&bind_addr) {
+        Ok(bound) => {
+            eprintln!("[orchestrator] HTTP API listening on {bind_addr}");
+            eprintln!("[orchestrator] POST /missions, GET /missions, GET /missions/:id,");
+            eprintln!("[orchestrator] POST /missions/:id/{{dispatch,start,complete,cancel,fail}},");
+            eprintln!("[orchestrator] POST /nodes/:node/recover, GET /stats");
+            server::run(bound);
+        }
+        Err(e) => {
+            eprintln!("[orchestrator] fatal: could not start HTTP server on {bind_addr}: {e}");
+        }
+    }
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(|s| s.as_str()) {
         Some("mission-demo") => run_mission_demo(),
+        Some("serve") => run_serve(&args[1..]),
         _ => {
             println!("HYDRA-UMC-ORCHESTRATOR v{VERSION}");
             println!("{ROLE}");

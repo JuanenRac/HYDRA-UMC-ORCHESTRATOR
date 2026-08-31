@@ -13,11 +13,13 @@
 
 use std::collections::BTreeMap;
 
+use serde::Serialize;
+
 /// The lifecycle a single mission moves through. `Dispatched` and
 /// `InProgress` carry the node currently responsible for the mission -
 /// that is exactly the information `recover_from_unavailable_node` needs
 /// to decide whether a mission is affected by a given node going down.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub enum MissionState {
     Pending,
     Dispatched { node: String },
@@ -47,7 +49,7 @@ impl MissionState {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct TransitionError {
     pub from: &'static str,
     pub attempted: &'static str,
@@ -66,7 +68,7 @@ impl std::fmt::Display for TransitionError {
 /// What actually happened when `cancel()` was called - distinct from a
 /// `TransitionError` because "already cancelled" is a successful,
 /// idempotent outcome, not a failure.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum CancelOutcome {
     Cancelled,
     AlreadyCancelled,
@@ -74,7 +76,7 @@ pub enum CancelOutcome {
 
 /// What happened when a mission was checked against a node that just
 /// became unavailable.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum RecoveryOutcome {
     /// The mission was on the unavailable node and has been requeued to
     /// `Pending` so a dispatcher can redispatch it to a healthy node.
@@ -85,7 +87,7 @@ pub enum RecoveryOutcome {
     NotAffected,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Mission {
     pub id: String,
     pub state: MissionState,

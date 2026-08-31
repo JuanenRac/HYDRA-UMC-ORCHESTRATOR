@@ -1,0 +1,37 @@
+# =============================================================================
+# HYDRA-UMC-ORCHESTRATOR - Local CM5 mission-registry API systemd unit
+# Copyright (C) 2026 JuanenRac (Electro Hobby 3D) <electrohobby3d@gmail.com>
+# GPL-3.0-or-later - see LICENSE
+# =============================================================================
+# Loopback-only, same as every other internal-only API on this CM5 - and
+# for a real reason beyond consistency: this is the real fleet mission
+# bookkeeping (dispatch/start/complete/cancel/fail/recover), purely
+# in-memory, no real gRPC wiring to HYDRA-UMC-JOB-DISPATCHER/
+# HYDRA-UMC-NODE-HEALING and no real E-STOP-sending code anywhere in
+# this repository - this does not grant any new physical authority over
+# the LAN, it makes the exact same state machine mission-demo already
+# exercised reachable over a real API instead of only a fixed demo
+# script. State resets on every restart (Arc<Mutex<MissionRegistry>>,
+# no persistence yet) - a real, known limitation, not silently hidden.
+[Unit]
+Description=HYDRA-UMC-ORCHESTRATOR real mission-registry API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=hydra-umc-orchestrator
+Group=hydra-umc-orchestrator
+WorkingDirectory=/opt/hydra-umc/orchestrator
+ExecStart=/opt/hydra-umc/orchestrator/hydra-umc-orchestrator serve --addr 127.0.0.1 --port 8114
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectHome=true
+ProtectSystem=strict
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

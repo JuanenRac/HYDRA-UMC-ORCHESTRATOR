@@ -1,6 +1,6 @@
 [package]
 name = "hydra-umc-orchestrator"
-version = "0.0.3"
+version = "0.0.4"
 edition = "2021"
 description = "Distributed system manager for multi-robot swarm coordination across the HYDRA-UMC ecosystem."
 license = "GPL-3.0-only"
@@ -14,3 +14,17 @@ path = "src/main.rs"
 [profile.release]
 opt-level = 3
 lto = true
+
+# Real gap found auditing the ecosystem against actual CM5 hardware: the
+# real mission state machine (mission.rs) was only ever reachable
+# through mission-demo's own fixed, hardcoded scenario, never real
+# caller-supplied commands. server.rs exposes the exact same
+# MissionRegistry over a real HTTP API - still purely in-memory
+# bookkeeping (dispatch/start/complete/cancel/fail/recover), no real
+# gRPC wiring to JOB-DISPATCHER/NODE-HEALING and no real E-STOP-sending
+# code anywhere in this repo - main.rs's own module docs already say
+# both remain real future work, this does not add either.
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tiny_http = "0.12"

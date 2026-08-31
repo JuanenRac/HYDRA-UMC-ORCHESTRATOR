@@ -27,6 +27,40 @@ All notable changes to this project will be documented in this file.
 - The public protocol comments describe the current contract and its
   compatibility boundaries.
 
+## [0.0.4] - Real v0: JSON/HTTP server mode, plus CM5 deployment
+
+- **`mission.rs`** - `MissionState`/`TransitionError`/`CancelOutcome`/
+  `RecoveryOutcome`/`Mission` gained a `Serialize` derive (behavior-
+  preserving, additive only) so `server.rs` can hand them straight to
+  `serde_json` without a second, parallel JSON shape.
+- **`server.rs`** (new) - `POST /missions`, `GET /missions`,
+  `GET /missions/:id`, `POST /missions/:id/{dispatch,start,complete,
+  cancel,fail}`, and `POST /nodes/:node/recover` reach the exact same
+  `MissionRegistry`/`Mission` methods `mission-demo` already exercised
+  against its own fixed, hardcoded scenario - now reachable with a real
+  caller-supplied mission id and node name, over a real `tiny_http`
+  server (blocking, no async runtime - same convention as
+  `HYDRA-UMC-TWIN`'s own `server.rs`). Unlike this ecosystem's other
+  Rust services' `server.rs` (all stateless computations), the
+  `MissionRegistry` is real shared, mutable state that must persist
+  across requests - `Arc<Mutex<MissionRegistry>>`, one lock per request.
+  Still purely in-memory bookkeeping: no real gRPC wiring to
+  `HYDRA-UMC-JOB-DISPATCHER`/`HYDRA-UMC-NODE-HEALING` exists, and there
+  is no real E-STOP-sending code anywhere in this repository to expose -
+  this does not grant any new physical authority, it makes the exact
+  same state machine reachable over a real API instead of only a fixed
+  demo script.
+- **`main.rs`** - new `serve` subcommand (`--addr`/`--port`, default
+  `127.0.0.1:8114`).
+- **`systemd/hydra-umc-orchestrator.service`** (new) - loopback-only
+  unit for `HYDRA-UMC-OS/provisioning/install_orchestrator.sh` (new,
+  that repo), compiled as a release binary, same pattern as
+  `install_twin.sh`. State resets on every restart (no persistence yet)
+  - a real, known limitation, documented in the unit itself, not
+  silently hidden.
+- 9 new tests (`server.rs`'s own `#[cfg(test)]` module, real end-to-end
+  HTTP over a raw `TcpStream`) - 31 total.
+
 ## [0.0.3] - Real v0: mission state machine, idempotent cancellation, node-failure recovery
 
 - **`src/mission.rs`** (new) - the real logic behind "arbitrating which robot gets which mission": `Mission` (`Pending -> Dispatched -> InProgress -> Completed`, with `Cancelled`/`Failed` as separate terminal states) and `MissionRegistry` (tracks every mission by id, `BTreeMap`-backed for deterministic iteration). Pure in-memory state machine, no gRPC/network I/O yet - the same "real logic before real transport" sequencing already used by this ecosystem's other v0 passes.
