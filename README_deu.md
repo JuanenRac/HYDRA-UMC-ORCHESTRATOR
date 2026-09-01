@@ -50,7 +50,7 @@ flowchart TB
 ## 3. 🧠 ARCHITEKTUR UND ENTSCHEIDUNGEN
 
 > Die folgenden internen Schichten sind das geplante Design für die Logik
-> hinter diesem Einstiegspunkt. Unter „🔧 BUILD & RUN“ steht, was heute
+> hinter diesem Einstiegspunkt. Unter „🔧 BUILD UND AUSFÜHRUNG“ steht, was heute
 > tatsächlich läuft: ein echter, rein im Speicher lebender
 > Missions-Zustandsautomat (`mission.rs`), noch ohne einen echten
 > Netzwerkpartner, mit dem er sprechen könnte.

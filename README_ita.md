@@ -50,7 +50,7 @@ flowchart TB
 ## 3. 🧠 ARCHITETTURA E DECISIONI DI PROGETTAZIONE
 
 > I livelli interni seguenti sono il progetto previsto per la logica dietro
-> questo punto di ingresso. Per ciò che funziona oggi, vedere «🔧 BUILD & RUN»
+> questo punto di ingresso. Per ciò che funziona oggi, vedere «🔧 BUILD ED ESECUZIONE»
 > più sotto: una macchina a stati della missione reale e puramente in memoria
 > (`mission.rs`), ancora senza alcun peer di rete live con cui parlare.
 

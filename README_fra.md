@@ -50,7 +50,7 @@ flowchart TB
 ## 3. 🧠 ARCHITECTURE ET DÉCISIONS DE CONCEPTION
 
 > Les couches internes ci-dessous constituent la conception prévue pour la
-> logique derrière ce point d'entrée. Consultez « 🔧 BUILD & RUN » plus bas
+> logique derrière ce point d'entrée. Consultez « 🔧 BUILD ET EXÉCUTION » plus bas
 > pour ce qui fonctionne aujourd'hui : une machine à états de mission réelle
 > et purement en mémoire (`mission.rs`), encore sans aucun pair réseau en
 > direct à qui parler.

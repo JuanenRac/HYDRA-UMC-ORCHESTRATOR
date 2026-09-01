@@ -50,7 +50,7 @@ flowchart TB
 ## 3. 🧠 ARQUITECTURA Y DECISIONES DE DISEÑO
 
 > Las capas internas siguientes son el diseño previsto para la lógica que se
-> situará detrás de este punto de entrada. Consulta «🔧 BUILD & RUN» más abajo
+> situará detrás de este punto de entrada. Consulta «🔧 BUILD Y EJECUCIÓN» más abajo
 > para conocer lo que funciona hoy: una máquina de estados de misión real y
 > pura en memoria (`mission.rs`), todavía sin ningún par de red en vivo con
 > quien hablar.
