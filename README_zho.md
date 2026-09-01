@@ -183,7 +183,7 @@ docker compose up --build
 
 ### 项目族
 
-**父项目：** 无——本项目本身就是 Orchestration & Swarm 系列的集成父项目。
+**父项目：** 无——本项目本身就是 编排与集群 系列的集成父项目。
 
 **子项目：**
 - **[HYDRA-UMC-SWARM-SYNC](https://github.com/JuanenRac/HYDRA-UMC-SWARM-SYNC)** —— 在本编排器协调的各单元之间进行基于 CRDT 的状态协调。

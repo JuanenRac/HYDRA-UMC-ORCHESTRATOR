@@ -199,7 +199,7 @@ docker compose up --build
 
 ### プロジェクトファミリー
 
-**親プロジェクト：** なし —— 本プロジェクト自体が Orchestration & Swarm ファミリーの統合親プロジェクトです。
+**親プロジェクト：** なし —— 本プロジェクト自体が オーケストレーションと群制御 ファミリーの統合親プロジェクトです。
 
 **子プロジェクト：**
 - **[HYDRA-UMC-SWARM-SYNC](https://github.com/JuanenRac/HYDRA-UMC-SWARM-SYNC)** — 本オーケストレーターが調整するセル間での CRDT ベースの状態調整。
