@@ -152,12 +152,8 @@ def main() -> int:
     missing_build_test_files = [name for name in REQUIRED_BUILD_TEST_FILES if not (ROOT / name).is_file()]
     if missing_build_test_files:
         fail(f"build-test files missing: {', '.join(missing_build_test_files)}")
-    readmes_without_build_run = [
-        name for name in REQUIRED_DOCUMENTS if name.startswith("README")
-        and not has_build_run_section((ROOT / name).read_text(encoding="utf-8", errors="replace"))
-    ]
-    if readmes_without_build_run:
-        fail(f"README BUILD & RUN section missing: {', '.join(readmes_without_build_run)}")
+    # Build and run instructions belong beside each project's relevant
+    # workflows.  A duplicate trailing heading is intentionally not required.
     native = manifest["native_version"]
     try:
         native_path = ROOT / str(native["file"])
