@@ -283,14 +283,3 @@ Ce projet fait partie d'un écosystème robotique plus large du même auteur (Ju
 
 ## 📜 LICENCE
 GPL-3.0 - Voir le fichier LICENSE pour plus de détails.
-
-## 🛠️ BUILD & RUN
-
-Utilisez la vérification de compilation sans versionnement avant une compilation de publication :
-
-| Action | Windows | Linux / macOS |
-|---|---|---|
-| Vérification de compilation (sans modifier la version ni le CHANGELOG) | `build-test.bat` | `./build-test.sh` |
-| Exécution / développement (si disponible) | `run*.bat` ou `dev*.bat` | `./run*.sh` ou `./dev*.sh` |
-
-`build-test.bat` et `build-test.sh` compilent ou valident la pile du projet sans incrémenter `hydra-umc.project.json` ni modifier `CHANGELOG.md`. Ils peuvent uniquement créer les sorties normales du compilateur. Les scripts existants `build*.bat`, `build*.sh`, `run*` et `dev*` conservent leur comportement spécifique de versionnement ou d'exécution ; utilisez-les lorsque ce comportement est requis.
