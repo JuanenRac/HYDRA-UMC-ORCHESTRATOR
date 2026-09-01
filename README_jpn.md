@@ -272,8 +272,9 @@ docker compose up --build
 
 
 ## 👤 作者
-**JuanenRac**（Electro Hobby 3D）
+**JuanenRac** (Electro Hobby 3D)
 📧 electrohobby3d@gmail.com
+📺 [youtube.com/@electrohobby3d](https://youtube.com/@electrohobby3d)
 
 ## 📜 ライセンス
 GPL-3.0 —— 詳細は LICENSE を参照してください。
