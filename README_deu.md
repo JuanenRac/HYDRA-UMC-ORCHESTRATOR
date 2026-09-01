@@ -129,7 +129,7 @@ oder Firmware und ohne zu pflegendes Betriebssystem-Image.
 
 ---
 
-## 🔧 BUILD & RUN
+## 🔧 BUILD UND AUSFÜHRUNG
 
 Der nackte Aufruf bleibt ein minimales Grundgerüst (gibt Identität aus,
 beendet sich mit 0); der echte Missions-Zustandsautomat lässt sich schon
@@ -192,7 +192,7 @@ docker compose up --build
 
 ---
 
-## 🚀 ROADMAP
+## 🚀 FAHRPLAN
 * **Phase 1:** Deterministische Schwarm-Synchronisation über TSN und Sub-ms-Jitter-Reduzierung.
 * **Phase 2:** 3D-Pfadplanung mit dynamischer Hindernisvermeidung in Multi-Roboter-Zellen.
 * **Phase 3:** Multi-Roboter-Job-Dispatching-Optimierung unter Berücksichtigung der Ressourcenverfügbarkeit in Echtzeit.

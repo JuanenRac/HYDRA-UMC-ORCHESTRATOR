@@ -128,7 +128,7 @@ e senza un'immagine del sistema operativo da mantenere.
 
 ---
 
-## 🔧 BUILD & RUN
+## 🔧 BUILD ED ESECUZIONE
 
 L'invocazione nuda resta uno scheletro minimo (stampa l'identità, esce con
 0); la vera macchina a stati della missione è esercitabile oggi tramite
@@ -190,7 +190,7 @@ docker compose up --build
 
 ---
 
-## 🚀 ROADMAP
+## 🚀 TABELLA DI MARCIA
 * **Fase 1:** Sincronizzazione deterministica dello sciame su TSN e riduzione del jitter sub-ms.
 * **Fase 2:** Pianificazione dei percorsi 3D con evitamento dinamico degli ostacoli in celle multi-robot.
 * **Fase 3:** Ottimizzazione del dispacciamento dei lavori multi-robot utilizzando la disponibilità delle risorse in tempo reale.

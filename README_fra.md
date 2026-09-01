@@ -129,7 +129,7 @@ propres, et sans image de système d'exploitation à maintenir.
 
 ---
 
-## 🔧 BUILD & RUN
+## 🔧 BUILD ET EXÉCUTION
 
 L'invocation nue reste un squelette minimal (affiche l'identité, quitte
 avec 0) ; la vraie machine à états de mission est exerçable dès
@@ -191,7 +191,7 @@ docker compose up --build
 
 ---
 
-## 🚀 ROADMAP
+## 🚀 FEUILLE DE ROUTE
 * **Phase 1 :** Synchronisation déterministe d'essaim sur TSN et réduction de la gigue sub-ms.
 * **Phase 2 :** Planification de trajectoires 3D avec évitement dynamique d'obstacles dans les cellules multi-robots.
 * **Phase 3 :** Optimisation de la répartition des tâches multi-robots à l'aide de la disponibilité des ressources en temps réel.

@@ -130,7 +130,7 @@ y sin imagen de sistema operativo que mantener.
 
 ---
 
-## 🔧 BUILD & RUN
+## 🔧 BUILD Y EJECUCIÓN
 
 La invocación básica sigue siendo un esqueleto mínimo (imprime identidad y
 sale con 0); la máquina de estados de misión real se puede probar hoy vía
