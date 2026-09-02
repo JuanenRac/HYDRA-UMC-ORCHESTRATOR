@@ -76,7 +76,7 @@ fn segments(path: &str) -> Vec<&str> {
 }
 
 pub fn bind(addr: &str) -> std::io::Result<Server> {
-    Server::http(addr).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+    Server::http(addr).map_err(std::io::Error::other)
 }
 
 pub fn run(server: Server, job_dispatcher_url: Option<String>) {
@@ -97,35 +97,50 @@ pub fn run(server: Server, job_dispatcher_url: Option<String>) {
             (Method::Post, ["missions"]) => {
                 let raw = match read_body(&mut request) {
                     Ok(r) => r,
-                    Err(e) => { write_json(request, 400, &json!({"error": e.to_string()})); continue; }
+                    Err(e) => {
+                        write_json(request, 400, &json!({"error": e.to_string()}));
+                        continue;
+                    }
                 };
                 handle_add(request, &state, &raw);
             }
             (Method::Post, ["missions", id, "dispatch"]) => {
                 let raw = match read_body(&mut request) {
                     Ok(r) => r,
-                    Err(e) => { write_json(request, 400, &json!({"error": e.to_string()})); continue; }
+                    Err(e) => {
+                        write_json(request, 400, &json!({"error": e.to_string()}));
+                        continue;
+                    }
                 };
                 handle_dispatch(request, &state, id, &raw);
             }
-            (Method::Post, ["missions", id, "auto-dispatch"]) => handle_auto_dispatch(request, &state, id),
+            (Method::Post, ["missions", id, "auto-dispatch"]) => {
+                handle_auto_dispatch(request, &state, id)
+            }
             (Method::Post, ["missions", id, "start"]) => handle_start(request, &state, id),
             (Method::Post, ["missions", id, "complete"]) => handle_complete(request, &state, id),
             (Method::Post, ["missions", id, "cancel"]) => handle_cancel(request, &state, id),
             (Method::Post, ["missions", id, "fail"]) => {
                 let raw = match read_body(&mut request) {
                     Ok(r) => r,
-                    Err(e) => { write_json(request, 400, &json!({"error": e.to_string()})); continue; }
+                    Err(e) => {
+                        write_json(request, 400, &json!({"error": e.to_string()}));
+                        continue;
+                    }
                 };
                 handle_fail(request, &state, id, &raw);
             }
             (Method::Post, ["nodes", node, "recover"]) => handle_recover(request, &state, node),
             (Method::Get, ["stats"]) => {
                 let reg = state.registry.lock().unwrap();
-                write_json(request, 200, &json!({
-                    "missionCount": reg.all().count(),
-                    "jobDispatcherUrl": state.job_dispatcher_url,
-                }));
+                write_json(
+                    request,
+                    200,
+                    &json!({
+                        "missionCount": reg.all().count(),
+                        "jobDispatcherUrl": state.job_dispatcher_url,
+                    }),
+                );
             }
             _ => write_json(request, 404, &json!({"error": "not found"})),
         }
@@ -140,7 +155,14 @@ struct AddRequest {
 fn handle_add(request: tiny_http::Request, state: &AppState, raw: &str) {
     let req: AddRequest = match serde_json::from_str(raw) {
         Ok(r) => r,
-        Err(e) => { write_json(request, 400, &json!({"error": format!("malformed request JSON: {e}")})); return; }
+        Err(e) => {
+            write_json(
+                request,
+                400,
+                &json!({"error": format!("malformed request JSON: {e}")}),
+            );
+            return;
+        }
     };
 
     let mission_snapshot = {
@@ -154,9 +176,16 @@ fn handle_add(request: tiny_http::Request, state: &AppState, raw: &str) {
     // routing has something to route - best-effort (a Job-Dispatcher
     // that's down doesn't stop a mission from existing here, this
     // registry is the source of truth for mission STATE regardless).
-    let job_submission = submit_to_job_dispatcher_if_configured(state, mission_snapshot["id"].as_str().unwrap_or_default());
+    let job_submission = submit_to_job_dispatcher_if_configured(
+        state,
+        mission_snapshot["id"].as_str().unwrap_or_default(),
+    );
 
-    write_json(request, 200, &json!({"mission": mission_snapshot, "jobDispatcher": job_submission}));
+    write_json(
+        request,
+        200,
+        &json!({"mission": mission_snapshot, "jobDispatcher": job_submission}),
+    );
 }
 
 /// Returns a real, honest status string for the mission's own JSON
@@ -183,7 +212,11 @@ fn handle_get(request: tiny_http::Request, state: &AppState, id: &str) {
     let reg = state.registry.lock().unwrap();
     match reg.get(id) {
         Some(m) => write_json(request, 200, &serde_json::to_value(m).unwrap()),
-        None => write_json(request, 404, &json!({"error": format!("no mission {id:?}")})),
+        None => write_json(
+            request,
+            404,
+            &json!({"error": format!("no mission {id:?}")}),
+        ),
     }
 }
 
@@ -195,16 +228,31 @@ struct DispatchRequest {
 fn handle_dispatch(request: tiny_http::Request, state: &AppState, id: &str, raw: &str) {
     let req: DispatchRequest = match serde_json::from_str(raw) {
         Ok(r) => r,
-        Err(e) => { write_json(request, 400, &json!({"error": format!("malformed request JSON: {e}")})); return; }
+        Err(e) => {
+            write_json(
+                request,
+                400,
+                &json!({"error": format!("malformed request JSON: {e}")}),
+            );
+            return;
+        }
     };
     let mut reg = state.registry.lock().unwrap();
     let Some(mission) = reg.get_mut(id) else {
-        write_json(request, 404, &json!({"error": format!("no mission {id:?}")}));
+        write_json(
+            request,
+            404,
+            &json!({"error": format!("no mission {id:?}")}),
+        );
         return;
     };
     match mission.dispatch(req.node) {
         Ok(()) => write_json(request, 200, &serde_json::to_value(&*mission).unwrap()),
-        Err(e) => write_json(request, 409, &json!({"error": e.to_string(), "transition": e})),
+        Err(e) => write_json(
+            request,
+            409,
+            &json!({"error": e.to_string(), "transition": e}),
+        ),
     }
 }
 
@@ -217,14 +265,22 @@ fn handle_dispatch(request: tiny_http::Request, state: &AppState, id: &str, raw:
 /// (manual override, kept unchanged above) still takes one directly.
 fn handle_auto_dispatch(request: tiny_http::Request, state: &AppState, id: &str) {
     let Some(base_url) = &state.job_dispatcher_url else {
-        write_json(request, 503, &json!({"error": "no --job-dispatcher-url configured on this orchestrator"}));
+        write_json(
+            request,
+            503,
+            &json!({"error": "no --job-dispatcher-url configured on this orchestrator"}),
+        );
         return;
     };
 
     {
         let reg = state.registry.lock().unwrap();
         if reg.get(id).is_none() {
-            write_json(request, 404, &json!({"error": format!("no mission {id:?}")}));
+            write_json(
+                request,
+                404,
+                &json!({"error": format!("no mission {id:?}")}),
+            );
             return;
         }
     }
@@ -232,7 +288,11 @@ fn handle_auto_dispatch(request: tiny_http::Request, state: &AppState, id: &str)
     let assignments = match job_dispatcher::run_dispatch(base_url) {
         Ok(a) => a,
         Err(e) => {
-            write_json(request, 502, &json!({"error": format!("job-dispatcher dispatch pass failed: {e}")}));
+            write_json(
+                request,
+                502,
+                &json!({"error": format!("job-dispatcher dispatch pass failed: {e}")}),
+            );
             return;
         }
     };
@@ -242,51 +302,91 @@ fn handle_auto_dispatch(request: tiny_http::Request, state: &AppState, id: &str)
         // available/right tool right now) - reconsidered on a future
         // /dispatch call, same as Job-Dispatcher's own README already
         // documents for its own /dispatch endpoint.
-        write_json(request, 200, &json!({"assigned": false, "reason": "no matching robot on this dispatch pass"}));
+        write_json(
+            request,
+            200,
+            &json!({"assigned": false, "reason": "no matching robot on this dispatch pass"}),
+        );
         return;
     };
 
     let mut reg = state.registry.lock().unwrap();
     let mission = reg.get_mut(id).unwrap(); // existence already confirmed above, still held real by the lock
     match mission.dispatch(assignment.robot_id.clone()) {
-        Ok(()) => write_json(request, 200, &json!({"assigned": true, "mission": &*mission})),
-        Err(e) => write_json(request, 409, &json!({"error": e.to_string(), "transition": e})),
+        Ok(()) => write_json(
+            request,
+            200,
+            &json!({"assigned": true, "mission": &*mission}),
+        ),
+        Err(e) => write_json(
+            request,
+            409,
+            &json!({"error": e.to_string(), "transition": e}),
+        ),
     }
 }
 
 fn handle_start(request: tiny_http::Request, state: &AppState, id: &str) {
     let mut reg = state.registry.lock().unwrap();
     let Some(mission) = reg.get_mut(id) else {
-        write_json(request, 404, &json!({"error": format!("no mission {id:?}")}));
+        write_json(
+            request,
+            404,
+            &json!({"error": format!("no mission {id:?}")}),
+        );
         return;
     };
     match mission.start() {
         Ok(()) => write_json(request, 200, &serde_json::to_value(&*mission).unwrap()),
-        Err(e) => write_json(request, 409, &json!({"error": e.to_string(), "transition": e})),
+        Err(e) => write_json(
+            request,
+            409,
+            &json!({"error": e.to_string(), "transition": e}),
+        ),
     }
 }
 
 fn handle_complete(request: tiny_http::Request, state: &AppState, id: &str) {
     let mut reg = state.registry.lock().unwrap();
     let Some(mission) = reg.get_mut(id) else {
-        write_json(request, 404, &json!({"error": format!("no mission {id:?}")}));
+        write_json(
+            request,
+            404,
+            &json!({"error": format!("no mission {id:?}")}),
+        );
         return;
     };
     match mission.complete() {
         Ok(()) => write_json(request, 200, &serde_json::to_value(&*mission).unwrap()),
-        Err(e) => write_json(request, 409, &json!({"error": e.to_string(), "transition": e})),
+        Err(e) => write_json(
+            request,
+            409,
+            &json!({"error": e.to_string(), "transition": e}),
+        ),
     }
 }
 
 fn handle_cancel(request: tiny_http::Request, state: &AppState, id: &str) {
     let mut reg = state.registry.lock().unwrap();
     let Some(mission) = reg.get_mut(id) else {
-        write_json(request, 404, &json!({"error": format!("no mission {id:?}")}));
+        write_json(
+            request,
+            404,
+            &json!({"error": format!("no mission {id:?}")}),
+        );
         return;
     };
     match mission.cancel() {
-        Ok(outcome) => write_json(request, 200, &json!({"outcome": outcome, "mission": &*mission})),
-        Err(e) => write_json(request, 409, &json!({"error": e.to_string(), "transition": e})),
+        Ok(outcome) => write_json(
+            request,
+            200,
+            &json!({"outcome": outcome, "mission": &*mission}),
+        ),
+        Err(e) => write_json(
+            request,
+            409,
+            &json!({"error": e.to_string(), "transition": e}),
+        ),
     }
 }
 
@@ -298,16 +398,31 @@ struct FailRequest {
 fn handle_fail(request: tiny_http::Request, state: &AppState, id: &str, raw: &str) {
     let req: FailRequest = match serde_json::from_str(raw) {
         Ok(r) => r,
-        Err(e) => { write_json(request, 400, &json!({"error": format!("malformed request JSON: {e}")})); return; }
+        Err(e) => {
+            write_json(
+                request,
+                400,
+                &json!({"error": format!("malformed request JSON: {e}")}),
+            );
+            return;
+        }
     };
     let mut reg = state.registry.lock().unwrap();
     let Some(mission) = reg.get_mut(id) else {
-        write_json(request, 404, &json!({"error": format!("no mission {id:?}")}));
+        write_json(
+            request,
+            404,
+            &json!({"error": format!("no mission {id:?}")}),
+        );
         return;
     };
     match mission.fail(req.reason) {
         Ok(()) => write_json(request, 200, &serde_json::to_value(&*mission).unwrap()),
-        Err(e) => write_json(request, 409, &json!({"error": e.to_string(), "transition": e})),
+        Err(e) => write_json(
+            request,
+            409,
+            &json!({"error": e.to_string(), "transition": e}),
+        ),
     }
 }
 
@@ -372,7 +487,11 @@ mod tests {
         stream.read_to_string(&mut raw).unwrap();
         let (headers, resp_body) = raw.split_once("\r\n\r\n").unwrap_or((raw.as_str(), ""));
         let status_line = headers.lines().next().unwrap_or("");
-        let status: u16 = status_line.split_whitespace().nth(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+        let status: u16 = status_line
+            .split_whitespace()
+            .nth(1)
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
         (status, resp_body.to_string())
     }
 
@@ -497,7 +616,8 @@ mod tests {
 
     #[test]
     fn add_submits_the_real_mission_to_job_dispatcher_when_configured() {
-        let jd_url = fake_job_dispatcher(201, r#"{"ID":"m1","Status":"pending","result":"created"}"#);
+        let jd_url =
+            fake_job_dispatcher(201, r#"{"ID":"m1","Status":"pending","result":"created"}"#);
         let port = start_test_server_with_job_dispatcher(Some(jd_url));
         let (status, body) = post(port, "/missions", r#"{"id":"m1"}"#);
         assert_eq!(status, 200);
@@ -547,6 +667,9 @@ mod tests {
         assert!(body.contains("\"assigned\":false"));
 
         let (_, m1_body) = get(port, "/missions/m1");
-        assert!(m1_body.contains("\"Pending\""), "an unmatched mission must stay Pending, not silently move on");
+        assert!(
+            m1_body.contains("\"Pending\""),
+            "an unmatched mission must stay Pending, not silently move on"
+        );
     }
 }

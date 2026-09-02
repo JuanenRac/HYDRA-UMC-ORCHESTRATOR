@@ -27,6 +27,26 @@ All notable changes to this project will be documented in this file.
 - The public protocol comments describe the current contract and its
   compatibility boundaries.
 
+## [0.0.6]
+
+- **Fixed CI**: `cargo fmt --check` was failing on `src/job_dispatcher.rs`
+  (unwrapped lines), and `cargo clippy -- -D warnings` was failing on
+  `std::io::Error::new(ErrorKind::Other, e)` (now `std::io::Error::other`,
+  clippy's own suggested idiom).
+- **Fixed a real flaky-test bug found while verifying the above**:
+  `job_dispatcher.rs`'s own test-only `fake_server` captured an incoming
+  HTTP request with a single, non-looping `stream.read()` call. `ureq`'s
+  `send_string()` can write request headers and body as separate TCP
+  writes, and a loopback stack is free to deliver those as separate
+  readable chunks - the single read intermittently captured only the
+  headers (`Content-Length` correctly declared, body not there yet),
+  reproducing deterministically in this environment. `fake_server` now
+  reads in a loop until it has seen the full header block and, when
+  `Content-Length` is present, that many declared body bytes too. No
+  behavior change to `submit_job()`/`run_dispatch()` themselves - `cargo
+  test`: 42/42 passing throughout, including 5/5 repeat runs of the
+  affected test to confirm the fix is not itself flaky.
+
 ## [0.0.5] - The real "full chain": Job-Dispatcher wired in
 
 - **`src/job_dispatcher.rs`** (new) - a real, minimal client for

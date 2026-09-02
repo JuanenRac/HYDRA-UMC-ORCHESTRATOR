@@ -44,7 +44,9 @@ impl std::fmt::Display for ClientError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ClientError::Unreachable(e) => write!(f, "job-dispatcher unreachable: {e}"),
-            ClientError::BadResponse(e) => write!(f, "job-dispatcher returned an unexpected response: {e}"),
+            ClientError::BadResponse(e) => {
+                write!(f, "job-dispatcher returned an unexpected response: {e}")
+            }
         }
     }
 }
@@ -58,10 +60,15 @@ impl std::fmt::Display for ClientError {
 /// is satisfied either way.
 pub fn submit_job(base_url: &str, mission_id: &str) -> Result<(), ClientError> {
     let url = format!("{}/jobs/submit", base_url.trim_end_matches('/'));
-    let body = SubmitRequest { id: mission_id, dedup_key: mission_id };
+    let body = SubmitRequest {
+        id: mission_id,
+        dedup_key: mission_id,
+    };
     let result = ureq::post(&url)
         .set("Content-Type", "application/json")
-        .send_string(&serde_json::to_string(&body).map_err(|e| ClientError::BadResponse(e.to_string()))?);
+        .send_string(
+            &serde_json::to_string(&body).map_err(|e| ClientError::BadResponse(e.to_string()))?,
+        );
 
     match result {
         Ok(_) => Ok(()),
@@ -69,9 +76,10 @@ pub fn submit_job(base_url: &str, mission_id: &str) -> Result<(), ClientError> {
         // real "job ID already exists" response for a job this exact
         // mission id already submitted successfully before.
         Err(ureq::Error::Status(409, _)) => Ok(()),
-        Err(ureq::Error::Status(code, resp)) => {
-            Err(ClientError::BadResponse(format!("HTTP {code}: {}", resp.into_string().unwrap_or_default())))
-        }
+        Err(ureq::Error::Status(code, resp)) => Err(ClientError::BadResponse(format!(
+            "HTTP {code}: {}",
+            resp.into_string().unwrap_or_default()
+        ))),
         Err(ureq::Error::Transport(t)) => Err(ClientError::Unreachable(t.to_string())),
     }
 }
@@ -92,12 +100,16 @@ pub fn run_dispatch(base_url: &str) -> Result<Vec<Assignment>, ClientError> {
         // no TLS needed for loopback-only HTTP) - real compile error
         // found live, not guessed at.
         Ok(response) => {
-            let text = response.into_string().map_err(|e| ClientError::BadResponse(e.to_string()))?;
-            serde_json::from_str::<Vec<Assignment>>(&text).map_err(|e| ClientError::BadResponse(e.to_string()))
+            let text = response
+                .into_string()
+                .map_err(|e| ClientError::BadResponse(e.to_string()))?;
+            serde_json::from_str::<Vec<Assignment>>(&text)
+                .map_err(|e| ClientError::BadResponse(e.to_string()))
         }
-        Err(ureq::Error::Status(code, resp)) => {
-            Err(ClientError::BadResponse(format!("HTTP {code}: {}", resp.into_string().unwrap_or_default())))
-        }
+        Err(ureq::Error::Status(code, resp)) => Err(ClientError::BadResponse(format!(
+            "HTTP {code}: {}",
+            resp.into_string().unwrap_or_default()
+        ))),
         Err(ureq::Error::Transport(t)) => Err(ClientError::Unreachable(t.to_string())),
     }
 }
@@ -114,6 +126,15 @@ mod tests {
     /// fixed `status`+`body`, and reports back the raw request text it
     /// received so a test can assert on the real method/path/body this
     /// client actually sent - not just that "something" was sent.
+    ///
+    /// Reads in a loop rather than trusting one `stream.read()` call to
+    /// return the whole request: `ureq`'s `send_string()` can write
+    /// headers and body as separate TCP writes, and a loopback stack is
+    /// free to deliver those as separate readable chunks - a single
+    /// non-looping read intermittently captured only the headers here,
+    /// with `Content-Length` correctly declared but the body itself not
+    /// there yet. Reads until it has seen `\r\n\r\n` and, if a
+    /// `Content-Length` header is present, that many body bytes past it.
     fn fake_server(status: u16, body: &'static str) -> (String, std::sync::mpsc::Receiver<String>) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
@@ -121,9 +142,7 @@ mod tests {
 
         thread::spawn(move || {
             if let Ok((mut stream, _)) = listener.accept() {
-                let mut buf = [0u8; 4096];
-                let n = stream.read(&mut buf).unwrap_or(0);
-                let request = String::from_utf8_lossy(&buf[..n]).to_string();
+                let request = read_full_request(&mut stream);
                 let response = format!(
                     "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
                     body.len()
@@ -136,9 +155,54 @@ mod tests {
         (format!("http://127.0.0.1:{port}"), rx)
     }
 
+    /// Reads one full HTTP/1.1 request (headers + declared body, if any)
+    /// off `stream`, tolerating the headers and body arriving as separate
+    /// reads - see `fake_server`'s own doc comment for why a single
+    /// `read()` isn't reliable here.
+    fn read_full_request(stream: &mut std::net::TcpStream) -> String {
+        let mut raw = Vec::new();
+        let mut buf = [0u8; 4096];
+        let header_end = loop {
+            let n = stream.read(&mut buf).unwrap_or(0);
+            if n == 0 {
+                return String::from_utf8_lossy(&raw).to_string();
+            }
+            raw.extend_from_slice(&buf[..n]);
+            if let Some(pos) = find_subslice(&raw, b"\r\n\r\n") {
+                break pos + 4;
+            }
+        };
+
+        let headers = String::from_utf8_lossy(&raw[..header_end]);
+        let content_length: usize = headers
+            .lines()
+            .find_map(|line| {
+                line.to_ascii_lowercase()
+                    .strip_prefix("content-length:")
+                    .map(|v| v.trim().to_string())
+            })
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0);
+
+        while raw.len() < header_end + content_length {
+            let n = stream.read(&mut buf).unwrap_or(0);
+            if n == 0 {
+                break;
+            }
+            raw.extend_from_slice(&buf[..n]);
+        }
+
+        String::from_utf8_lossy(&raw).to_string()
+    }
+
+    fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+        haystack.windows(needle.len()).position(|w| w == needle)
+    }
+
     #[test]
     fn submit_job_sends_a_real_request_with_matching_id_and_dedup_key() {
-        let (base_url, rx) = fake_server(201, r#"{"ID":"m1","Status":"pending","result":"created"}"#);
+        let (base_url, rx) =
+            fake_server(201, r#"{"ID":"m1","Status":"pending","result":"created"}"#);
         let result = submit_job(&base_url, "m1");
         assert!(result.is_ok());
 
@@ -152,7 +216,10 @@ mod tests {
     fn submit_job_treats_409_as_success() {
         let (base_url, _rx) = fake_server(409, r#"{"error":"job ID already exists: \"m1\""}"#);
         let result = submit_job(&base_url, "m1");
-        assert!(result.is_ok(), "a 409 (already submitted) must not be treated as a real failure");
+        assert!(
+            result.is_ok(),
+            "a 409 (already submitted) must not be treated as a real failure"
+        );
     }
 
     #[test]
