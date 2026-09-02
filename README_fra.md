@@ -102,20 +102,24 @@ et isolées, mais pas à ce processus central.
 ```text
 HYDRA-UMC-ORCHESTRATOR/
 ├── src/
-│   ├── mission.rs    # Machine à états de mission réelle (Mission, MissionRegistry)
-│   └── main.rs       # Point d'entrée + sous-commande réelle `mission-demo`
+│   ├── mission.rs         # Machine à états de mission réelle (Mission, MissionRegistry)
+│   ├── job_dispatcher.rs  # Vrai client pour l'API HTTP propre de HYDRA-UMC-JOB-DISPATCHER
+│   ├── server.rs          # Surface JSON/HTTP simple (tiny_http, bloquant, sans runtime async)
+│   └── main.rs            # Point d'entrée + sous-commande réelle `mission-demo`
 ├── proto/            # Contrat gRPC partagé pour le trafic nœud-à-nœud
 │                     # à travers l'écosystème (voir proto/README.md) -
 │                     # pas seulement l'API de ce dépôt
 ├── docs/             # Documentation et guides d'architecture
 ├── build/            # Binaires compilés (sortie de build.sh/build.bat)
 ├── images/           # Médias et diagrammes
-├── scripts/          # Scripts utilitaires
+├── systemd/
+│   └── hydra-umc-orchestrator.service # Unité systemd de l'API locale mission/dispatch sur la CM5
 ├── tools/
 │   ├── build_test.py # Vérification de build sans versionnage
 │   └── ci_validate.py # Validation manifeste/CHANGELOG/docs utilisée par CI
 ├── Cargo.toml        # Manifeste du paquet Rust (nom, version, dépendances)
-├── bump_version.py   # Incrément de version type compteur kilométrique
+├── bump_version.py   # Incrément de version native type compteur kilométrique
+├── bump_manifest_version.py # Synchronise la version de hydra-umc.project.json avec la version native (--sync)
 ├── build.sh/.bat     # Incrémente la version puis `cargo build --release`
 ├── build-test.sh/.bat # Vérification de build sans versionnage
 ├── run.sh/.bat       # Exécute le binaire compilé

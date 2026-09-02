@@ -102,20 +102,24 @@ jobs; it is not the trade-off this particular "brain" process needs.
 ```text
 HYDRA-UMC-ORCHESTRATOR/
 ├── src/
-│   ├── mission.rs    # Real mission state machine (Mission, MissionRegistry)
-│   └── main.rs       # Entry point + real `mission-demo` subcommand
+│   ├── mission.rs         # Real mission state machine (Mission, MissionRegistry)
+│   ├── job_dispatcher.rs  # Real client for HYDRA-UMC-JOB-DISPATCHER's own HTTP API
+│   ├── server.rs          # Plain JSON/HTTP surface (tiny_http, blocking, no async runtime)
+│   └── main.rs            # Entry point + real `mission-demo` subcommand
 ├── proto/            # Shared gRPC contract for node-to-node traffic
 │                     # across the ecosystem (see proto/README.md) -
 │                     # not just this repo's own API
 ├── docs/             # Documentation and architecture guides
 ├── build/            # Compiled binaries (build.sh/build.bat output)
 ├── images/           # Media and diagrams
-├── scripts/          # Utility scripts
+├── systemd/
+│   └── hydra-umc-orchestrator.service # Local CM5 mission/dispatch API systemd unit
 ├── tools/
 │   ├── build_test.py # Non-versioning build/compile check
 │   └── ci_validate.py # Manifest/CHANGELOG/docs validation used by CI
 ├── Cargo.toml        # Rust package manifest (name, version, deps)
-├── bump_version.py   # Odometer-style version bump, run by build.sh/.bat
+├── bump_version.py   # Odometer-style native version bump, run by build.sh/.bat
+├── bump_manifest_version.py # Syncs hydra-umc.project.json's version to the native one (--sync)
 ├── build.sh/.bat     # Bumps version, then `cargo build --release`
 ├── build-test.sh/.bat # Non-versioning build check (no CHANGELOG/version bump)
 ├── run.sh/.bat       # Runs the compiled binary

@@ -92,6 +92,8 @@ E-STOP を発行し、どのロボットがどのミッションを担当する�
 HYDRA-UMC-ORCHESTRATOR/
 ├── src/
 │   ├── mission.rs    # 実際のミッション状態機械（Mission、MissionRegistry）
+│   ├── job_dispatcher.rs  # HYDRA-UMC-JOB-DISPATCHER自身のHTTP APIに対する実際のクライアント
+│   ├── server.rs          # シンプルなJSON/HTTPサーフェス(tiny_http、ブロッキング、非同期ランタイムなし)
 │   └── main.rs       # エントリポイント + 実際の `mission-demo` サブコマンド
 ├── proto/            # エコシステム全体のノード間通信のための共有 gRPC
 │                     # コントラクト（proto/README.md を参照）——本リポ
@@ -99,12 +101,14 @@ HYDRA-UMC-ORCHESTRATOR/
 ├── docs/             # ドキュメントとアーキテクチャガイド
 ├── build/            # コンパイル済みバイナリ（build.sh/build.bat の出力）
 ├── images/           # メディアと図表
-├── scripts/          # ユーティリティスクリプト
+├── systemd/
+│   └── hydra-umc-orchestrator.service # ローカルCM5 mission/dispatch APIのsystemdユニット
 ├── tools/
 │   ├── build_test.py # バージョンを増やさないビルドチェック
 │   └── ci_validate.py # CI が使用するマニフェスト/CHANGELOG/ドキュメント検証
 ├── Cargo.toml        # Rust パッケージマニフェスト（名前、バージョン、依存関係）
-├── bump_version.py   # オドメーター式バージョンインクリメント、build.sh/.bat が実行
+├── bump_version.py   # ネイティブバージョンのオドメーター式インクリメント、build.sh/.bat が実行
+├── bump_manifest_version.py # hydra-umc.project.json のバージョンをネイティブ版と同期(--sync)
 ├── build.sh/.bat     # バージョンを増加させ、その後 `cargo build --release` を実行
 ├── build-test.sh/.bat # バージョンを増やさないビルドチェック
 ├── run.sh/.bat       # コンパイル済みバイナリを実行

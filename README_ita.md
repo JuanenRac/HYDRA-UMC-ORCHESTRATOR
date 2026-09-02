@@ -101,20 +101,24 @@ isolati, ma non a questo processo centrale.
 ```text
 HYDRA-UMC-ORCHESTRATOR/
 ├── src/
-│   ├── mission.rs    # Macchina a stati della missione reale (Mission, MissionRegistry)
-│   └── main.rs       # Entry point + sottocomando reale `mission-demo`
+│   ├── mission.rs         # Macchina a stati della missione reale (Mission, MissionRegistry)
+│   ├── job_dispatcher.rs  # Client reale per la API HTTP propria di HYDRA-UMC-JOB-DISPATCHER
+│   ├── server.rs          # Superficie JSON/HTTP semplice (tiny_http, bloccante, senza runtime async)
+│   └── main.rs            # Entry point + sottocomando reale `mission-demo`
 ├── proto/            # Contratto gRPC condiviso per il traffico nodo-a-nodo
 │                     # in tutto l'ecosistema (vedi proto/README.md) - non
 │                     # solo l'API di questo repo
 ├── docs/             # Documentazione e guide all'architettura
 ├── build/            # Binari compilati (output di build.sh/build.bat)
 ├── images/           # Media e diagrammi
-├── scripts/          # Script di utilità
+├── systemd/
+│   └── hydra-umc-orchestrator.service # Unità systemd della API locale mission/dispatch sulla CM5
 ├── tools/
 │   ├── build_test.py # Controllo build senza versionamento
 │   └── ci_validate.py # Validazione manifest/CHANGELOG/docs usata dalla CI
 ├── Cargo.toml        # Manifesto del pacchetto Rust (nome, versione, dep)
-├── bump_version.py   # Bump di versione stile contachilometri
+├── bump_version.py   # Bump di versione nativa stile contachilometri
+├── bump_manifest_version.py # Sincronizza la versione di hydra-umc.project.json con quella nativa (--sync)
 ├── build.sh/.bat     # Aggiorna la versione, poi `cargo build --release`
 ├── build-test.sh/.bat # Controllo build senza versionamento
 ├── run.sh/.bat       # Esegue il binario compilato

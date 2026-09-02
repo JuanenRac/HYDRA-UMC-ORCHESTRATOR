@@ -83,19 +83,23 @@ flowchart TB
 ```text
 HYDRA-UMC-ORCHESTRATOR/
 ├── src/
-│   ├── mission.rs    # 真实的任务状态机（Mission、MissionRegistry）
-│   └── main.rs       # 入口点 + 真实的 `mission-demo` 子命令
+│   ├── mission.rs         # 真实的任务状态机（Mission、MissionRegistry）
+│   ├── job_dispatcher.rs  # 面向 HYDRA-UMC-JOB-DISPATCHER 自身 HTTP API 的真实客户端
+│   ├── server.rs          # 简洁的 JSON/HTTP 接口(tiny_http,阻塞式,无异步运行时)
+│   └── main.rs            # 入口点 + 真实的 `mission-demo` 子命令
 ├── proto/            # 用于整个生态系统节点间通信的共享 gRPC 契约
 │                     # （见 proto/README.md）——不仅仅是本仓库自身的 API
 ├── docs/             # 文档与架构指南
 ├── build/            # 编译后的二进制文件（build.sh/build.bat 的输出）
 ├── images/           # 媒体与图表
-├── scripts/          # 实用脚本
+├── systemd/
+│   └── hydra-umc-orchestrator.service # 本地 CM5 mission/dispatch API 的 systemd 单元
 ├── tools/
 │   ├── build_test.py # 不递增版本号的构建检查
 │   └── ci_validate.py # CI 使用的清单/CHANGELOG/文档校验
 ├── Cargo.toml        # Rust 包清单（名称、版本、依赖项）
-├── bump_version.py   # 里程表式版本递增，由 build.sh/.bat 运行
+├── bump_version.py   # 原生版本的里程表式递增，由 build.sh/.bat 运行
+├── bump_manifest_version.py # 将 hydra-umc.project.json 的版本与原生版本同步(--sync)
 ├── build.sh/.bat     # 递增版本号，然后执行 `cargo build --release`
 ├── build-test.sh/.bat # 不递增版本号的构建检查
 ├── run.sh/.bat       # 运行编译后的二进制文件
