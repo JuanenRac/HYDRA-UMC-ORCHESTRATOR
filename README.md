@@ -173,7 +173,7 @@ odometer rule, see `bump_version.py`) and then run `cargo build --release`.
 ```
 
 ```bash
-cargo test   # 22 tests: every transition, every invalid-transition
+cargo test   # 42 tests: every transition, every invalid-transition
              # rejection, idempotent cancel, and node-failure recovery
 ```
 

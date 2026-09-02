@@ -176,7 +176,7 @@ aus:
 ```
 
 ```bash
-cargo test   # 22 Tests: jede Zustandsänderung, jede Ablehnung einer
+cargo test   # 42 Tests: jede Zustandsänderung, jede Ablehnung einer
              # ungültigen Zustandsänderung, idempotente Stornierung und
              # Wiederherstellung nach Knotenausfall
 ```

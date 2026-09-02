@@ -175,7 +175,7 @@ résultant.
 ```
 
 ```bash
-cargo test   # 22 tests : chaque transition, chaque rejet de transition
+cargo test   # 42 tests : chaque transition, chaque rejet de transition
              # invalide, annulation idempotente et récupération après
              # défaillance de nœud
 ```

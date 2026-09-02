@@ -174,7 +174,7 @@ risultante.
 ```
 
 ```bash
-cargo test   # 22 test: ogni transizione, ogni rifiuto di transizione
+cargo test   # 42 test: ogni transizione, ogni rifiuto di transizione
              # non valida, cancellazione idempotente e recupero dopo
              # guasto nodo
 ```

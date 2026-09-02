@@ -176,7 +176,7 @@ resultante.
 ```
 
 ```bash
-cargo test   # 22 tests: cada transición, cada rechazo de transición
+cargo test   # 42 tests: cada transición, cada rechazo de transición
              # invalida, cancelación idempotente y recuperación tras
              # fallo de nodo
 ```
