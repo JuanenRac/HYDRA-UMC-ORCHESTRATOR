@@ -96,6 +96,8 @@ más simples y aislados; no es el compromiso que necesita este proceso central.
 * **Por qué `cancel()` es idempotente en vez de fallar sobre una misión ya cancelada.** Una solicitud de cancelación puede llegar dos veces legítimamente - un cliente reintentando tras una respuesta perdida, un operador pulsando cancelar de nuevo antes de ver la confirmación. Tratar la segunda llamada como un éxito (`AlreadyCancelled`, no un error) significa que quien llama nunca tiene que distinguir "mi cancelación funcionó" de "la cancelación de otro ya funcionó" - ambos son el mismo buen resultado. Cancelar una misión `Completed`/`Failed` sigue rechazándose: eso sí es una situación genuinamente distinta, no idempotente (deshacer trabajo terminado), no un reintento.
 * **Por qué la recuperación tras fallo de nodo reencola a `Pending` en vez de fallar la misión directamente.** Un nodo que reporta `UNREACHABLE` podría estar reiniciándose en vez de haber desaparecido permanentemente (ver la propia lógica de reintentos acotados de `HYDRA-UMC-NODE-HEALING`, que ya absorbe baches transitorios antes de reportar siquiera un nodo caído) - así que una misión atrapada en ese nodo recibe una nueva oportunidad en otro nodo vía `Pending`, en vez de marcarse `Failed` a la primera señal de problema. `fail()` sigue existiendo para cuando el reencolado agota genuinamente las opciones.
 
+Para cada ejemplo real de mission-demo/CLI (capturado de un binario compilado real), ver [`docs/CLI_REFERENCE.md`](docs/CLI_REFERENCE.md). Para el contrato gRPC compartido `hydra.common.v1` en sí - qué define, por qué vive en este repo y cómo cada lenguaje genera sus propios bindings - ver [`proto/README.md`](proto/README.md).
+
 ---
 
 ## 📂 ESTRUCTURA DE DIRECTORIOS

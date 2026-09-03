@@ -95,6 +95,8 @@ jobs; it is not the trade-off this particular "brain" process needs.
 * **Why `cancel()` is idempotent instead of erroring on an already-cancelled mission.** A cancel request can legitimately arrive twice - a client retrying after a dropped response, an operator clicking cancel again before seeing confirmation. Treating the second call as a success (`AlreadyCancelled`, not an error) means the caller never has to distinguish "my cancel worked" from "someone else's cancel already worked" - both are the same good outcome. Cancelling a `Completed`/`Failed` mission is still refused: that is a genuinely different, non-idempotent situation (undoing finished work), not a retry.
 * **Why node-failure recovery requeues to `Pending` instead of failing the mission outright.** A node reporting `UNREACHABLE` might be mid-restart rather than permanently gone (see `HYDRA-UMC-NODE-HEALING`'s own bounded-retry logic, which already absorbs transient blips before ever reporting a node down at all) - so a mission caught on that node gets a fresh shot at a different node via `Pending`, rather than being marked `Failed` on the first sign of trouble. `fail()` still exists for when redispatch genuinely runs out of options.
 
+For every real `mission-demo`/CLI example (captured from an actual built binary), see [`docs/CLI_REFERENCE.md`](docs/CLI_REFERENCE.md). For the shared `hydra.common.v1` gRPC contract itself - what it defines, why it lives in this repo, and how each language generates its own bindings from it - see [`proto/README.md`](proto/README.md).
+
 ---
 
 ## 📂 DIRECTORY STRUCTURE

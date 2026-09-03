@@ -2,31 +2,6 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased] - Shared gRPC contract (proto/)
-
-- New `proto/hydra_common.proto` - the shared gRPC schema for node-to-node
-  traffic across the ecosystem's Vision AI Node, Cognitive AI Node,
-  Orchestration & Swarm, and Digital Twin & Simulation families. Defines
-  `NodeIdentity`, `HealthReport`, and `HealthService` - the one contract
-  every node is expected to implement, so HYDRA-UMC-NODE-HEALING can probe
-  any node in the ecosystem uniformly instead of each family inventing its
-  own ad-hoc health check. Per-family business services (detections,
-  intents, job dispatch, physics stepping, ...) are deliberately not
-  defined yet - see `proto/README.md` for why.
-- New `proto/README.md` documenting the file, why it lives here instead of
-  a dedicated repo, and how each language (Python/Rust/Go/Node) generates
-  its own bindings from it.
-- `README.md` (all 7 languages) directory-structure section updated to
-  list `proto/`.
-- Verified for real: compiled with `grpc_tools.protoc` (Python target,
-  `python -m grpc_tools.protoc -I proto --python_out=... proto/hydra_common.proto`)
-  with a clean exit code, then used the generated stub to build a real
-  `HealthReport` message, serialize it to bytes, and parse it back -
-  `identity.name` and a custom `metrics` entry both round-tripped exactly.
-  Not just written to look plausible - genuinely valid protobuf3.
-- The public protocol comments describe the current contract and its
-  compatibility boundaries.
-
 ## [0.0.6]
 
 - **Fixed CI**: `cargo fmt --check` was failing on `src/job_dispatcher.rs`
@@ -127,6 +102,26 @@ All notable changes to this project will be documented in this file.
 
 ## [0.0.2]
 ### Added
+- New `proto/hydra_common.proto` - the shared gRPC schema for node-to-node
+  traffic across the ecosystem's Vision AI Node, Cognitive AI Node,
+  Orchestration & Swarm, and Digital Twin & Simulation families. Defines
+  `NodeIdentity`, `HealthReport`, and `HealthService` - the one contract
+  every node is expected to implement, so HYDRA-UMC-NODE-HEALING can probe
+  any node in the ecosystem uniformly instead of each family inventing its
+  own ad-hoc health check. Per-family business services (detections,
+  intents, job dispatch, physics stepping, ...) are deliberately not
+  defined yet - see `proto/README.md` for why.
+- New `proto/README.md` documenting the file, why it lives here instead of
+  a dedicated repo, and how each language (Python/Rust/Go/Node) generates
+  its own bindings from it.
+- `README.md` (all 7 languages) directory-structure section updated to
+  list `proto/`.
+- Verified for real: compiled with `grpc_tools.protoc` (Python target,
+  `python -m grpc_tools.protoc -I proto --python_out=... proto/hydra_common.proto`)
+  with a clean exit code, then used the generated stub to build a real
+  `HealthReport` message, serialize it to bytes, and parse it back -
+  `identity.name` and a custom `metrics` entry both round-tripped exactly.
+  Not just written to look plausible - genuinely valid protobuf3.
 - Copyright headers on `run.bat` and `run.sh`, matching the header already
   present on `src/main.rs`, `bump_version.py`, `build.bat` and `build.sh`.
 - Inline "why" comments across `src/main.rs`, `bump_version.py`, `build.bat`,

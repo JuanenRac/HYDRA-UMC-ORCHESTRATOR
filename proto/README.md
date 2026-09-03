@@ -25,9 +25,7 @@ Per-family business services (vision detections, cognitive intents, job
 dispatch, physics stepping, ...) are intentionally **not** defined yet -
 each gets its own `.proto` file once that node's real logic lands, so the
 message shape is designed against an actual implementation instead of
-guessed in advance. The intended flow for each family is documented (not
-yet as final `.proto` message definitions) in this ecosystem's own private
-planning notes.
+guessed in advance.
 
 ## Generating language bindings
 
