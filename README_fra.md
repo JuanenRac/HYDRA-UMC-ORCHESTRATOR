@@ -286,6 +286,16 @@ Ce projet fait partie de l'écosystème robotique HYDRA-UMC du même auteur (Jua
 - **[HYDRA-UMC-UPDATER](https://github.com/JuanenRac/HYDRA-UMC-UPDATER)** — outil administratif de bureau qui découvre, clone et met à jour chaque dépôt de cet écosystème.
 
 
+---
+
+## 📚 Documentation & Communauté
+
+- **[CONTRIBUTING.md](CONTRIBUTING.md)** — pile technologique et lignes directrices de codage pour une pull request.
+- **[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)** — les normes de comportement attendues dans cette communauté.
+- **[SECURITY.md](SECURITY.md)** — comment signaler une vulnérabilité, et les véritables axes de sécurité de ce projet.
+- **[SUPPORT.md](SUPPORT.md)** — où poser des questions et signaler des bugs.
+- **[LICENSE.md](LICENSE.md)** — la licence propre de ce projet.
+
 ## 👤 AUTEUR
 **JuanenRac** (Electro Hobby 3D)
 📧 electrohobby3d@gmail.com
