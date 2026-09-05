@@ -439,6 +439,31 @@ mod tests {
     use std::net::TcpStream;
     use std::thread;
 
+    /// Real, reproducible flake found here (not a theory): every test in
+    /// this module binds its own real OS-assigned TCP port(s)
+    /// (`start_test_server`/`fake_job_dispatcher`) and makes real
+    /// blocking socket calls against them. `cargo test`'s default
+    /// multi-threaded runner fires all of them at once, and under enough
+    /// concurrent raw-socket traffic on this dev machine,
+    /// `add_submits_the_real_mission_to_job_dispatcher_when_configured`
+    /// intermittently saw its own `ureq::post` to its own
+    /// `fake_job_dispatcher` fail as a transport error (reproduced with
+    /// `cargo test --all-targets`, disappeared every time under
+    /// `--test-threads=1`) - real OS/scheduler contention between this
+    /// file's own tests, not a production bug (the exact same
+    /// `submit_job` code path is what a real, unhurried single request
+    /// already exercises correctly). Serializing this file's own tests
+    /// behind one lock removes the contention at its real source instead
+    /// of adding a retry to production code for a problem production
+    /// never actually has.
+    fn net_test_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: Mutex<()> = Mutex::new(());
+        match LOCK.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        }
+    }
+
     fn start_test_server() -> u16 {
         start_test_server_with_job_dispatcher(None)
     }
@@ -504,6 +529,7 @@ mod tests {
 
     #[test]
     fn add_mission_starts_pending() {
+        let _guard = net_test_lock();
         let port = start_test_server();
         let (status, body) = post(port, "/missions", r#"{"id":"m1"}"#);
         assert_eq!(status, 200);
@@ -512,6 +538,7 @@ mod tests {
 
     #[test]
     fn full_happy_path_via_http() {
+        let _guard = net_test_lock();
         let port = start_test_server();
         post(port, "/missions", r#"{"id":"m1"}"#);
         let (status, body) = post(port, "/missions/m1/dispatch", r#"{"node":"node-a"}"#);
@@ -530,6 +557,7 @@ mod tests {
 
     #[test]
     fn invalid_transition_is_409() {
+        let _guard = net_test_lock();
         let port = start_test_server();
         post(port, "/missions", r#"{"id":"m1"}"#);
         // start before dispatch is invalid - still Pending.
@@ -540,6 +568,7 @@ mod tests {
 
     #[test]
     fn cancel_is_idempotent_via_http() {
+        let _guard = net_test_lock();
         let port = start_test_server();
         post(port, "/missions", r#"{"id":"m1"}"#);
         let (status, body) = post(port, "/missions/m1/cancel", "");
@@ -552,6 +581,7 @@ mod tests {
 
     #[test]
     fn fail_records_a_reason() {
+        let _guard = net_test_lock();
         let port = start_test_server();
         post(port, "/missions", r#"{"id":"m1"}"#);
         let (status, body) = post(port, "/missions/m1/fail", r#"{"reason":"no healthy node"}"#);
@@ -561,6 +591,7 @@ mod tests {
 
     #[test]
     fn recover_requeues_only_missions_on_the_affected_node() {
+        let _guard = net_test_lock();
         let port = start_test_server();
         post(port, "/missions", r#"{"id":"m1"}"#);
         post(port, "/missions", r#"{"id":"m2"}"#);
@@ -578,6 +609,7 @@ mod tests {
 
     #[test]
     fn list_and_get_missions() {
+        let _guard = net_test_lock();
         let port = start_test_server();
         post(port, "/missions", r#"{"id":"m1"}"#);
         let (status, body) = get(port, "/missions");
@@ -590,6 +622,7 @@ mod tests {
 
     #[test]
     fn stats_reports_mission_count() {
+        let _guard = net_test_lock();
         let port = start_test_server();
         post(port, "/missions", r#"{"id":"m1"}"#);
         post(port, "/missions", r#"{"id":"m2"}"#);
@@ -600,6 +633,7 @@ mod tests {
 
     #[test]
     fn unknown_path_is_404() {
+        let _guard = net_test_lock();
         let port = start_test_server();
         let (status, _) = get(port, "/nope");
         assert_eq!(status, 404);
@@ -607,6 +641,7 @@ mod tests {
 
     #[test]
     fn add_without_job_dispatcher_configured_reports_it_honestly() {
+        let _guard = net_test_lock();
         let port = start_test_server(); // no job_dispatcher_url
         let (status, body) = post(port, "/missions", r#"{"id":"m1"}"#);
         assert_eq!(status, 200);
@@ -616,6 +651,7 @@ mod tests {
 
     #[test]
     fn add_submits_the_real_mission_to_job_dispatcher_when_configured() {
+        let _guard = net_test_lock();
         let jd_url =
             fake_job_dispatcher(201, r#"{"ID":"m1","Status":"pending","result":"created"}"#);
         let port = start_test_server_with_job_dispatcher(Some(jd_url));
@@ -626,6 +662,7 @@ mod tests {
 
     #[test]
     fn auto_dispatch_without_job_dispatcher_configured_is_503() {
+        let _guard = net_test_lock();
         let port = start_test_server();
         post(port, "/missions", r#"{"id":"m1"}"#);
         let (status, _) = post(port, "/missions/m1/auto-dispatch", "");
@@ -634,6 +671,7 @@ mod tests {
 
     #[test]
     fn auto_dispatch_unknown_mission_is_404() {
+        let _guard = net_test_lock();
         let jd_url = fake_job_dispatcher(200, "[]");
         let port = start_test_server_with_job_dispatcher(Some(jd_url));
         let (status, _) = post(port, "/missions/does-not-exist/auto-dispatch", "");
@@ -642,6 +680,7 @@ mod tests {
 
     #[test]
     fn auto_dispatch_transitions_the_mission_to_whatever_robot_job_dispatcher_assigned() {
+        let _guard = net_test_lock();
         let jd_url = fake_job_dispatcher(200, r#"[{"JobID":"m1","RobotID":"arm-3"}]"#);
         let port = start_test_server_with_job_dispatcher(Some(jd_url));
         post(port, "/missions", r#"{"id":"m1"}"#);
@@ -658,6 +697,7 @@ mod tests {
 
     #[test]
     fn auto_dispatch_reports_honestly_when_no_robot_matched_this_pass() {
+        let _guard = net_test_lock();
         let jd_url = fake_job_dispatcher(200, "[]"); // real, empty dispatch pass
         let port = start_test_server_with_job_dispatcher(Some(jd_url));
         post(port, "/missions", r#"{"id":"m1"}"#);
