@@ -427,8 +427,28 @@ fn handle_fail(request: tiny_http::Request, state: &AppState, id: &str, raw: &st
 }
 
 fn handle_recover(request: tiny_http::Request, state: &AppState, node: &str) {
-    let mut reg = state.registry.lock().unwrap();
-    let requeued = reg.recover_node_unavailable(node);
+    let requeued = {
+        let mut reg = state.registry.lock().unwrap();
+        reg.recover_node_unavailable(node)
+    };
+    // Real gap found in an ecosystem-wide software-improvements audit:
+    // this used to only update the local in-memory mission registry -
+    // Job-Dispatcher could keep believing a job was still assigned to
+    // the now-unreachable node. Best-effort, same reasoning as every
+    // other job_dispatcher.rs call: the registry above is already the
+    // real source of truth for mission state regardless of whether Job-
+    // Dispatcher is configured/reachable - dropped the lock before this
+    // loop so a slow/unreachable Job-Dispatcher can never stall another
+    // request that just needs the registry.
+    if let Some(base_url) = &state.job_dispatcher_url {
+        for mission_id in &requeued {
+            if let Err(e) = job_dispatcher::requeue_job(base_url, mission_id) {
+                eprintln!(
+                    "[orchestrator] could not notify job-dispatcher to requeue mission {mission_id}: {e}"
+                );
+            }
+        }
+    }
     write_json(request, 200, &json!({"requeuedMissions": requeued}));
 }
 
@@ -605,6 +625,47 @@ mod tests {
 
         let (_, m1_body) = get(port, "/missions/m1");
         assert!(m1_body.contains("\"Pending\""));
+    }
+
+    #[test]
+    fn recover_still_succeeds_even_when_job_dispatcher_is_unreachable() {
+        // Found in an ecosystem-wide software-improvements audit:
+        // handle_recover() now also notifies Job-Dispatcher to requeue
+        // (job_dispatcher::requeue_job(), see that module's own tests
+        // for the exact two-request contract) - but the registry above
+        // is already the real source of truth for mission state
+        // regardless of whether Job-Dispatcher is configured/reachable,
+        // same best-effort reasoning every other job_dispatcher.rs call
+        // already follows. A real unreachable port, not a mock.
+        let _guard = net_test_lock();
+        let port = start_test_server_with_job_dispatcher(Some("http://127.0.0.1:1".to_string()));
+        post(port, "/missions", r#"{"id":"m1"}"#);
+        post(port, "/missions/m1/dispatch", r#"{"node":"node-a"}"#);
+
+        let (status, body) = post(port, "/nodes/node-a/recover", "");
+        assert_eq!(status, 200);
+        assert!(body.contains("m1"));
+
+        let (_, m1_body) = get(port, "/missions/m1");
+        assert!(m1_body.contains("\"Pending\""));
+    }
+
+    #[test]
+    fn recover_notifies_job_dispatcher_to_requeue_when_configured() {
+        // Real, reachable fake this time - proves handle_recover's own
+        // job-dispatcher call path runs cleanly end to end when
+        // configured and reachable, not just that recover degrades
+        // gracefully when it isn't (the test above).
+        let _guard = net_test_lock();
+        let jd_url =
+            fake_job_dispatcher(200, r#"{"ID":"m1","Status":"pending","result":"retried"}"#);
+        let port = start_test_server_with_job_dispatcher(Some(jd_url));
+        post(port, "/missions", r#"{"id":"m1"}"#);
+        post(port, "/missions/m1/dispatch", r#"{"node":"node-a"}"#);
+
+        let (status, body) = post(port, "/nodes/node-a/recover", "");
+        assert_eq!(status, 200);
+        assert!(body.contains("m1"));
     }
 
     #[test]

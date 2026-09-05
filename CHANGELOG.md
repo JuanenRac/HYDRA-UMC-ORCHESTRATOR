@@ -2,6 +2,31 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased - real requeue notification to Job-Dispatcher
+
+- **New `job_dispatcher::requeue_job()`, called from `handle_recover()`**
+  - found in an ecosystem-wide software-improvements audit:
+  `POST /nodes/:node/recover` only ever updated the local in-memory
+  mission registry, never Job-Dispatcher - so Job-Dispatcher could keep
+  believing a job was still assigned to a node that just went
+  unreachable. Uses Job-Dispatcher's own existing, documented contract,
+  no new endpoint needed on that side: `POST /jobs/complete
+  {success: false}` marks the job "failed" (only valid from its real
+  "assigned" state - exactly the state a job whose robot just went
+  unreachable should be in), then `POST /jobs/submit` with the same
+  `dedupKey` `submit_job()` already used (the mission's own id) hits the
+  real, documented "retried" path - resetting the job to "pending" under
+  its original id, eligible for the next real `POST /dispatch` pass.
+  Best-effort, same reasoning as `submit_job()`: a mission with no
+  matching job on Job-Dispatcher's side (never submitted there, or
+  already finished on its own) is a real, benign no-op, not a failure.
+  Dropped the mission-registry lock before making this network call, so
+  a slow/unreachable Job-Dispatcher can never stall another request that
+  only needs the registry. New tests cover the real two-request sequence
+  in isolation and `handle_recover()`'s own graceful degradation when
+  Job-Dispatcher is configured but unreachable. 47/47 tests pass
+  (cargo fmt/clippy/test, 3 consecutive runs).
+
 ## [0.0.6]
 
 - **Fixed CI**: `cargo fmt --check` was failing on `src/job_dispatcher.rs`

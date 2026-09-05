@@ -21,6 +21,12 @@ struct SubmitRequest<'a> {
     dedup_key: &'a str,
 }
 
+#[derive(Serialize)]
+struct CompleteRequest<'a> {
+    id: &'a str,
+    success: bool,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct Assignment {
     #[serde(rename = "JobID")]
@@ -82,6 +88,58 @@ pub fn submit_job(base_url: &str, mission_id: &str) -> Result<(), ClientError> {
         ))),
         Err(ureq::Error::Transport(t)) => Err(ClientError::Unreachable(t.to_string())),
     }
+}
+
+/// Tells Job-Dispatcher a mission's already-dispatched job needs
+/// redistributing - found in an ecosystem-wide software-improvements
+/// audit: `handle_recover()` in `server.rs` only ever updated the local
+/// in-memory mission registry, never this real integration, so Job-
+/// Dispatcher could keep believing a job was still assigned to a node
+/// that just went unreachable.
+///
+/// Uses Job-Dispatcher's own existing, documented contract - no new
+/// endpoint needed on that side (see that repo's own `docs/API.md`):
+/// `POST /jobs/complete {success: false}` marks the job "failed" (only
+/// valid from the real "assigned" state - exactly the state a job whose
+/// robot just went unreachable should be in), then `POST /jobs/submit`
+/// with the SAME `dedupKey` `submit_job()` already used for this mission
+/// (its own id) hits the real, documented "retried" path: Job-Dispatcher
+/// resets the job to "pending" under its original id, making it eligible
+/// for the next real `POST /dispatch` pass to assign to a different,
+/// healthy robot.
+///
+/// Best-effort, same reasoning as `submit_job()`: a 400 from
+/// `/jobs/complete` means this mission's job was never actually in the
+/// "assigned" state on Job-Dispatcher's side (never submitted there at
+/// all, or already finished on its own) - nothing real to requeue, not a
+/// failure of this call.
+pub fn requeue_job(base_url: &str, mission_id: &str) -> Result<(), ClientError> {
+    let base_url = base_url.trim_end_matches('/');
+    let complete_url = format!("{base_url}/jobs/complete");
+    let complete_body = CompleteRequest {
+        id: mission_id,
+        success: false,
+    };
+    let complete_result = ureq::post(&complete_url)
+        .set("Content-Type", "application/json")
+        .send_string(
+            &serde_json::to_string(&complete_body)
+                .map_err(|e| ClientError::BadResponse(e.to_string()))?,
+        );
+
+    match complete_result {
+        Ok(_) => {}
+        Err(ureq::Error::Status(400, _)) => return Ok(()),
+        Err(ureq::Error::Status(code, resp)) => {
+            return Err(ClientError::BadResponse(format!(
+                "HTTP {code}: {}",
+                resp.into_string().unwrap_or_default()
+            )))
+        }
+        Err(ureq::Error::Transport(t)) => return Err(ClientError::Unreachable(t.to_string())),
+    }
+
+    submit_job(base_url, mission_id)
 }
 
 /// Runs one real dispatch pass on Job-Dispatcher and returns every
@@ -225,6 +283,76 @@ mod tests {
     #[test]
     fn submit_job_reports_unreachable_when_nothing_is_listening() {
         let result = submit_job("http://127.0.0.1:1", "m1");
+        assert!(matches!(result, Err(ClientError::Unreachable(_))));
+    }
+
+    /// A tiny, real fake Job-Dispatcher answering TWO sequential requests
+    /// (unlike `fake_server`'s own single-request shape) - `requeue_job()`
+    /// makes a real `/jobs/complete` call followed by a real
+    /// `/jobs/submit` call, and this test needs to observe both.
+    fn fake_server_two_requests(
+        first_status: u16,
+        first_body: &'static str,
+        second_status: u16,
+        second_body: &'static str,
+    ) -> (String, std::sync::mpsc::Receiver<String>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (tx, rx) = std::sync::mpsc::channel();
+
+        thread::spawn(move || {
+            for (status, body) in [(first_status, first_body), (second_status, second_body)] {
+                if let Ok((mut stream, _)) = listener.accept() {
+                    let request = read_full_request(&mut stream);
+                    let response = format!(
+                        "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = stream.write_all(response.as_bytes());
+                    let _ = tx.send(request);
+                }
+            }
+        });
+
+        (format!("http://127.0.0.1:{port}"), rx)
+    }
+
+    #[test]
+    fn requeue_job_completes_as_failed_then_resubmits_with_the_same_dedup_key() {
+        let (base_url, rx) = fake_server_two_requests(
+            200,
+            r#"{"ID":"m1","Status":"failed"}"#,
+            200,
+            r#"{"ID":"m1","Status":"pending","result":"retried"}"#,
+        );
+
+        let result = requeue_job(&base_url, "m1");
+        assert!(result.is_ok());
+
+        let complete_request = rx.recv_timeout(std::time::Duration::from_secs(2)).unwrap();
+        assert!(complete_request.starts_with("POST /jobs/complete"));
+        assert!(complete_request.contains("\"id\":\"m1\""));
+        assert!(complete_request.contains("\"success\":false"));
+
+        let submit_request = rx.recv_timeout(std::time::Duration::from_secs(2)).unwrap();
+        assert!(submit_request.starts_with("POST /jobs/submit"));
+        assert!(submit_request.contains("\"id\":\"m1\""));
+        assert!(submit_request.contains("\"dedupKey\":\"m1\""));
+    }
+
+    #[test]
+    fn requeue_job_treats_a_job_not_in_the_assigned_state_as_a_benign_no_op() {
+        // Real, expected outcome when this mission's job was never
+        // actually dispatched on Job-Dispatcher's side (or already
+        // finished on its own) - not a failure of THIS call.
+        let (base_url, _rx) = fake_server(400, r#"{"error":"job is not in the assigned state"}"#);
+        let result = requeue_job(&base_url, "m1");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn requeue_job_reports_unreachable_when_nothing_is_listening() {
+        let result = requeue_job("http://127.0.0.1:1", "m1");
         assert!(matches!(result, Err(ClientError::Unreachable(_))));
     }
 
