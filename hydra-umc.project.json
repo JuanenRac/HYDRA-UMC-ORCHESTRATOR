@@ -1,0 +1,26 @@
+{
+  "schema_version": "1.0",
+  "ecosystem": "HYDRA-UMC",
+  "name": "HYDRA-UMC-ORCHESTRATOR",
+  "version": "0.0.9",
+  "role": "service",
+  "stack": "rust",
+  "technologies": [
+    "Rust",
+    "Tokio",
+    "gRPC/Protobuf"
+  ],
+  "deployment_target": "cm5",
+  "maturity": "established",
+  "family": "Orchestration & Swarm",
+  "parent": null,
+  "build": "cargo build --release.",
+  "notes": "Established v0: real gRPC/Protobuf health-report schema, verified by actually compiling it with grpc_tools.protoc and round-tripping a real HealthReport message through serialize/parse - the shared service contract its 4 children build against. Plus a real, pure in-memory mission state machine (src/mission.rs): Mission (Pending->Dispatched->InProgress->Completed, Cancelled/Failed terminal), idempotent cancel() (cancelling an already-cancelled mission succeeds as a no-op, never errors), and recover_from_unavailable_node()/MissionRegistry::recover_node_unavailable() (requeues a Dispatched/InProgress mission to Pending when its node is reported unreachable/invalid). 47 tests. Exposed via the `mission-demo` CLI subcommand. Both real integrations are now wired: src/job_dispatcher.rs is a real HTTP client to HYDRA-UMC-JOB-DISPATCHER's own API (POST /jobs/submit, POST /jobs/complete, POST /dispatch) - including requeue_job(), which src/server.rs's own POST /nodes/:node/recover now calls for every requeued mission so Job-Dispatcher stops believing a job is still assigned to the now-unreachable node; and src/server.rs's own POST /nodes/:node/recover is the real endpoint HYDRA-UMC-NODE-HEALING's watchdog.Reactor (OrchestratorReactor) calls into on every unhealthy-node transition, which drives recover_node_unavailable() above. v0.0.8: Mission now carries a real remote_close_confirmed field, and a background thread retries confirming a mission's terminal outcome to Job-Dispatcher every 30s if the first attempt failed - closes the gap within this process's own lifetime; MissionRegistry is still purely in-memory, so a real process restart still loses this (and every other) mission state, a real, separate durability gap not yet addressed. v0.0.9: that gap is closed for pending remote closes specifically - a new src/outbox.rs (RemoteCloseOutbox) persists exactly which missions still need a remote-close confirmation (and which outcome to report) to a real, crash-safe JSON file independent of MissionRegistry, so a fresh incarnation with an empty registry still retries and correctly reconciles a mission it has otherwise completely forgotten (not a full MissionRegistry persistence layer, deliberately scoped to this one real finding). job_dispatcher::complete_job() also no longer treats every 400 as a confirmed close - it now looks up the job's real remote status via GET /jobs first, so a job still genuinely 'assigned' there is reported as a real failure instead of a false confirmation.",
+  "native_version": {
+    "file": "Cargo.toml",
+    "pattern": "^version\\s*=\\s*\"(\\d+)\\.(\\d+)\\.(\\d+)\""
+  },
+  "service": {
+    "systemd_unit": "hydra-umc-orchestrator.service"
+  }
+}
