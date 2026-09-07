@@ -1,0 +1,100 @@
+# HYDRA-UMC-ORCHESTRATOR - docker-compose.yml
+# Copyright (C) 2026 JuanenRac (Electro Hobby 3D) <electrohobby3d@gmail.com>
+# GPL-3.0 - see LICENSE
+#
+# Documents how the ORCHESTRATOR (this repo, Rust) integrates its 4 real
+# child services as independent containers on one internal network, the
+# same topology described in README.md's mermaid diagram:
+#
+#   API -> ORCHESTRATOR -> JOB-DISPATCHER -> PATH-PLANNER-3D -> SWARM-SYNC
+#   ORCHESTRATOR -> NODE-HEALING (failover, watches every node)
+#
+# Each child is built from its own sibling repo checked out next to this
+# one (../HYDRA-UMC-<child>). This is the real integration wiring, not
+# just documentation: `docker compose up` from this directory builds and
+# starts the orchestrator plus its 4 children together.
+#
+# Usage:
+#   docker compose up --build
+
+version: "3.9"
+
+services:
+  orchestrator:
+    build:
+      context: .
+      dockerfile_inline: |
+        FROM rust:1-slim AS build
+        WORKDIR /app
+        COPY . .
+        RUN cargo build --release
+        FROM debian:stable-slim
+        COPY --from=build /app/target/release/hydra-umc-orchestrator /usr/local/bin/hydra-umc-orchestrator
+        ENTRYPOINT ["/usr/local/bin/hydra-umc-orchestrator"]
+    container_name: hydra-umc-orchestrator
+    networks: [hydra-swarm]
+    depends_on:
+      - swarm-sync
+      - path-planner-3d
+      - job-dispatcher
+      - node-healing
+
+  swarm-sync:
+    build:
+      context: ../HYDRA-UMC-SWARM-SYNC
+      dockerfile_inline: |
+        FROM rust:1-slim AS build
+        WORKDIR /app
+        COPY . .
+        RUN cargo build --release
+        FROM debian:stable-slim
+        COPY --from=build /app/target/release/hydra-umc-swarm-sync /usr/local/bin/hydra-umc-swarm-sync
+        ENTRYPOINT ["/usr/local/bin/hydra-umc-swarm-sync"]
+    container_name: hydra-umc-swarm-sync
+    networks: [hydra-swarm]
+
+  path-planner-3d:
+    build:
+      context: ../HYDRA-UMC-PATH-PLANNER-3D
+      dockerfile_inline: |
+        FROM rust:1-slim AS build
+        WORKDIR /app
+        COPY . .
+        RUN cargo build --release
+        FROM debian:stable-slim
+        COPY --from=build /app/target/release/hydra-umc-path-planner-3d /usr/local/bin/hydra-umc-path-planner-3d
+        ENTRYPOINT ["/usr/local/bin/hydra-umc-path-planner-3d"]
+    container_name: hydra-umc-path-planner-3d
+    networks: [hydra-swarm]
+
+  job-dispatcher:
+    build:
+      context: ../HYDRA-UMC-JOB-DISPATCHER
+      dockerfile_inline: |
+        FROM golang:1-alpine AS build
+        WORKDIR /app
+        COPY . .
+        RUN go build -o /out/hydra-umc-job-dispatcher .
+        FROM alpine:latest
+        COPY --from=build /out/hydra-umc-job-dispatcher /usr/local/bin/hydra-umc-job-dispatcher
+        ENTRYPOINT ["/usr/local/bin/hydra-umc-job-dispatcher"]
+    container_name: hydra-umc-job-dispatcher
+    networks: [hydra-swarm]
+
+  node-healing:
+    build:
+      context: ../HYDRA-UMC-NODE-HEALING
+      dockerfile_inline: |
+        FROM golang:1-alpine AS build
+        WORKDIR /app
+        COPY . .
+        RUN go build -o /out/hydra-umc-node-healing .
+        FROM alpine:latest
+        COPY --from=build /out/hydra-umc-node-healing /usr/local/bin/hydra-umc-node-healing
+        ENTRYPOINT ["/usr/local/bin/hydra-umc-node-healing"]
+    container_name: hydra-umc-node-healing
+    networks: [hydra-swarm]
+
+networks:
+  hydra-swarm:
+    driver: bridge

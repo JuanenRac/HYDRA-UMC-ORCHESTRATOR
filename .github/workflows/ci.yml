@@ -1,0 +1,123 @@
+# =============================================================================
+# HYDRA-UMC - CI baseline workflow
+# Copyright (C) 2026 JuanenRac (Electro Hobby 3D) <electrohobby3d@gmail.com>
+# GPL-3.0 - see LICENSE
+# =============================================================================
+name: HYDRA-UMC CI baseline
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  baseline:
+    name: Validate project baseline
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Validate manifest, version, documentation and secret policy
+        run: python tools/ci_validate.py
+      - name: Compile Python sources without running versioning build scripts
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import py_compile
+
+          excluded = {".git", ".venv", "node_modules", "dist", "build", "target", "__pycache__"}
+          files = [path for path in Path(".").rglob("*.py") if not any(part in excluded for part in path.parts)]
+          for path in files:
+              py_compile.compile(str(path), doraise=True)
+          print(f"PYTHON_SYNTAX=PASS files={len(files)}")
+          PY
+      - name: Validate v1 SDK contract fixtures
+        if: ${{ hashFiles('clients/python/tests/test_validation.py') != '' }}
+        env:
+          PYTHONPATH: clients/python/src
+        run: python -m unittest discover -s clients/python/tests -v
+      - name: Set up Node.js
+        if: ${{ hashFiles('package.json') != '' }}
+        uses: actions/setup-node@v5
+        with:
+          node-version: "20"
+          cache: npm
+      - name: Validate Node.js or TypeScript project
+        if: ${{ hashFiles('package.json') != '' }}
+        run: |
+          npm ci --ignore-scripts
+          npm run typecheck --if-present
+          npm test --if-present
+          npm run lint --if-present
+      - name: Set up Rust
+        if: ${{ hashFiles('Cargo.toml') != '' }}
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Validate Rust project
+        if: ${{ hashFiles('Cargo.toml') != '' }}
+        run: |
+          cargo fmt --check
+          cargo clippy --all-targets -- -D warnings
+          cargo test --all-targets
+      - name: Set up Go
+        if: ${{ hashFiles('go.mod') != '' || hashFiles('src/go.mod') != '' }}
+        uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - name: Validate Go project
+        if: ${{ hashFiles('go.mod') != '' || hashFiles('src/go.mod') != '' }}
+        shell: bash
+        run: |
+          module_dir="$(dirname "$(find . -name go.mod -not -path '*/.git/*' -print -quit)")"
+          test -n "$module_dir"
+          cd "$module_dir"
+          go vet ./...
+          go test ./...
+          go build ./...
+      - name: Set up Flutter
+        if: ${{ hashFiles('pubspec.yaml') != '' }}
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Validate Flutter project
+        if: ${{ hashFiles('pubspec.yaml') != '' }}
+        run: |
+          flutter pub get
+          flutter analyze
+          flutter test
+      - name: Set up Java for Android or Wear OS
+        if: ${{ hashFiles('gradlew') != '' }}
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - name: Validate Android or Wear OS project without a version bump
+        if: ${{ hashFiles('gradlew') != '' }}
+        env:
+          HYDRA_UMC_CI: "1"
+        shell: bash
+        run: |
+          chmod +x gradlew
+          ./gradlew test
+      - name: Install ARM GNU Toolchain for firmware projects
+        if: ${{ hashFiles('build_firmware.sh') != '' }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes gcc-arm-none-eabi binutils-arm-none-eabi
+      - name: Compile firmware without a version bump
+        if: ${{ hashFiles('build_firmware.sh') != '' }}
+        env:
+          HYDRA_UMC_CI: "1"
+        shell: bash
+        run: |
+          chmod +x build_firmware.sh
+          ./build_firmware.sh
