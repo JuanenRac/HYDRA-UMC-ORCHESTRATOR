@@ -61,7 +61,10 @@ real state machine that already exists:
 * **Mission queue integration** — hands accepted missions off to
   JOB-DISPATCHER and tracks their lifecycle across the fleet using the
   real `Mission`/`MissionRegistry` state machine that already exists in
-  `mission.rs` - what's still missing is the gRPC wiring to a real
+  `mission.rs`, durable across a real process restart (`--data-dir`,
+  `data/missions.json` by default - a mission reloaded mid-flight
+  becomes `Unknown` and is requeued to `Pending`, never silently assumed
+  complete) - what's still missing is the gRPC wiring to a real
   JOB-DISPATCHER to hand missions off to.
 * **PTP-synced dispatch** — coordinates timing with SWARM-SYNC so multiple
   robots executing the same mission stay collision-free per
@@ -104,7 +107,8 @@ For every real `mission-demo`/CLI example (captured from an actual built binary)
 ```text
 HYDRA-UMC-ORCHESTRATOR/
 ├── src/
-│   ├── mission.rs         # Real mission state machine (Mission, MissionRegistry)
+│   ├── mission.rs         # Real mission state machine (Mission, MissionRegistry) + its own disk persistence
+│   ├── outbox.rs          # Real, durable pending-remote-close outbox (survives a restart)
 │   ├── job_dispatcher.rs  # Real client for HYDRA-UMC-JOB-DISPATCHER's own HTTP API
 │   ├── server.rs          # Plain JSON/HTTP surface (tiny_http, blocking, no async runtime)
 │   └── main.rs            # Entry point + real `mission-demo` subcommand
