@@ -45,5 +45,9 @@ ProtectHome=true
 ProtectSystem=strict
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 
+# C13: a real, initial cgroup memory ceiling - conservative defaults, meant to be refined once real telemetry from this service running on the CM5 exists, never removed back to unlimited.
+MemoryHigh=256M
+MemoryMax=384M
+
 [Install]
 WantedBy=multi-user.target

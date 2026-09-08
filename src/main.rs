@@ -161,7 +161,7 @@ fn run_serve(args: &[String]) {
         }
     };
 
-    // C07 (this project's own private development plan): the real
+    // C07: the real
     // durable MissionRegistry snapshot - same "./data" convention as the
     // pending remote-close outbox above. Any mission reloaded as
     // `Unknown` (was Dispatched/InProgress at last persist) is requeued
