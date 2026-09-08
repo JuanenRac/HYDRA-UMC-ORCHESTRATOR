@@ -11,12 +11,12 @@
 // dispatcher wiring this to JOB-DISPATCHER/NODE-HEALING over gRPC lands
 // once those services have something real to call.
 //
-// C07 (this project's own private development plan): `MissionRegistry`
-// does own real local file I/O now - `load()`/`persist()`, the same
-// "one JSON file, load-or-empty, temp+rename persist" shape `outbox.rs`
-// already established in this same crate - so a real mission this
-// process knows about survives a real process restart, not just the
-// pending remote-close intents outbox.rs already covered.
+// C07: `MissionRegistry` does own real local file I/O now -
+// `load()`/`persist()`, the same "one JSON file, load-or-empty,
+// temp+rename persist" shape `outbox.rs` already established in this
+// same crate - so a real mission this process knows about survives a
+// real process restart, not just the pending remote-close intents
+// outbox.rs already covered.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -30,20 +30,20 @@ use serde::{Deserialize, Serialize};
 /// that is exactly the information `recover_from_unavailable_node` needs
 /// to decide whether a mission is affected by a given node going down.
 ///
-/// C07 (this project's own private development plan): `Unknown` is a
-/// first-class state, not an absence of state. It exists for exactly one
-/// real situation - `MissionRegistry::load()` reloading a mission that
-/// was `Dispatched`/`InProgress` at the moment this process last
-/// persisted its own state, before an unclean shutdown or crash. That
-/// on-disk snapshot cannot say whether the assigned node actually
-/// finished, failed, or is still working - claiming it survived as
-/// `Dispatched`/`InProgress` would be lying about a status this process
-/// no longer has any evidence for. `Unknown` names that honestly instead
-/// of picking a guess, and only `resolve_unknown()` (a deliberate
-/// decision, taken by `MissionRegistry::recover_unknown_missions()` right
-/// after a real load) ever leaves it - matching the same "an interruption
-/// must never look like a false success" rule this plan's own DS05
-/// acceptance criterion states for HYDRA-UMC-DEV-SERVER's task queue.
+/// C07: `Unknown` is a first-class state, not an absence of state. It
+/// exists for exactly one real situation - `MissionRegistry::load()`
+/// reloading a mission that was `Dispatched`/`InProgress` at the moment
+/// this process last persisted its own state, before an unclean
+/// shutdown or crash. That on-disk snapshot cannot say whether the
+/// assigned node actually finished, failed, or is still working -
+/// claiming it survived as `Dispatched`/`InProgress` would be lying
+/// about a status this process no longer has any evidence for.
+/// `Unknown` names that honestly instead of picking a guess, and only
+/// `resolve_unknown_as_pending()` (a deliberate decision, taken by
+/// `MissionRegistry::recover_unknown_missions()` right after a real
+/// load) ever leaves it - the same "an interruption must never look
+/// like a false success" rule HYDRA-UMC-DEV-SERVER's own task queue
+/// applies to its durable jobs.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MissionState {
     Pending,
@@ -118,18 +118,16 @@ pub enum RecoveryOutcome {
 pub struct Mission {
     pub id: String,
     pub state: MissionState,
-    // C07 (this project's own private development plan, I17 "identidad
-    // de intentos"): how many times this mission has ever been
-    // dispatched, across every attempt - including one that ended in
-    // `Unknown` after a restart. Never reset by `recover_from_
-    // unavailable_node`/`recover_unknown_missions()` requeuing it back
-    // to `Pending`, precisely so a caller can tell "this is a fresh
-    // mission" from "this is retry #3 of one that already had trouble" -
-    // the real per-attempt generation this plan's own acceptance
-    // criterion for a durable queue names, applied here to the one
-    // piece of durable state this repository has (MissionRegistry),
+    // C07: how many times this mission has ever been dispatched, across
+    // every attempt - including one that ended in `Unknown` after a
+    // restart. Never reset by `recover_from_unavailable_node`/
+    // `recover_unknown_missions()` requeuing it back to `Pending`,
+    // precisely so a caller can tell "this is a fresh mission" from
+    // "this is retry #3 of one that already had trouble" - the real
+    // per-attempt generation a durable queue needs, applied here to the
+    // one piece of durable state this repository has (MissionRegistry),
     // ahead of a real HYDRA-UMC-DEV-SERVER task queue implementing the
-    // rest of that same requirement for its own jobs.
+    // same requirement for its own jobs.
     pub attempt: u32,
     // REV-010 (found in an independent revalidation audit, P1): whether
     // this mission's own terminal outcome has actually been confirmed to
@@ -318,7 +316,7 @@ struct PersistedRegistry {
 /// id. `BTreeMap` (not `HashMap`) so `all()`/iteration order is
 /// deterministic - useful for both the demo CLI output and tests.
 ///
-/// C07 (this project's own private development plan): `path` is `None`
+/// C07: `path` is `None`
 /// for every existing caller of `new()` (the demo CLI, and every test in
 /// this module) - pure in-memory, exactly as before. Only `load()`
 /// attaches a real path, following the same "one JSON file, `Mutex`-
@@ -419,15 +417,14 @@ impl MissionRegistry {
     /// C07: this registry's one real recovery policy for a mission
     /// reloaded as `Unknown` - requeue it to `Pending` so the next real
     /// dispatch pass gives it a fresh attempt. Never "assume it
-    /// completed" (a false success is exactly what this plan's own
-    /// DS05 acceptance criterion forbids for a durable queue: "una
-    /// interrupcion no produce exito falso") and never "assume it
-    /// failed" (the work may well still be running on a node that just
-    /// hasn't been recontacted yet - failing it outright would be an
-    /// equally unfounded guess in the other direction). A future phase
-    /// with real node reachability at startup could resolve `Unknown`
-    /// more precisely; until then, honest resubmission is the only
-    /// choice this module makes without evidence.
+    /// completed" (an interruption must never masquerade as a real
+    /// success for a durable queue) and never "assume it failed" (the
+    /// work may well still be running on a node that just hasn't been
+    /// recontacted yet - failing it outright would be an equally
+    /// unfounded guess in the other direction). A future phase with real
+    /// node reachability at startup could resolve `Unknown` more
+    /// precisely; until then, honest resubmission is the only choice
+    /// this module makes without evidence.
     pub fn recover_unknown_missions(&mut self) -> Vec<String> {
         let mut requeued = Vec::new();
         for mission in self.missions.values_mut() {

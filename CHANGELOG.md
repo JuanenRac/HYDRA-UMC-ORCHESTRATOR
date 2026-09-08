@@ -4,12 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [0.1.0] - C07: MissionRegistry itself now survives a real restart
 
-This project's own private development plan's revalidation checklist
-(C07) found the one durability gap V07-012/`outbox.rs` (0.0.9) deliberately
-did not cover: `MissionRegistry` itself was still purely in-memory, so a
-real restart forgot every mission's own state, history and node
-assignment - only the pending remote-close *intent* survived, not the
-mission itself.
+A revalidation pass found the one durability gap V07-012/`outbox.rs`
+(0.0.9) deliberately did not cover: `MissionRegistry` itself was still
+purely in-memory, so a real restart forgot every mission's own state,
+history and node assignment - only the pending remote-close *intent*
+survived, not the mission itself.
 
 Added:
 
@@ -28,10 +27,9 @@ Added:
   guess) - `MissionRegistry::recover_unknown_missions()`, called once by
   `main.rs` right after load, requeues it to `Pending` for a fresh
   attempt instead.
-- `Mission.attempt: u32` - a real per-attempt counter (this plan's own
-  I17, "identidad de intentos"), incremented on every real `dispatch()`
-  and never reset by a later requeue, so a caller can tell a fresh
-  mission from a retried one.
+- `Mission.attempt: u32` - a real per-attempt counter, incremented on
+  every real `dispatch()` and never reset by a later requeue, so a
+  caller can tell a fresh mission from a retried one.
 - Every mutating HTTP handler (`dispatch`/`auto-dispatch`/`start`/
   `complete`/`cancel`/`fail`/`recover`) now persists the registry before
   responding - a real mission created or transitioned through this

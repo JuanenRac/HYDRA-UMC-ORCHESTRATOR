@@ -24,7 +24,7 @@
 //! stateless computations), the `MissionRegistry` is real, shared,
 //! mutable state that must persist across requests - `Arc<Mutex<..>>`,
 //! one lock acquired per request, released before the response is
-//! written. C07 (this project's own private development plan): as of
+//! written. C07: as of
 //! this delivery the registry itself is also durable across a real
 //! process restart (`mission.rs`'s own `MissionRegistry::load()`/
 //! `persist()`, wired in by `main.rs`) - every handler below that
