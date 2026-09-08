@@ -54,6 +54,7 @@ fn state_label(state: &MissionState) -> String {
         MissionState::Pending => "Pending".to_string(),
         MissionState::Dispatched { node } => format!("Dispatched(node={node})"),
         MissionState::InProgress { node } => format!("InProgress(node={node})"),
+        MissionState::Unknown { last_node } => format!("Unknown(last_node={last_node})"),
         MissionState::Completed { node } => format!("Completed(node={node})"),
         MissionState::Cancelled => "Cancelled".to_string(),
         MissionState::Failed { reason } => format!("Failed({reason})"),
@@ -160,6 +161,34 @@ fn run_serve(args: &[String]) {
         }
     };
 
+    // C07 (this project's own private development plan): the real
+    // durable MissionRegistry snapshot - same "./data" convention as the
+    // pending remote-close outbox above. Any mission reloaded as
+    // `Unknown` (was Dispatched/InProgress at last persist) is requeued
+    // to `Pending` right here, once, before this process ever serves a
+    // real request - mirroring how the outbox's own reconciliation runs
+    // immediately at startup rather than waiting for its first retry
+    // interval.
+    let missions_path = std::path::PathBuf::from(&data_dir).join("missions.json");
+    let mut registry = match MissionRegistry::load(missions_path.clone()) {
+        Ok(registry) => registry,
+        Err(e) => {
+            eprintln!(
+                "[orchestrator] fatal: could not load the mission registry at {}: {e}",
+                missions_path.display()
+            );
+            return;
+        }
+    };
+    let recovered = registry.recover_unknown_missions();
+    if !recovered.is_empty() {
+        eprintln!(
+            "[orchestrator] requeued {} mission(s) reloaded as Unknown after an unclean shutdown: {}",
+            recovered.len(),
+            recovered.join(", ")
+        );
+    }
+
     match server::bind(&bind_addr) {
         Ok(bound) => {
             eprintln!("[orchestrator] HTTP API listening on {bind_addr}");
@@ -174,7 +203,11 @@ fn run_serve(args: &[String]) {
                 "[orchestrator] pending remote-close outbox: {}",
                 outbox_path.display()
             );
-            server::run(bound, job_dispatcher_url, close_outbox);
+            eprintln!(
+                "[orchestrator] mission registry: {}",
+                missions_path.display()
+            );
+            server::run(bound, job_dispatcher_url, close_outbox, registry);
         }
         Err(e) => {
             eprintln!("[orchestrator] fatal: could not start HTTP server on {bind_addr}: {e}");

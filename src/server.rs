@@ -11,19 +11,26 @@
 //! start/complete/cancel/fail/recover, and the node-failure recovery
 //! sweep) was only ever exercised through `mission-demo`'s hardcoded,
 //! fixed scenario - never reachable with a real caller-supplied mission
-//! id or node name. This is still purely in-memory bookkeeping: no real
-//! gRPC wiring to `HYDRA-UMC-JOB-DISPATCHER`/`HYDRA-UMC-NODE-HEALING`
-//! exists (see `main.rs`'s own module doc), and there is no real
-//! E-STOP-sending code anywhere in this repository to expose - this
-//! server does not grant any new physical authority, it makes the exact
-//! same state machine `mission-demo` already exercises reachable over a
-//! real API instead of only a fixed demo script.
+//! id or node name. There is still no real gRPC wiring to
+//! `HYDRA-UMC-JOB-DISPATCHER`/`HYDRA-UMC-NODE-HEALING` beyond the plain
+//! HTTP integration already in this file (see `main.rs`'s own module
+//! doc), and there is no real E-STOP-sending code anywhere in this
+//! repository to expose - this server does not grant any new physical
+//! authority, it makes the exact same state machine `mission-demo`
+//! already exercises reachable over a real API instead of only a fixed
+//! demo script.
 //!
 //! Unlike this ecosystem's other Rust services' `server.rs` (all
 //! stateless computations), the `MissionRegistry` is real, shared,
 //! mutable state that must persist across requests - `Arc<Mutex<..>>`,
 //! one lock acquired per request, released before the response is
-//! written.
+//! written. C07 (this project's own private development plan): as of
+//! this delivery the registry itself is also durable across a real
+//! process restart (`mission.rs`'s own `MissionRegistry::load()`/
+//! `persist()`, wired in by `main.rs`) - every handler below that
+//! mutates a mission calls `reg.persist()` before responding, the same
+//! explicit convention `outbox.rs`'s own callers already use for the
+//! pending remote-close outbox.
 
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -99,9 +106,14 @@ pub fn bind(addr: &str) -> std::io::Result<Server> {
     Server::http(addr).map_err(std::io::Error::other)
 }
 
-pub fn run(server: Server, job_dispatcher_url: Option<String>, close_outbox: RemoteCloseOutbox) {
+pub fn run(
+    server: Server,
+    job_dispatcher_url: Option<String>,
+    close_outbox: RemoteCloseOutbox,
+    registry: MissionRegistry,
+) {
     let state = AppState {
-        registry: Arc::new(Mutex::new(MissionRegistry::new())),
+        registry: Arc::new(Mutex::new(registry)),
         job_dispatcher_url,
         close_outbox: Arc::new(close_outbox),
     };
@@ -115,10 +127,12 @@ pub fn run(server: Server, job_dispatcher_url: Option<String>, close_outbox: Rem
         // V07-012: a real attempt right now, before this incarnation
         // waits a full REMOTE_CLOSE_RETRY_INTERVAL - the whole point of
         // persisting the outbox is a restart recovering FAST, not just
-        // eventually. Whatever this incarnation's own MissionRegistry
-        // does or does not still know about each pending mission (it
-        // starts empty every time - see mission.rs's own module doc),
-        // the outbox alone is enough to retry every one of them.
+        // eventually. Even now that MissionRegistry itself also survives
+        // a restart (C07), the outbox stays the real worklist here: a
+        // mission reloaded as `Unknown` still needs its own separate
+        // resolution (`recover_unknown_missions()`, called once by
+        // main.rs before this incarnation ever serves a request) before
+        // it says anything meaningful about a pending remote close.
         reconcile_pending_remote_closes(&registry, &outbox, &base_url);
         thread::spawn(move || loop {
             thread::sleep(REMOTE_CLOSE_RETRY_INTERVAL);
@@ -209,7 +223,9 @@ fn handle_add(request: tiny_http::Request, state: &AppState, raw: &str) {
     let mission_snapshot = {
         let mut reg = state.registry.lock().unwrap();
         let mission = reg.add(req.id);
-        serde_json::to_value(&*mission).unwrap()
+        let snapshot = serde_json::to_value(&*mission).unwrap();
+        reg.persist();
+        snapshot
     };
     // Real, deliberate second half of the "full chain": every mission
     // this Orchestrator now knows about is also submitted as a real job
@@ -287,8 +303,16 @@ fn handle_dispatch(request: tiny_http::Request, state: &AppState, id: &str, raw:
         );
         return;
     };
-    match mission.dispatch(req.node) {
-        Ok(()) => write_json(request, 200, &serde_json::to_value(&*mission).unwrap()),
+    let outcome = mission.dispatch(req.node);
+    if outcome.is_ok() {
+        reg.persist();
+    }
+    match outcome {
+        Ok(()) => write_json(
+            request,
+            200,
+            &serde_json::to_value(reg.get(id).unwrap()).unwrap(),
+        ),
         Err(e) => write_json(
             request,
             409,
@@ -368,6 +392,7 @@ fn handle_auto_dispatch(request: tiny_http::Request, state: &AppState, id: &str)
                 );
             }
         }
+        reg.persist();
     }
 
     match result_for_caller {
@@ -404,8 +429,16 @@ fn handle_start(request: tiny_http::Request, state: &AppState, id: &str) {
         );
         return;
     };
-    match mission.start() {
-        Ok(()) => write_json(request, 200, &serde_json::to_value(&*mission).unwrap()),
+    let outcome = mission.start();
+    if outcome.is_ok() {
+        reg.persist();
+    }
+    match outcome {
+        Ok(()) => write_json(
+            request,
+            200,
+            &serde_json::to_value(reg.get(id).unwrap()).unwrap(),
+        ),
         Err(e) => write_json(
             request,
             409,
@@ -475,7 +508,11 @@ fn handle_complete(request: tiny_http::Request, state: &AppState, id: &str) {
             );
             return;
         };
-        mission.complete()
+        let outcome = mission.complete();
+        if outcome.is_ok() {
+            reg.persist();
+        }
+        outcome
     };
     match result {
         Ok(()) => {
@@ -528,7 +565,11 @@ fn handle_cancel(request: tiny_http::Request, state: &AppState, id: &str) {
             );
             return;
         };
-        mission.cancel()
+        let outcome = mission.cancel();
+        if outcome.is_ok() {
+            reg.persist();
+        }
+        outcome
     };
     match result {
         Ok(outcome) => {
@@ -594,8 +635,16 @@ fn handle_fail(request: tiny_http::Request, state: &AppState, id: &str, raw: &st
         );
         return;
     };
-    match mission.fail(req.reason) {
-        Ok(()) => write_json(request, 200, &serde_json::to_value(&*mission).unwrap()),
+    let outcome = mission.fail(req.reason);
+    if outcome.is_ok() {
+        reg.persist();
+    }
+    match outcome {
+        Ok(()) => write_json(
+            request,
+            200,
+            &serde_json::to_value(reg.get(id).unwrap()).unwrap(),
+        ),
         Err(e) => write_json(
             request,
             409,
@@ -680,7 +729,14 @@ mod tests {
             std::env::temp_dir().join(format!("orchestrator-server-test-outbox-{port}.json"));
         let close_outbox = RemoteCloseOutbox::load(outbox_path)
             .expect("a fresh test outbox path must always load cleanly");
-        thread::spawn(move || run(server, job_dispatcher_url, close_outbox));
+        // Same per-port-unique real path convention as the outbox above,
+        // for the same reason - concurrent tests must never share one
+        // missions.json.
+        let missions_path =
+            std::env::temp_dir().join(format!("orchestrator-server-test-missions-{port}.json"));
+        let registry = MissionRegistry::load(missions_path)
+            .expect("a fresh test registry path must always load cleanly");
+        thread::spawn(move || run(server, job_dispatcher_url, close_outbox, registry));
         port
     }
 

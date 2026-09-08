@@ -2,6 +2,46 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.0] - C07: MissionRegistry itself now survives a real restart
+
+This project's own private development plan's revalidation checklist
+(C07) found the one durability gap V07-012/`outbox.rs` (0.0.9) deliberately
+did not cover: `MissionRegistry` itself was still purely in-memory, so a
+real restart forgot every mission's own state, history and node
+assignment - only the pending remote-close *intent* survived, not the
+mission itself.
+
+Added:
+
+- `MissionRegistry::load(path)`/`persist()` - the same real "one JSON
+  file, load-or-empty, temp+rename write" shape `outbox.rs` already
+  established and tested for its own pending-close outbox, reused here
+  rather than a second mechanism or a new dependency
+  (`data/missions.json` by default, `--data-dir` to change it, same
+  convention as the outbox).
+- A first-class `MissionState::Unknown { last_node }` - what a mission
+  that was `Dispatched`/`InProgress` at the last real persist becomes on
+  reload, since this process has no fresh evidence for what actually
+  happened to it while it was down. Never silently kept as
+  `Dispatched`/`InProgress` (a stale claim with no evidence behind it)
+  and never silently marked `Completed`/`Failed` (an equally unfounded
+  guess) - `MissionRegistry::recover_unknown_missions()`, called once by
+  `main.rs` right after load, requeues it to `Pending` for a fresh
+  attempt instead.
+- `Mission.attempt: u32` - a real per-attempt counter (this plan's own
+  I17, "identidad de intentos"), incremented on every real `dispatch()`
+  and never reset by a later requeue, so a caller can tell a fresh
+  mission from a retried one.
+- Every mutating HTTP handler (`dispatch`/`auto-dispatch`/`start`/
+  `complete`/`cancel`/`fail`/`recover`) now persists the registry before
+  responding - a real mission created or transitioned through this
+  server's own API is durable, not only the ones `mission-demo`'s fixed
+  in-memory script happens to run in one process lifetime.
+
+No new dependency, no gRPC/network I/O added to `mission.rs` itself -
+this is real local file durability for state that already existed,
+following the exact pattern already proven in this same crate.
+
 ## [0.0.9] - V07-012: the pending remote-close reconciliation now survives a real restart
 
 A second independent revalidation audit found `reconcile_pending_remote_closes()`'s

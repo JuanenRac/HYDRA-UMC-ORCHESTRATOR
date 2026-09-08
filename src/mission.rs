@@ -4,26 +4,52 @@
 //
 // The real mission state machine: what "arbitrating which robot gets
 // which mission" (main.rs's own description of this process's role)
-// actually means as code. Pure in-memory logic, no gRPC/network I/O -
+// actually means as code. No gRPC/network I/O anywhere in this module -
 // the same "real logic before real transport" pattern used across this
 // ecosystem's other v0 passes (see e.g. HYDRA-UMC-VISUAL-SERVOING-API's
 // authorization.py or HYDRA-UMC-SAFETY-ZONES's safety_state.py). A real
 // dispatcher wiring this to JOB-DISPATCHER/NODE-HEALING over gRPC lands
 // once those services have something real to call.
+//
+// C07 (this project's own private development plan): `MissionRegistry`
+// does own real local file I/O now - `load()`/`persist()`, the same
+// "one JSON file, load-or-empty, temp+rename persist" shape `outbox.rs`
+// already established in this same crate - so a real mission this
+// process knows about survives a real process restart, not just the
+// pending remote-close intents outbox.rs already covered.
 
 use std::collections::BTreeMap;
+use std::fs;
+use std::io;
+use std::path::PathBuf;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// The lifecycle a single mission moves through. `Dispatched` and
 /// `InProgress` carry the node currently responsible for the mission -
 /// that is exactly the information `recover_from_unavailable_node` needs
 /// to decide whether a mission is affected by a given node going down.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+///
+/// C07 (this project's own private development plan): `Unknown` is a
+/// first-class state, not an absence of state. It exists for exactly one
+/// real situation - `MissionRegistry::load()` reloading a mission that
+/// was `Dispatched`/`InProgress` at the moment this process last
+/// persisted its own state, before an unclean shutdown or crash. That
+/// on-disk snapshot cannot say whether the assigned node actually
+/// finished, failed, or is still working - claiming it survived as
+/// `Dispatched`/`InProgress` would be lying about a status this process
+/// no longer has any evidence for. `Unknown` names that honestly instead
+/// of picking a guess, and only `resolve_unknown()` (a deliberate
+/// decision, taken by `MissionRegistry::recover_unknown_missions()` right
+/// after a real load) ever leaves it - matching the same "an interruption
+/// must never look like a false success" rule this plan's own DS05
+/// acceptance criterion states for HYDRA-UMC-DEV-SERVER's task queue.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MissionState {
     Pending,
     Dispatched { node: String },
     InProgress { node: String },
+    Unknown { last_node: String },
     Completed { node: String },
     Cancelled,
     Failed { reason: String },
@@ -35,6 +61,7 @@ impl MissionState {
             MissionState::Pending => "Pending",
             MissionState::Dispatched { .. } => "Dispatched",
             MissionState::InProgress { .. } => "InProgress",
+            MissionState::Unknown { .. } => "Unknown",
             MissionState::Completed { .. } => "Completed",
             MissionState::Cancelled => "Cancelled",
             MissionState::Failed { .. } => "Failed",
@@ -87,10 +114,23 @@ pub enum RecoveryOutcome {
     NotAffected,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Mission {
     pub id: String,
     pub state: MissionState,
+    // C07 (this project's own private development plan, I17 "identidad
+    // de intentos"): how many times this mission has ever been
+    // dispatched, across every attempt - including one that ended in
+    // `Unknown` after a restart. Never reset by `recover_from_
+    // unavailable_node`/`recover_unknown_missions()` requeuing it back
+    // to `Pending`, precisely so a caller can tell "this is a fresh
+    // mission" from "this is retry #3 of one that already had trouble" -
+    // the real per-attempt generation this plan's own acceptance
+    // criterion for a durable queue names, applied here to the one
+    // piece of durable state this repository has (MissionRegistry),
+    // ahead of a real HYDRA-UMC-DEV-SERVER task queue implementing the
+    // rest of that same requirement for its own jobs.
+    pub attempt: u32,
     // REV-010 (found in an independent revalidation audit, P1): whether
     // this mission's own terminal outcome has actually been confirmed to
     // Job-Dispatcher yet. Reaching a terminal `state` above is a purely
@@ -113,6 +153,7 @@ impl Mission {
         Mission {
             id: id.into(),
             state: MissionState::Pending,
+            attempt: 0,
             remote_close_confirmed: true,
         }
     }
@@ -130,10 +171,13 @@ impl Mission {
     }
 
     /// Pending -> Dispatched. Assigns the mission to `node`, the only
-    /// transition allowed from Pending.
+    /// transition allowed from Pending. Bumps `attempt` - every real
+    /// dispatch, successful or not, is one more attempt at this mission,
+    /// and that count is never reset by a later requeue.
     pub fn dispatch(&mut self, node: impl Into<String>) -> Result<(), TransitionError> {
         match &self.state {
             MissionState::Pending => {
+                self.attempt += 1;
                 self.state = MissionState::Dispatched { node: node.into() };
                 Ok(())
             }
@@ -141,6 +185,30 @@ impl Mission {
                 from: other.label(),
                 attempted: "dispatch",
             }),
+        }
+    }
+
+    /// C07: marks this mission `Unknown` - called only by
+    /// `MissionRegistry::load()` for a mission that was `Dispatched`/
+    /// `InProgress` at the moment this process last persisted its own
+    /// state. `last_node` preserves which node it was last assigned to,
+    /// purely for a human/log to see - it carries no operational meaning
+    /// once `Unknown`, since that node's real status for this mission is
+    /// exactly what is no longer known.
+    fn mark_unknown(&mut self, last_node: String) {
+        self.state = MissionState::Unknown { last_node };
+    }
+
+    /// C07: the only way an `Unknown` mission ever leaves that state -
+    /// see `MissionRegistry::recover_unknown_missions()`'s own doc
+    /// comment for why "requeue to Pending" is this registry's one real
+    /// policy today (never "assume it completed", never "assume it
+    /// failed"). A no-op, successful `Ok(())` on a mission that was
+    /// never `Unknown` in the first place - the caller doesn't need its
+    /// own branch for "nothing to resolve here."
+    pub fn resolve_unknown_as_pending(&mut self) {
+        if matches!(self.state, MissionState::Unknown { .. }) {
+            self.state = MissionState::Pending;
         }
     }
 
@@ -241,26 +309,156 @@ impl Mission {
     }
 }
 
+#[derive(Serialize, Deserialize, Default)]
+struct PersistedRegistry {
+    missions: Vec<Mission>,
+}
+
 /// Tracks every mission the orchestrator currently knows about, keyed by
 /// id. `BTreeMap` (not `HashMap`) so `all()`/iteration order is
 /// deterministic - useful for both the demo CLI output and tests.
+///
+/// C07 (this project's own private development plan): `path` is `None`
+/// for every existing caller of `new()` (the demo CLI, and every test in
+/// this module) - pure in-memory, exactly as before. Only `load()`
+/// attaches a real path, following the same "one JSON file, `Mutex`-
+/// guarded by the caller, load-or-empty, temp+rename persist" shape
+/// `outbox.rs` already established and tests for its own pending-close
+/// outbox - reused here rather than a second, different persistence
+/// mechanism (or a new dependency like `rusqlite`/`sled`, neither of
+/// which this crate needs yet for a single small snapshot file).
 #[derive(Debug, Default)]
 pub struct MissionRegistry {
     missions: BTreeMap<String, Mission>,
+    path: Option<PathBuf>,
 }
 
 impl MissionRegistry {
     pub fn new() -> Self {
         MissionRegistry {
             missions: BTreeMap::new(),
+            path: None,
         }
+    }
+
+    /// Loads whatever this process (or an earlier incarnation of it)
+    /// already persisted at `path` - a missing file means no missions
+    /// are known yet, not an error (same convention as
+    /// `RemoteCloseOutbox::load()`). Every other I/O or parse failure is
+    /// real and propagated.
+    ///
+    /// Any reloaded mission that was `Dispatched`/`InProgress` becomes
+    /// `Unknown` immediately (see `Mission::mark_unknown()`'s own doc
+    /// comment) - this snapshot can only be as fresh as the last
+    /// successful `persist()` before an unclean shutdown, so a mission
+    /// that LOOKED still in flight at that moment has no real evidence
+    /// behind it any more. Call `recover_unknown_missions()` right after
+    /// this, before serving any real request, to decide what happens to
+    /// them (today: requeue to `Pending`) - `load()` itself only ever
+    /// names the honest uncertainty, it never resolves it.
+    pub fn load(path: PathBuf) -> io::Result<Self> {
+        let raw = match fs::read_to_string(&path) {
+            Ok(raw) => raw,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                return Ok(MissionRegistry {
+                    missions: BTreeMap::new(),
+                    path: Some(path),
+                });
+            }
+            Err(e) => return Err(e),
+        };
+        let state: PersistedRegistry = serde_json::from_str(&raw)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        let mut missions = BTreeMap::new();
+        for mut mission in state.missions {
+            let stale_node = match &mission.state {
+                MissionState::Dispatched { node } | MissionState::InProgress { node } => {
+                    Some(node.clone())
+                }
+                _ => None,
+            };
+            if let Some(node) = stale_node {
+                mission.mark_unknown(node);
+            }
+            missions.insert(mission.id.clone(), mission);
+        }
+        Ok(MissionRegistry {
+            missions,
+            path: Some(path),
+        })
+    }
+
+    fn persist_or_warn(&self) {
+        let Some(path) = &self.path else {
+            return; // pure in-memory instance (new()) - nothing to persist
+        };
+        let state = PersistedRegistry {
+            missions: self.missions.values().cloned().collect(),
+        };
+        let result = (|| -> io::Result<()> {
+            let json = serde_json::to_string_pretty(&state).map_err(io::Error::other)?;
+            let tmp_path = path.with_extension(format!(
+                "{}.{}.tmp",
+                path.extension().and_then(|e| e.to_str()).unwrap_or("json"),
+                std::process::id()
+            ));
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(&tmp_path, json)?;
+            fs::rename(&tmp_path, path)
+        })();
+        if let Err(e) = result {
+            eprintln!(
+                "[orchestrator] could not persist mission registry at {}: {e}",
+                path.display()
+            );
+        }
+    }
+
+    /// C07: this registry's one real recovery policy for a mission
+    /// reloaded as `Unknown` - requeue it to `Pending` so the next real
+    /// dispatch pass gives it a fresh attempt. Never "assume it
+    /// completed" (a false success is exactly what this plan's own
+    /// DS05 acceptance criterion forbids for a durable queue: "una
+    /// interrupcion no produce exito falso") and never "assume it
+    /// failed" (the work may well still be running on a node that just
+    /// hasn't been recontacted yet - failing it outright would be an
+    /// equally unfounded guess in the other direction). A future phase
+    /// with real node reachability at startup could resolve `Unknown`
+    /// more precisely; until then, honest resubmission is the only
+    /// choice this module makes without evidence.
+    pub fn recover_unknown_missions(&mut self) -> Vec<String> {
+        let mut requeued = Vec::new();
+        for mission in self.missions.values_mut() {
+            if matches!(mission.state, MissionState::Unknown { .. }) {
+                mission.resolve_unknown_as_pending();
+                requeued.push(mission.id.clone());
+            }
+        }
+        if !requeued.is_empty() {
+            self.persist_or_warn();
+        }
+        requeued
     }
 
     pub fn add(&mut self, id: impl Into<String>) -> &mut Mission {
         let id = id.into();
-        self.missions
+        let mission = self
+            .missions
             .entry(id.clone())
-            .or_insert_with(|| Mission::new(id))
+            .or_insert_with(|| Mission::new(id));
+        mission
+    }
+
+    /// Persists the current snapshot - call after mutating a `Mission`
+    /// obtained from `get_mut()`/`add()` (a direct `&mut Mission` method
+    /// call, e.g. `.dispatch(...)`, bypasses this registry's own methods
+    /// entirely, so it cannot persist itself). A no-op for a pure
+    /// in-memory registry (`new()`, no `path`) - existing callers that
+    /// never load from a path pay nothing for this.
+    pub fn persist(&self) {
+        self.persist_or_warn();
     }
 
     pub fn get(&self, id: &str) -> Option<&Mission> {
@@ -286,6 +484,9 @@ impl MissionRegistry {
             {
                 requeued.push(mission.id.clone());
             }
+        }
+        if !requeued.is_empty() {
+            self.persist_or_warn();
         }
         requeued
     }
@@ -559,5 +760,155 @@ mod tests {
                 node: "node-a".into()
             }
         );
+    }
+
+    #[test]
+    fn dispatch_increments_attempt_and_requeue_never_resets_it() {
+        let mut m = Mission::new("m1");
+        assert_eq!(m.attempt, 0);
+        m.dispatch("node-a").unwrap();
+        assert_eq!(m.attempt, 1);
+        // A requeue (node went unavailable) does not reset the count -
+        // this is real attempt HISTORY, not "attempts since last Pending".
+        m.recover_from_unavailable_node("node-a");
+        assert_eq!(m.state, MissionState::Pending);
+        assert_eq!(m.attempt, 1);
+        m.dispatch("node-b").unwrap();
+        assert_eq!(m.attempt, 2);
+    }
+
+    fn temp_registry_path(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "orchestrator-mission-registry-test-{}-{name}.json",
+            std::process::id()
+        ))
+    }
+
+    #[test]
+    fn load_of_a_missing_file_is_a_real_empty_registry_not_an_error() {
+        let path = temp_registry_path("missing");
+        let reg = MissionRegistry::load(path).expect("a missing registry file must load as empty");
+        assert!(reg.all().next().is_none());
+    }
+
+    #[test]
+    fn a_pure_in_memory_registry_never_touches_disk() {
+        // new() (no path) must be a real no-op on persist() - existing
+        // callers (mission-demo, every other test in this module) must
+        // pay nothing for a persistence feature they never opted into.
+        let mut reg = MissionRegistry::new();
+        reg.add("m1");
+        reg.persist(); // must not panic, and there is no path to write to
+    }
+
+    #[test]
+    fn dispatched_mission_survives_a_real_restart_as_pending_after_recovery() {
+        let path = temp_registry_path("survive-restart");
+        {
+            let mut reg = MissionRegistry::load(path.clone()).unwrap();
+            reg.add("m1").dispatch("node-a").unwrap();
+            reg.add("m2"); // stays Pending - never dispatched
+            reg.persist();
+        } // dropped here - simulates the process exiting uncleanly
+
+        let mut reloaded = MissionRegistry::load(path.clone()).expect("reload must succeed");
+        // Immediately after load, a mission that WAS Dispatched is
+        // honestly Unknown - not silently still "Dispatched" (this
+        // process has no fresh evidence that node-a is even still
+        // trying), and not silently lost either (attempt count and id
+        // survive).
+        assert_eq!(
+            reloaded.get("m1").unwrap().state,
+            MissionState::Unknown {
+                last_node: "node-a".into()
+            }
+        );
+        assert_eq!(reloaded.get("m1").unwrap().attempt, 1);
+        // A mission that was already Pending is unaffected by the reload.
+        assert_eq!(reloaded.get("m2").unwrap().state, MissionState::Pending);
+
+        let requeued = reloaded.recover_unknown_missions();
+        assert_eq!(requeued, vec!["m1".to_string()]);
+        assert_eq!(reloaded.get("m1").unwrap().state, MissionState::Pending);
+        // The requeue itself is also durable - a SECOND restart right
+        // after must not see "Dispatched" again from a stale snapshot.
+        let reloaded_again =
+            MissionRegistry::load(path.clone()).expect("second reload must succeed");
+        assert_eq!(
+            reloaded_again.get("m1").unwrap().state,
+            MissionState::Pending
+        );
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn in_progress_mission_also_becomes_unknown_on_reload() {
+        let path = temp_registry_path("in-progress-unknown");
+        {
+            let mut reg = MissionRegistry::load(path.clone()).unwrap();
+            let m = reg.add("m1");
+            m.dispatch("node-a").unwrap();
+            m.start().unwrap();
+            reg.persist();
+        }
+        let reloaded = MissionRegistry::load(path.clone()).expect("reload must succeed");
+        assert_eq!(
+            reloaded.get("m1").unwrap().state,
+            MissionState::Unknown {
+                last_node: "node-a".into()
+            }
+        );
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn a_completed_mission_reloads_unchanged_never_becomes_unknown() {
+        let path = temp_registry_path("completed-stays-completed");
+        {
+            let mut reg = MissionRegistry::load(path.clone()).unwrap();
+            let m = reg.add("m1");
+            m.dispatch("node-a").unwrap();
+            m.start().unwrap();
+            m.complete().unwrap();
+            reg.persist();
+        }
+        let reloaded = MissionRegistry::load(path.clone()).expect("reload must succeed");
+        // A real, confirmed terminal outcome is not an "interruption" -
+        // only a mission that was genuinely still in flight at the last
+        // persist is honestly uncertain after a restart.
+        assert_eq!(
+            reloaded.get("m1").unwrap().state,
+            MissionState::Completed {
+                node: "node-a".into()
+            }
+        );
+        let requeued = MissionRegistry::load(path.clone())
+            .unwrap()
+            .recover_unknown_missions();
+        assert!(requeued.is_empty());
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn save_is_atomic_and_leaves_no_temp_file_behind() {
+        let path = temp_registry_path("atomic");
+        let mut reg = MissionRegistry::load(path.clone()).unwrap();
+        reg.add("m1").dispatch("node-a").unwrap();
+        reg.persist();
+        let dir = path.parent().unwrap();
+        let stem = path.file_name().unwrap().to_string_lossy().to_string();
+        let leftover: Vec<_> = fs::read_dir(dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                let name = e.file_name().to_string_lossy().to_string();
+                name.starts_with(&stem) && name != stem
+            })
+            .collect();
+        assert!(
+            leftover.is_empty(),
+            "expected no leftover temp file, found: {leftover:?}"
+        );
+        fs::remove_file(&path).ok();
     }
 }
