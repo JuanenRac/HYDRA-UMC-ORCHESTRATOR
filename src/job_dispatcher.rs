@@ -35,7 +35,7 @@ pub struct Assignment {
     pub robot_id: String,
 }
 
-/// V07-012 (found in an independent revalidation audit, P1): the real
+/// V07-012 (P1): the real
 /// shape `GET /jobs` reports for one job - only the two fields
 /// `complete_job()`'s own 400-disambiguation below actually needs.
 #[derive(Debug, Deserialize)]
@@ -102,8 +102,8 @@ pub fn submit_job(base_url: &str, mission_id: &str) -> Result<(), ClientError> {
 }
 
 /// Tells Job-Dispatcher a mission's already-dispatched job needs
-/// redistributing - found in an ecosystem-wide software-improvements
-/// audit: `handle_recover()` in `server.rs` only ever updated the local
+/// redistributing - found while auditing the code: `handle_recover()` in
+/// `server.rs` only ever updated the local
 /// in-memory mission registry, never this real integration, so Job-
 /// Dispatcher could keep believing a job was still assigned to a node
 /// that just went unreachable.
@@ -132,13 +132,13 @@ pub fn submit_job(base_url: &str, mission_id: &str) -> Result<(), ClientError> {
 /// submitted at all, or already finished on its own) - nothing real to
 /// close out there, not a failure of this call.
 ///
-/// ORCH-02 (found in an ecosystem-wide software-improvements audit, P1):
+/// ORCH-02 (P1):
 /// `server.rs`'s own `handle_complete`/`handle_cancel` used to update
 /// only the local mission registry - Job-Dispatcher could keep believing
 /// a job (and its robot's reservation) was still active for a mission
 /// this Orchestrator had already closed out locally.
 ///
-/// V07-012 (found in an independent revalidation audit, P1): a 400 from
+/// V07-012 (P1): a 400 from
 /// `POST /jobs/complete` is genuinely AMBIGUOUS on Job-Dispatcher's own
 /// side - `handleCompleteJob` returns the exact same status for "this
 /// job id was never even submitted", "this job already reached done/
@@ -415,7 +415,7 @@ mod tests {
         assert!(request.contains("\"success\":true"));
     }
 
-    // V07-012 (found in an independent revalidation audit, P1): a 400
+    // V07-012 (P1): a 400
     // from /jobs/complete used to be blindly treated as "already
     // closed" - these four prove it is now disambiguated against
     // Job-Dispatcher's own real GET /jobs status instead of guessed at.

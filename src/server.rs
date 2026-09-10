@@ -44,7 +44,7 @@ use crate::job_dispatcher;
 use crate::mission::{CancelOutcome, MissionRegistry, TransitionError};
 use crate::outbox::RemoteCloseOutbox;
 
-// REV-010 (found in an independent revalidation audit, P1): how often
+// REV-010 (P1): how often
 // the background pass below retries confirming a mission's terminal
 // outcome to Job-Dispatcher - see reconcile_pending_remote_closes()'s
 // own doc comment. Frequent enough that a transient Job-Dispatcher
@@ -362,8 +362,7 @@ fn handle_auto_dispatch(request: tiny_http::Request, state: &AppState, id: &str)
         }
     };
 
-    // ORCH-01 (found in an ecosystem-wide software-improvements audit,
-    // P1): a single /dispatch pass on Job-Dispatcher is its own real,
+    // ORCH-01 (P1): a single /dispatch pass on Job-Dispatcher is its own real,
     // global scheduling algorithm - it can assign several jobs at once,
     // not just the one this caller asked about. Reconciling EVERY
     // returned assignment (not only the one matching `id`) keeps this
@@ -447,7 +446,7 @@ fn handle_start(request: tiny_http::Request, state: &AppState, id: &str) {
     }
 }
 
-/// REV-010 (found in an independent revalidation audit, P1):
+/// REV-010 (P1):
 /// handle_complete()/handle_cancel() below commit a mission's terminal
 /// state locally first, then make a best-effort attempt to confirm it
 /// to Job-Dispatcher - ORCH-02's own real integration. Before this fix,
@@ -467,7 +466,7 @@ fn handle_start(request: tiny_http::Request, state: &AppState, id: &str) {
 /// because only THIS side's confirmation of that success got lost, is
 /// always safe.
 ///
-/// V07-012 (found in an independent revalidation audit, P1): the
+/// V07-012 (P1): the
 /// "honest limit" this function's own docstring used to state out loud
 /// (a real process restart losing the pending list along with every
 /// other mission `MissionRegistry` ever knew about) is now closed. The
@@ -658,8 +657,8 @@ fn handle_recover(request: tiny_http::Request, state: &AppState, node: &str) {
         let mut reg = state.registry.lock().unwrap();
         reg.recover_node_unavailable(node)
     };
-    // Real gap found in an ecosystem-wide software-improvements audit:
-    // this used to only update the local in-memory mission registry -
+    // Real gap found while auditing the code: this used to only update
+    // the local in-memory mission registry -
     // Job-Dispatcher could keep believing a job was still assigned to
     // the now-unreachable node. Best-effort, same reasoning as every
     // other job_dispatcher.rs call: the registry above is already the
@@ -745,8 +744,7 @@ mod tests {
     /// this module's own tests need to survive both the /jobs/submit
     /// call handle_add makes AND a later /dispatch call in the same test.
     ///
-    /// ORCH-03 (found in an ecosystem-wide software-improvements audit,
-    /// P1): this used to read the incoming request with one single,
+    /// ORCH-03 (P1): this used to read the incoming request with one single,
     /// non-looping `stream.read()` call, then immediately write the
     /// canned response and let the connection close. `ureq`'s own
     /// `send_string()` can write a request's headers and body as
@@ -936,8 +934,8 @@ mod tests {
 
     #[test]
     fn recover_still_succeeds_even_when_job_dispatcher_is_unreachable() {
-        // Found in an ecosystem-wide software-improvements audit:
-        // handle_recover() now also notifies Job-Dispatcher to requeue
+        // Found while auditing the code: handle_recover() now also
+        // notifies Job-Dispatcher to requeue
         // (job_dispatcher::requeue_job(), see that module's own tests
         // for the exact two-request contract) - but the registry above
         // is already the real source of truth for mission state
@@ -1081,8 +1079,7 @@ mod tests {
         );
     }
 
-    // ORCH-01 (found in an ecosystem-wide software-improvements audit,
-    // P1): a single /dispatch pass can assign several missions at once -
+    // ORCH-01 (P1): a single /dispatch pass can assign several missions at once -
     // only the requested one was ever reconciled locally.
     #[test]
     fn auto_dispatch_reconciles_every_real_assignment_the_pass_returned_not_only_the_requested_one()
@@ -1111,7 +1108,7 @@ mod tests {
         );
     }
 
-    // ORCH-02 (found in the same audit, P1): completing/cancelling a
+    // ORCH-02 (found in the same review pass, P1): completing/cancelling a
     // mission never told Job-Dispatcher, which could keep believing the
     // job (and its robot's reservation) was still active.
     #[test]
@@ -1185,7 +1182,7 @@ mod tests {
         );
     }
 
-    // REV-010 (found in an independent revalidation audit, P1): a failed
+    // REV-010 (P1): a failed
     // confirmation to Job-Dispatcher used to be invisible to any real
     // caller - the mission looked identical to a confirmed one.
     #[test]
@@ -1233,7 +1230,7 @@ mod tests {
         RemoteCloseOutbox::load(path).expect("a fresh test outbox path must always load cleanly")
     }
 
-    // V07-012 (found in an independent revalidation audit, P1): these
+    // V07-012 (P1): these
     // three tests now exercise reconcile_pending_remote_closes()'s real
     // worklist source - the durable RemoteCloseOutbox, not
     // MissionRegistry's own in-memory pending_remote_closes() - proving
