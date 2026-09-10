@@ -2,7 +2,7 @@
 // Copyright (C) 2026 JuanenRac (Electro Hobby 3D) <electrohobby3d@gmail.com>
 // GPL-3.0 - see LICENSE
 //
-// V07-012 (found in an independent revalidation audit, P1): server.rs's
+// V07-012 (P1): server.rs's
 // own `reconcile_pending_remote_closes()` already retries confirming a
 // mission's terminal outcome to Job-Dispatcher - but its own worklist
 // (`MissionRegistry::pending_remote_closes()`) was purely in-memory,
@@ -13,7 +13,7 @@
 // could be left believing a robot's reservation was still active
 // forever, with no path back to consistency short of a human noticing.
 //
-// This is the real, durable "outbox" the audit's own proposed fix names:
+// This is the real, durable "outbox" the review's own proposed fix names:
 // one small JSON file recording exactly the pending remote-close intents
 // (mission id + which terminal outcome to report), independent of
 // MissionRegistry's own ephemeral state - survives a restart on its own,

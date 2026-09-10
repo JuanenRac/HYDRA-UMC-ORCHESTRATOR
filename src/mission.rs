@@ -129,7 +129,7 @@ pub struct Mission {
     // ahead of a real HYDRA-UMC-DEV-SERVER task queue implementing the
     // same requirement for its own jobs.
     pub attempt: u32,
-    // REV-010 (found in an independent revalidation audit, P1): whether
+    // REV-010 (P1): whether
     // this mission's own terminal outcome has actually been confirmed to
     // Job-Dispatcher yet. Reaching a terminal `state` above is a purely
     // LOCAL fact this struct's own transition methods below already
