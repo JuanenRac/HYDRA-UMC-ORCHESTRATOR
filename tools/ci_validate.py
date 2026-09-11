@@ -239,7 +239,7 @@ def main() -> int:
     private_references = subprocess.run(
         ("git", "grep", "-n", "-I", "--", private_marker),
         cwd=ROOT,
-        text=True,
+        text=True, encoding="utf-8", errors="replace",
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
         check=False,
@@ -265,7 +265,7 @@ def main() -> int:
     private_prose = subprocess.run(
         tuple(_phrase_cmd),
         cwd=ROOT,
-        text=True,
+        text=True, encoding="utf-8", errors="replace",
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
         check=False,
