@@ -17,6 +17,10 @@
 
 ---
 
+**Vérification d'honnêteté - ce qui fonctionne réellement aujourd'hui :** la machine à états des missions (`src/mission.rs` : `Mission`/`MissionRegistry`, chaque transition `Pending -> Dispatched -> InProgress -> Completed`/`Cancelled`/`Failed`, annulation idempotente, récupération après défaillance de nœud), sa propre persistance sur disque (`MissionRegistry::load`/`persist`, `data/missions.json`), l'outbox durable des fermetures distantes en attente (`src/outbox.rs`), le client HTTP réel vers HYDRA-UMC-JOB-DISPATCHER (`src/job_dispatcher.rs`) et le serveur JSON/HTTP simple qui expose tout cela (`src/server.rs`, `tiny_http`, sans runtime async) sont réels et testés (75 tests, `cargo test`). La sous-commande CLI `mission-demo` exécute un scénario réel de bout en bout contre ce même `MissionRegistry` - pas un mock. Ce qui reste aspirationnel : les « couches internes prévues » de la section 3 ci-dessous (couche API, dispatch synchronisé par PTP, agrégation de la santé de la flotte en tant que service permanent) décrivent une intention de conception, pas du code existant ; il n'y a aucun câblage gRPC de ce dépôt vers un JOB-DISPATCHER ou NODE-HEALING réel en fonctionnement, aucune intégration avec PATH-PLANNER-3D/SWARM-SYNC, et aucune flotte multi-nœuds réelle n'a jamais tourné avec ce binaire - `docker-compose.yml` construit et démarre les 4 services frères ensemble, mais cela n'a pas été testé sur du matériel robotique réel. Voir `CHANGELOG.md` pour ce qui a déjà été livré exactement, et la feuille de route (ROADMAP) ci-dessous pour ce qui reste ouvert.
+
+---
+
 ## 1. 🛠️ APERÇU TECHNIQUE
 
 **HYDRA-UMC-ORCHESTRATOR** est la couche de coordination de haut niveau de l'écosystème HYDRA-UMC. Il gère plusieurs nœuds HydraNodes (cerveaux cinématiques, nœuds de vision et nœuds cognitifs) comme un essaim unique et unifié.
@@ -181,9 +185,11 @@ résultant.
 ```
 
 ```bash
-cargo test   # 42 tests : chaque transition, chaque rejet de transition
-             # invalide, annulation idempotente et récupération après
-             # défaillance de nœud
+cargo test   # 75 tests : les transitions/rejets de transition invalide/
+             # annulation idempotente/récupération après défaillance de
+             # nœud de mission.rs, plus la persistance à l'épreuve des
+             # pannes d'outbox.rs, le client HTTP réel de
+             # job_dispatcher.rs et les handlers HTTP de server.rs
 ```
 
 En tant que dépôt d'intégration parent de l'écosystème, ce dépôt fournit
