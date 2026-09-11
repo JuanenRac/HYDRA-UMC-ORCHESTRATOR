@@ -17,6 +17,10 @@
 
 ---
 
+**正直な現状確認 - 実際に今動くもの:** ミッション状態機械（`src/mission.rs`: `Mission`/`MissionRegistry`、`Pending -> Dispatched -> InProgress -> Completed`/`Cancelled`/`Failed` の全遷移、冪等なキャンセル、ノード障害時の復旧）、その独自のディスク永続化（`MissionRegistry::load`/`persist`、`data/missions.json`）、保留中のリモートクローズを扱う永続outbox（`src/outbox.rs`）、HYDRA-UMC-JOB-DISPATCHER への実際のHTTPクライアント（`src/job_dispatcher.rs`）、そしてこれらすべてを公開するシンプルなJSON/HTTPサーバー（`src/server.rs`、`tiny_http`、非同期ランタイムなし）は本物であり、テスト済みです（75件のテスト、`cargo test`）。CLIサブコマンド `mission-demo` は、モックではなく、まさにこの `MissionRegistry` に対して実際のシナリオをエンドツーエンドで実行します。まだ構想段階にとどまっているもの: 下記セクション3の「計画中の内部レイヤー」（APIレイヤー、PTP同期ディスパッチ、常駐サービスとしてのフリート健全性集約）は設計意図を記したものであり、すでに存在するコードではありません。本リポジトリから実際に稼働中のJOB-DISPATCHERやNODE-HEALINGプロセスへのgRPC配線は存在せず、PATH-PLANNER-3D/SWARM-SYNCとの統合もなく、このバイナリに対して実際のマルチノード・フリートが動いたことも一度もありません - `docker-compose.yml` は4つの兄弟サービスをまとめてビルド・起動しますが、実機のロボットハードウェアに対しては検証されていません。これまでに実際に出荷されたものの詳細は `CHANGELOG.md` を、残っている未完了事項は下記のROADMAPを参照してください。
+
+---
+
 ## 1. 🛠️ 技術概要
 
 **HYDRA-UMC-ORCHESTRATOR** は、HYDRA-UMC エコシステムの高レベル調整層
@@ -171,8 +175,10 @@ run.bat mission-demo
 ```
 
 ```bash
-cargo test   # 42 件のテスト：すべての状態遷移、すべての不正な遷移の
-             # 拒否、冪等なキャンセル、ノード障害後のリカバリー
+cargo test   # 75 件のテスト：mission.rs の全状態遷移・不正な遷移の拒否・
+             # 冪等なキャンセル・ノード障害後のリカバリーに加え、
+             # outbox.rs のクラッシュに強い永続化、job_dispatcher.rs の
+             # 実際のHTTPクライアント、server.rs のHTTPハンドラー
 ```
 
 エコシステムの統合親プロジェクトとして、本リポジトリは実際の

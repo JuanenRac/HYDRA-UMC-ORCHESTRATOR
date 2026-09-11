@@ -17,6 +17,10 @@
 
 ---
 
+**诚实核查——今天真正能跑起来的部分：** 任务状态机（`src/mission.rs`：`Mission`/`MissionRegistry`，每一次 `Pending -> Dispatched -> InProgress -> Completed`/`Cancelled`/`Failed` 转换、幂等取消、节点故障恢复）、它自己的磁盘持久化（`MissionRegistry::load`/`persist`，`data/missions.json`）、持久化的远程关闭待办outbox（`src/outbox.rs`）、指向 HYDRA-UMC-JOB-DISPATCHER 的真实 HTTP 客户端（`src/job_dispatcher.rs`），以及把这一切暴露出来的简单 JSON/HTTP 服务器（`src/server.rs`，`tiny_http`，没有异步运行时）都是真实且经过测试的（75 个测试，`cargo test`）。`mission-demo` CLI 子命令针对同一个 `MissionRegistry` 运行一个真实的端到端场景——不是模拟（mock）。仍然只是设想、尚未实现的部分：下面第 3 节中的"计划中的内部层"（API 层、PTP 同步调度、作为常驻服务的舰队健康聚合）描述的是设计意图，不是已经存在的代码；本仓库目前没有到真实运行中的 JOB-DISPATCHER 或 NODE-HEALING 进程的 gRPC 连接，没有与 PATH-PLANNER-3D/SWARM-SYNC 的集成，也从未有过真实的多节点舰队跑在这个二进制文件上——`docker-compose.yml` 会一起构建并启动这 4 个兄弟服务，但这从未在真实机器人硬件上验证过。已交付的具体内容见 `CHANGELOG.md`，尚未完成的部分见下面的 ROADMAP。
+
+---
+
 ## 1. 🛠️ 技术概述
 
 **HYDRA-UMC-ORCHESTRATOR** 是 HYDRA-UMC 生态系统的高层协调层。它将多个
@@ -159,8 +163,10 @@ run.bat mission-demo
 ```
 
 ```bash
-cargo test   # 42 个测试：每一次状态转换、每一次非法转换的拒绝、
-             # 幂等取消，以及节点故障后的恢复
+cargo test   # 75 个测试：mission.rs 的每一次状态转换、每一次非法转换的
+             # 拒绝、幂等取消、节点故障后的恢复，加上 outbox.rs 的
+             # 抗崩溃持久化、job_dispatcher.rs 的真实 HTTP 客户端，
+             # 以及 server.rs 的 HTTP 处理器
 ```
 
 作为生态系统的集成父项目，本仓库还提供了一个真实的 `docker-compose.yml`，
