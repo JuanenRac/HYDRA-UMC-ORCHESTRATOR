@@ -9,9 +9,10 @@ copies.
 
 It lives inside this repo (rather than a dedicated `HYDRA-UMC-PROTO` repo)
 because `HYDRA-UMC-ORCHESTRATOR` is already the integration parent with
-authority over the whole fleet - this avoids creating a 46th repository
-for a single shared file until there's a real need to version/release it
-independently. Moving it later is a straightforward copy, not a rewrite.
+authority over the whole fleet - this avoids creating a whole separate
+repository for a single shared file until there's a real need to
+version/release it independently. Moving it later is a straightforward
+copy, not a rewrite.
 
 ## Files
 
