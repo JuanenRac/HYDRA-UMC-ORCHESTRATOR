@@ -68,9 +68,56 @@ Notable real behavior this demo exercises:
 - **Terminal states**: `Cancelled`, `Completed`, and `Failed` all report
   `is_terminal() == true`; `Pending` does not.
 
-Any argument other than `mission-demo` (including no argument at all) falls
-through to the same identity/version output as bare invocation — there is no
-usage error path for an unrecognized subcommand:
+### `serve`
+
+The real HTTP API — a genuine `tiny_http` server, not a demo. Started with
+`hydra-umc-orchestrator serve [--addr HOST] [--port PORT] [--job-dispatcher-url URL] [--data-dir DIR]`
+(`--addr` defaults to `127.0.0.1`, `--port` to `8114`, `--data-dir` to `./data`;
+`--job-dispatcher-url` is optional — omitted, missions stay local-only and
+`auto-dispatch` reports `503`). Real startup banner, captured from a real run:
+
+```
+$ hydra-umc-orchestrator serve --port 8114
+[orchestrator] HTTP API listening on 127.0.0.1:8114
+[orchestrator] POST /missions, GET /missions, GET /missions/:id,
+[orchestrator] POST /missions/:id/{dispatch,auto-dispatch,start,complete,cancel,fail},
+[orchestrator] POST /nodes/:node/recover, GET /stats
+[orchestrator] --job-dispatcher-url not set - missions stay local-only, auto-dispatch disabled
+[orchestrator] pending remote-close outbox: data\pending_remote_closes.json
+[orchestrator] mission registry: data\missions.json
+```
+
+Real routes (`src/server.rs`'s own dispatch table):
+
+| Method | Path | Does |
+|---|---|---|
+| `POST` | `/missions` | Add a mission (`{"id": "..."}`) |
+| `GET` | `/missions` | List every mission |
+| `GET` | `/missions/:id` | Get one mission |
+| `POST` | `/missions/:id/dispatch` | Submit this mission's job to JOB-DISPATCHER (`submit_job`) |
+| `POST` | `/missions/:id/auto-dispatch` | Run a real JOB-DISPATCHER dispatch pass (`run_dispatch`) and reconcile every assignment it returns, not only this mission's own |
+| `POST` | `/missions/:id/start` | Mark `InProgress` |
+| `POST` | `/missions/:id/complete` | Mark `Completed`, confirming the real terminal outcome to JOB-DISPATCHER |
+| `POST` | `/missions/:id/cancel` | Idempotent cancel, confirming to JOB-DISPATCHER on a fresh (non-repeat) cancellation |
+| `POST` | `/missions/:id/fail` | `{"reason": "..."}`, confirming to JOB-DISPATCHER the same way `cancel` does |
+| `POST` | `/nodes/:node/recover` | HYDRA-UMC-NODE-HEALING's own real caller — requeues every mission dispatched to `node` (see that project's own `OrchestratorReactor`) |
+| `GET` | `/stats` | `{"missionCount": ..., "jobDispatcherUrl": ...}` |
+
+Any JOB-DISPATCHER confirmation call above that fails (network error, or a
+job-dispatcher-side inconsistency `job_dispatcher.rs`'s own `complete_job()`
+detects) never blocks or reverts the local mission transition - it is
+recorded in a real, durable outbox (`outbox.rs`) and retried until it
+succeeds, so a transient JOB-DISPATCHER outage can never leave a mission
+permanently unreconciled.
+
+A fatal startup failure (the data directory or mission registry can't be
+read/created, or the port is already bound) prints `[orchestrator] fatal: ...`
+and exits with a real nonzero status - never `0` - so a process supervisor
+watching the exit code can tell a crash apart from a clean shutdown.
+
+Any argument other than `mission-demo`/`serve` (including no argument at all)
+falls through to the same identity/version output as bare invocation — there
+is no usage error path for an unrecognized subcommand:
 
 ```
 $ hydra-umc-orchestrator bogus
@@ -80,9 +127,12 @@ Distributed swarm manager: coordinates SWARM-SYNC, PATH-PLANNER-3D, JOB-DISPATCH
 
 ## Not yet wired in
 
-There is no real gRPC/network layer yet — `mission-demo` exercises the
-mission state machine entirely in-process, against an in-memory
-`MissionRegistry`, with no real JOB-DISPATCHER or NODE-HEALING peer on the
-other end. Per this project's own module docs, real logic lands as pure,
-no-I/O modules first and is wired to a real transport only once there is a
-real peer to talk to.
+`mission-demo` itself still exercises the mission state machine entirely
+in-process against an in-memory `MissionRegistry`, with no real peer on the
+other end - that demo is unchanged. `serve` (above) is the real thing: a
+genuine HTTP/JSON network layer, with real, tested integration to
+JOB-DISPATCHER (`job_dispatcher.rs`, over real HTTP via `ureq`) and a real
+inbound endpoint NODE-HEALING's own `OrchestratorReactor` calls today. What
+remains genuinely unimplemented: no gRPC transport of any kind (every real
+integration above is plain HTTP/JSON, not `hydra.common.v1` gRPC), and no
+outbound call to NODE-HEALING or SWARM-SYNC from this side.

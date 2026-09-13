@@ -138,7 +138,17 @@ fn find_flag(args: &[String], flag: &str) -> Option<String> {
         .cloned()
 }
 
-fn run_serve(args: &[String]) {
+/// H025: every fatal startup failure below used to `eprintln!` and fall
+/// through to the end of this function (or an early `return;`) with no
+/// way for `main()` to tell a real failure apart from a clean shutdown -
+/// the process always exited 0. A process supervisor (systemd, Docker,
+/// a deploy script's own health check) watching the exit code for a
+/// crash would see "0 = success" and never restart/alert, even though
+/// this Orchestrator never actually started serving at all. Returns
+/// `false` for every fatal path, `true` only once `server::run()` itself
+/// returns (a real, intentional clean shutdown) - `main()` maps `false`
+/// to a real nonzero exit code.
+fn run_serve(args: &[String]) -> bool {
     let addr = find_flag(args, "--addr").unwrap_or_else(|| "127.0.0.1".to_string());
     let port = find_flag(args, "--port").unwrap_or_else(|| "8114".to_string());
     let bind_addr = format!("{addr}:{port}");
@@ -157,7 +167,7 @@ fn run_serve(args: &[String]) {
                 "[orchestrator] fatal: could not load the pending remote-close outbox at {}: {e}",
                 outbox_path.display()
             );
-            return;
+            return false;
         }
     };
 
@@ -177,7 +187,7 @@ fn run_serve(args: &[String]) {
                 "[orchestrator] fatal: could not load the mission registry at {}: {e}",
                 missions_path.display()
             );
-            return;
+            return false;
         }
     };
     let recovered = registry.recover_unknown_missions();
@@ -208,9 +218,11 @@ fn run_serve(args: &[String]) {
                 missions_path.display()
             );
             server::run(bound, job_dispatcher_url, close_outbox, registry);
+            true
         }
         Err(e) => {
             eprintln!("[orchestrator] fatal: could not start HTTP server on {bind_addr}: {e}");
+            false
         }
     }
 }
@@ -219,7 +231,11 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(|s| s.as_str()) {
         Some("mission-demo") => run_mission_demo(),
-        Some("serve") => run_serve(&args[1..]),
+        Some("serve") => {
+            if !run_serve(&args[1..]) {
+                std::process::exit(1);
+            }
+        }
         _ => {
             println!("HYDRA-UMC-ORCHESTRATOR v{VERSION}");
             println!("{ROLE}");

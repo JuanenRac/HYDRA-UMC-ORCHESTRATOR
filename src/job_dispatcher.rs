@@ -172,11 +172,22 @@ pub fn complete_job(base_url: &str, mission_id: &str, success: bool) -> Result<(
         Ok(_) => Ok(()),
         Err(ureq::Error::Status(400, _)) => match fetch_job_status(base_url, mission_id)? {
             None => Ok(()), // never existed there at all - nothing real to close
-            Some(status) if status == "assigned" => Err(ClientError::BadResponse(format!(
-                "job {mission_id:?} is still reported 'assigned' on job-dispatcher - \
+            // H023: "pending"/"blocked"/"unreachable" are NOT terminal -
+            // this used to lump them in with "already closed", but a
+            // pending/blocked job is still sitting live in Job-Dispatcher's
+            // own queue and can still be picked up and assigned to a real
+            // robot on a future dispatch pass. Cancelling/failing the
+            // mission here left that real remote job completely
+            // unaffected - the exact "cancel a pending mission never
+            // cancels the remote job" gap the finding names. Only "done"
+            // and "failed" are genuinely terminal states nothing further
+            // can happen to; every other status (including "assigned",
+            // already handled) is a real, reported failure to close.
+            Some(status) if status == "done" || status == "failed" => Ok(()),
+            Some(status) => Err(ClientError::BadResponse(format!(
+                "job {mission_id:?} is still reported {status:?} on job-dispatcher (not done/failed) - \
                  the 400 from /jobs/complete was NOT a benign already-closed state"
             ))),
-            Some(_) => Ok(()), // done/failed/pending/blocked/unreachable - already terminal or never dispatched
         },
         Err(ureq::Error::Status(code, resp)) => Err(ClientError::BadResponse(format!(
             "HTTP {code}: {}",
@@ -465,6 +476,41 @@ mod tests {
         assert!(
             result.is_err(),
             "a job job-dispatcher still reports as 'assigned' is a REAL orphaned reservation, not a benign 400"
+        );
+    }
+
+    // H023: a "pending"/"blocked"/"unreachable" job is NOT terminal - it
+    // is still sitting live in Job-Dispatcher's own queue and can still
+    // be assigned to a real robot on a future dispatch pass. Cancelling
+    // or failing the mission here must not be silently treated as
+    // "already closed" the way a genuinely done/failed job is.
+    #[test]
+    fn complete_job_refuses_to_treat_a_400_as_success_when_the_job_is_still_pending_remotely() {
+        let (base_url, _rx) = fake_server_two_requests(
+            400,
+            r#"{"error":"job is not assigned"}"#,
+            200,
+            r#"[{"ID":"m1","Status":"pending"}]"#,
+        );
+        let result = complete_job(&base_url, "m1", false);
+        assert!(
+            result.is_err(),
+            "a pending job is still live remotely and can still be dispatched - not a benign 400"
+        );
+    }
+
+    #[test]
+    fn complete_job_refuses_to_treat_a_400_as_success_when_the_job_is_still_blocked_remotely() {
+        let (base_url, _rx) = fake_server_two_requests(
+            400,
+            r#"{"error":"job is not assigned"}"#,
+            200,
+            r#"[{"ID":"m1","Status":"blocked"}]"#,
+        );
+        let result = complete_job(&base_url, "m1", false);
+        assert!(
+            result.is_err(),
+            "a blocked job is still live remotely (waiting on a dependency) - not a benign 400"
         );
     }
 

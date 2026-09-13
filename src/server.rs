@@ -625,25 +625,52 @@ fn handle_fail(request: tiny_http::Request, state: &AppState, id: &str, raw: &st
             return;
         }
     };
-    let mut reg = state.registry.lock().unwrap();
-    let Some(mission) = reg.get_mut(id) else {
-        write_json(
-            request,
-            404,
-            &json!({"error": format!("no mission {id:?}")}),
-        );
-        return;
+    let outcome = {
+        let mut reg = state.registry.lock().unwrap();
+        let Some(mission) = reg.get_mut(id) else {
+            write_json(
+                request,
+                404,
+                &json!({"error": format!("no mission {id:?}")}),
+            );
+            return;
+        };
+        let outcome = mission.fail(req.reason);
+        if outcome.is_ok() {
+            reg.persist();
+        }
+        outcome
     };
-    let outcome = mission.fail(req.reason);
-    if outcome.is_ok() {
-        reg.persist();
-    }
     match outcome {
-        Ok(()) => write_json(
-            request,
-            200,
-            &serde_json::to_value(reg.get(id).unwrap()).unwrap(),
-        ),
+        Ok(()) => {
+            // H024: this used to update only the local mission registry -
+            // Job-Dispatcher could keep believing a job (and its robot's
+            // reservation) was still active for a mission this Orchestrator
+            // had already closed out locally as Failed, the exact same real
+            // gap ORCH-02 already closed for handle_cancel just above.
+            // fail() only ever returns Ok(()) for a FRESH transition (it
+            // refuses outright - Err - once the mission is already
+            // terminal), so unlike handle_cancel there is no
+            // already-failed case to skip here.
+            if let Some(base_url) = &state.job_dispatcher_url {
+                if let Err(e) = job_dispatcher::complete_job(base_url, id, false) {
+                    eprintln!(
+                        "[orchestrator] could not confirm failure of mission {id} to job-dispatcher: {e}"
+                    );
+                    // REV-010/V07-012: same real reconciliation bookkeeping
+                    // as handle_cancel/handle_complete above.
+                    if let Some(mission) = state.registry.lock().unwrap().get_mut(id) {
+                        mission.mark_remote_close_pending();
+                    }
+                    state.close_outbox.mark_pending(id, false);
+                }
+            }
+            write_json(
+                request,
+                200,
+                &serde_json::to_value(state.registry.lock().unwrap().get(id).unwrap()).unwrap(),
+            );
+        }
         Err(e) => write_json(
             request,
             409,

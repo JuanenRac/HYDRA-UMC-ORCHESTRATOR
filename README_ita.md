@@ -17,7 +17,7 @@
 
 ---
 
-**Verifica di onestà - cosa funziona davvero oggi:** la macchina a stati delle missioni (`src/mission.rs`: `Mission`/`MissionRegistry`, ogni transizione `Pending -> Dispatched -> InProgress -> Completed`/`Cancelled`/`Failed`, cancellazione idempotente, recupero da guasto del nodo), la sua persistenza su disco (`MissionRegistry::load`/`persist`, `data/missions.json`), l'outbox duraturo delle chiusure remote in sospeso (`src/outbox.rs`), il client HTTP reale verso HYDRA-UMC-JOB-DISPATCHER (`src/job_dispatcher.rs`) e il server JSON/HTTP semplice che espone tutto questo (`src/server.rs`, `tiny_http`, senza runtime async) sono reali e testati (75 test, `cargo test`). Il sottocomando CLI `mission-demo` esegue uno scenario reale end-to-end contro quello stesso `MissionRegistry` - non un mock. Ciò che resta aspirazionale: i "livelli interni pianificati" della sezione 3 più sotto (livello API, dispatch sincronizzato via PTP, aggregazione della salute della flotta come servizio permanente) descrivono un'intenzione progettuale, non codice già esistente; non c'è alcun cablaggio gRPC da questo repo verso un JOB-DISPATCHER o NODE-HEALING reale in esecuzione, nessuna integrazione con PATH-PLANNER-3D/SWARM-SYNC, e nessuna flotta multi-nodo reale ha mai girato contro questo binario - `docker-compose.yml` compila e avvia i 4 servizi gemelli insieme, ma ciò non è mai stato verificato su hardware robotico reale. Vedi `CHANGELOG.md` per ciò che è stato consegnato finora esattamente, e la ROADMAP più sotto per ciò che resta aperto.
+**Verifica di onestà - cosa funziona davvero oggi:** la macchina a stati delle missioni (`src/mission.rs`: `Mission`/`MissionRegistry`, ogni transizione `Pending -> Dispatched -> InProgress -> Completed`/`Cancelled`/`Failed`, cancellazione idempotente, recupero da guasto del nodo), la sua persistenza su disco (`MissionRegistry::load`/`persist`, `data/missions.json`), l'outbox duraturo delle chiusure remote in sospeso (`src/outbox.rs`), il client HTTP reale verso HYDRA-UMC-JOB-DISPATCHER (`src/job_dispatcher.rs`) e il server JSON/HTTP semplice che espone tutto questo (`src/server.rs`, `tiny_http`, senza runtime async) sono reali e testati (77 test, `cargo test`). Il sottocomando CLI `mission-demo` esegue uno scenario reale end-to-end contro quello stesso `MissionRegistry` - non un mock. Ciò che resta aspirazionale: i "livelli interni pianificati" della sezione 3 più sotto (livello API, dispatch sincronizzato via PTP, aggregazione della salute della flotta come servizio permanente) descrivono un'intenzione progettuale, non codice già esistente; non c'è alcun cablaggio gRPC da questo repo verso un JOB-DISPATCHER o NODE-HEALING reale in esecuzione, nessuna integrazione con PATH-PLANNER-3D/SWARM-SYNC, e nessuna flotta multi-nodo reale ha mai girato contro questo binario - `docker-compose.yml` compila e avvia i 4 servizi gemelli insieme, ma ciò non è mai stato verificato su hardware robotico reale. Vedi `CHANGELOG.md` per ciò che è stato consegnato finora esattamente, e la ROADMAP più sotto per ciò che resta aperto.
 
 ---
 
@@ -184,7 +184,7 @@ risultante.
 ```
 
 ```bash
-cargo test   # 75 test: le transizioni/i rifiuti di transizione non
+cargo test   # 77 test: le transizioni/i rifiuti di transizione non
              # valida/la cancellazione idempotente/il recupero dopo
              # guasto nodo di mission.rs, più la persistenza a prova di
              # crash di outbox.rs, il client HTTP reale di

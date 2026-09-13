@@ -2,6 +2,45 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.1] - H023/H024/H025/H066: a pending job survived cancellation, /fail never told JOB-DISPATCHER, and a fatal crash exited 0
+
+- **H023:** `complete_job()`'s 400-disambiguation logic treated `pending`/
+  `blocked`/`unreachable` job statuses exactly like `done`/`failed` -
+  "already terminal, nothing real to close". A pending/blocked job is
+  NOT terminal: it is still sitting live in JOB-DISPATCHER's own queue
+  and can still be assigned to a real robot on a future dispatch pass.
+  Cancelling a mission whose job was still pending there left that real
+  remote job completely unaffected - it could still be dispatched after
+  the mission was already marked Cancelled locally. Now only `done`/
+  `failed` are treated as safely closed; every other status (including
+  `assigned`, already handled) is reported as a real failure.
+- **H024:** `handle_fail` (`POST /missions/:id/fail`) only ever updated
+  the local mission registry - unlike `handle_cancel`/`handle_complete`,
+  it never confirmed the terminal outcome to JOB-DISPATCHER at all, so a
+  failed mission's own job/robot reservation there was never released or
+  reconciled. Now mirrors `handle_cancel`'s exact real-confirmation and
+  outbox-fallback behavior.
+- **H025:** every fatal startup failure in `run_serve()` (data
+  directory/mission registry unreadable, or the port already bound)
+  printed `[orchestrator] fatal: ...` and then exited `0` - a process
+  supervisor watching the exit code could never tell a real crash apart
+  from a clean shutdown. `run_serve()` now returns whether startup
+  actually succeeded, and `main()` exits `1` on a real failure - verified
+  live against a real bind-failure (two instances on the same port).
+- **H066 (docs):** `CLI_REFERENCE.md` claimed "there is no real
+  gRPC/network layer yet", omitting the real `serve` subcommand
+  entirely - a genuine HTTP/JSON API (`tiny_http`) with real, tested
+  JOB-DISPATCHER integration (`ureq`) and a real inbound endpoint
+  NODE-HEALING's own `OrchestratorReactor` already calls. Added a full
+  `### serve` section (real flags, real route table, a real captured
+  startup banner) and corrected "Not yet wired in" to describe what
+  genuinely remains unimplemented (no gRPC transport at all; no outbound
+  call to NODE-HEALING/SWARM-SYNC from this side) instead of denying
+  capability that exists.
+- 4 new regression tests. `cargo fmt --check`/`clippy -D warnings`/
+  `test --all-targets` all clean; H025 additionally verified live
+  (a real bind conflict now exits 1, confirmed not 0).
+
 ## [0.1.0] - C07: MissionRegistry itself now survives a real restart
 
 A revalidation pass found the one durability gap V07-012/`outbox.rs`

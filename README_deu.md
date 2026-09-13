@@ -17,7 +17,7 @@
 
 ---
 
-**Ehrlichkeitscheck - was heute wirklich läuft:** die Missions-Zustandsmaschine (`src/mission.rs`: `Mission`/`MissionRegistry`, jeder Übergang `Pending -> Dispatched -> InProgress -> Completed`/`Cancelled`/`Failed`, idempotenter Abbruch, Wiederherstellung bei Knotenausfall), ihre eigene Festplatten-Persistenz (`MissionRegistry::load`/`persist`, `data/missions.json`), das dauerhafte Outbox für ausstehende Remote-Abschlüsse (`src/outbox.rs`), der echte HTTP-Client zu HYDRA-UMC-JOB-DISPATCHER (`src/job_dispatcher.rs`) und der einfache JSON/HTTP-Server, der all das bereitstellt (`src/server.rs`, `tiny_http`, ohne Async-Runtime), sind real und getestet (75 Tests, `cargo test`). Der CLI-Unterbefehl `mission-demo` führt ein echtes End-to-End-Szenario gegen genau diese `MissionRegistry` aus - kein Mock. Was noch angestrebt, aber nicht umgesetzt ist: die "geplanten internen Schichten" in Abschnitt 3 weiter unten (API-Schicht, PTP-synchronisiertes Dispatching, Flotten-Gesundheitsaggregation als dauerhafter Dienst) beschreiben Designabsicht, keinen bereits existierenden Code; es gibt keine gRPC-Anbindung von diesem Repo an einen echten laufenden JOB-DISPATCHER oder NODE-HEALING-Prozess, keine PATH-PLANNER-3D-/SWARM-SYNC-Integration, und es lief noch nie eine echte Multi-Node-Flotte gegen dieses Binary - `docker-compose.yml` baut und startet die 4 Geschwisterdienste zusammen, das wurde aber nie gegen echte Roboter-Hardware getestet. Siehe `CHANGELOG.md` für genau das, was bisher ausgeliefert wurde, und die ROADMAP weiter unten für das, was noch offen ist.
+**Ehrlichkeitscheck - was heute wirklich läuft:** die Missions-Zustandsmaschine (`src/mission.rs`: `Mission`/`MissionRegistry`, jeder Übergang `Pending -> Dispatched -> InProgress -> Completed`/`Cancelled`/`Failed`, idempotenter Abbruch, Wiederherstellung bei Knotenausfall), ihre eigene Festplatten-Persistenz (`MissionRegistry::load`/`persist`, `data/missions.json`), das dauerhafte Outbox für ausstehende Remote-Abschlüsse (`src/outbox.rs`), der echte HTTP-Client zu HYDRA-UMC-JOB-DISPATCHER (`src/job_dispatcher.rs`) und der einfache JSON/HTTP-Server, der all das bereitstellt (`src/server.rs`, `tiny_http`, ohne Async-Runtime), sind real und getestet (77 Tests, `cargo test`). Der CLI-Unterbefehl `mission-demo` führt ein echtes End-to-End-Szenario gegen genau diese `MissionRegistry` aus - kein Mock. Was noch angestrebt, aber nicht umgesetzt ist: die "geplanten internen Schichten" in Abschnitt 3 weiter unten (API-Schicht, PTP-synchronisiertes Dispatching, Flotten-Gesundheitsaggregation als dauerhafter Dienst) beschreiben Designabsicht, keinen bereits existierenden Code; es gibt keine gRPC-Anbindung von diesem Repo an einen echten laufenden JOB-DISPATCHER oder NODE-HEALING-Prozess, keine PATH-PLANNER-3D-/SWARM-SYNC-Integration, und es lief noch nie eine echte Multi-Node-Flotte gegen dieses Binary - `docker-compose.yml` baut und startet die 4 Geschwisterdienste zusammen, das wurde aber nie gegen echte Roboter-Hardware getestet. Siehe `CHANGELOG.md` für genau das, was bisher ausgeliefert wurde, und die ROADMAP weiter unten für das, was noch offen ist.
 
 ---
 
@@ -186,7 +186,7 @@ aus:
 ```
 
 ```bash
-cargo test   # 75 Tests: die Zustandsänderungen/Ablehnungen ungültiger
+cargo test   # 77 Tests: die Zustandsänderungen/Ablehnungen ungültiger
              # Zustandsänderungen/idempotente Stornierung/Wiederherstellung
              # nach Knotenausfall aus mission.rs, plus die absturzsichere
              # Persistenz von outbox.rs, den echten HTTP-Client von
