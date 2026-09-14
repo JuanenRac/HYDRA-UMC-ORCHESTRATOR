@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.2] - Doc fix: the mission-to-JOB-DISPATCHER hand-off was already real, README×7 still called it "missing gRPC wiring"
+
+The "Planned internal layers" section's own "Mission queue integration"
+bullet said the hand-off to JOB-DISPATCHER was still waiting on gRPC
+wiring - stale since well before this version: `src/job_dispatcher.rs`'s
+real `submit_job`/`complete_job`/`requeue_job`/`run_dispatch` were
+already wired into every real mission-lifecycle handler in `server.rs`
+(confirmed by `grep`), over the same real HTTP/JSON transport the
+top-of-file "Honesty check" paragraph already correctly described as
+real and tested. That paragraph and the "Planned internal layers"
+section had quietly drifted apart, contradicting each other about the
+same feature. Fixed across all 7 languages: the hand-off is now
+described as real, not planned, and clarified that it never used gRPC
+at all - `proto/hydra_common.proto`'s shared `HealthService` contract is
+a separate concern (HYDRA-UMC-NODE-HEALING's own fleet-health probe),
+unrelated to this repo's own JOB-DISPATCHER integration. No code
+changed; 77/77 tests still passing.
+
 ## [0.1.1] - H023/H024/H025/H066: a pending job survived cancellation, /fail never told JOB-DISPATCHER, and a fatal crash exited 0
 
 - **H023:** `complete_job()`'s 400-disambiguation logic treated `pending`/

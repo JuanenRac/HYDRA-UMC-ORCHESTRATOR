@@ -66,7 +66,7 @@ flowchart TB
 すでに存在する実際の状態機械の上に段階的に構築される**計画中の内部
 レイヤー**：
 * **API 層** — Studio/アプリから高レベルのミッションリクエストを受け取り、フリートレベルのアクションに変換します。
-* **ミッションキュー統合** — 受理されたミッションを、`mission.rs` にすでに存在する実際の `Mission`/`MissionRegistry` 状態機械を使って JOB-DISPATCHER に引き渡し、フリート全体にわたってそのライフサイクルを追跡します——まだ欠けているのは、ミッションを引き渡す先となる実際の JOB-DISPATCHER への gRPC 配線です。
+* **ミッションキュー統合** — 計画中ではなく、今すでに実際に動作しています: `server.rs` 自身が使うのと同じ実際の HTTP/JSON トランスポート(`src/job_dispatcher.rs` 自身の `submit_job`/`complete_job`/`requeue_job`/`run_dispatch`、各ミッションライフサイクルの実際のハンドラーにすでに配線済み)を通じて、受理されたミッションを JOB-DISPATCHER に引き渡し、`mission.rs` にすでに存在する実際の `Mission`/`MissionRegistry` 状態機械を使って、実際のプロセス再起動をまたいで永続化されたまま(`--data-dir`、デフォルトは `data/missions.json`)フリート全体にわたってそのライフサイクルを追跡します。このレイヤーは gRPC を一度も使ったことがなく、使う計画もありませんでした - `proto/hydra_common.proto` 自身の共有 `HealthService` 契約は別の話です(HYDRA-UMC-NODE-HEALING 自身の実際のフリート健全性プローブ)、この本リポジトリの JOB-DISPATCHER への引き渡しとは別物です。
 * **PTP 同期ディスパッチ** — SWARM-SYNC とタイミングを協調させ、同一ミッションを実行する複数のロボットが PATH-PLANNER-3D のチェックに従って衝突のない状態を維持します。
 * **フリート健全性の集約** — NODE-HEALING の各ノードからの信号を単一のフリート全体のビューに統合し、各信号が到着するたびに（すでに実際に動作する）`MissionRegistry::recover_node_unavailable()` を呼び出します。これはまた、グローバル E-STOP がすべてのノードに一度に到達するために通る経路でもあります。
 
