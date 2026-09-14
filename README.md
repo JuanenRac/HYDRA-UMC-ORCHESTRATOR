@@ -62,14 +62,19 @@ flowchart TB
 real state machine that already exists:
 * **API layer** — receives high-level mission requests from Studios/Apps
   and translates them into fleet-level actions.
-* **Mission queue integration** — hands accepted missions off to
-  JOB-DISPATCHER and tracks their lifecycle across the fleet using the
-  real `Mission`/`MissionRegistry` state machine that already exists in
+* **Mission queue integration** — real now, not planned: hands accepted
+  missions off to JOB-DISPATCHER over the same real HTTP/JSON transport
+  `server.rs` itself uses (`src/job_dispatcher.rs`'s own `submit_job`/
+  `complete_job`/`requeue_job`/`run_dispatch`, wired into every real
+  mission-lifecycle handler), and tracks their lifecycle across the
+  fleet using the real `Mission`/`MissionRegistry` state machine in
   `mission.rs`, durable across a real process restart (`--data-dir`,
   `data/missions.json` by default - a mission reloaded mid-flight
   becomes `Unknown` and is requeued to `Pending`, never silently assumed
-  complete) - what's still missing is the gRPC wiring to a real
-  JOB-DISPATCHER to hand missions off to.
+  complete). This layer never used gRPC and was never planned to -
+  `proto/hydra_common.proto`'s own shared `HealthService` contract is a
+  separate concern (HYDRA-UMC-NODE-HEALING's own real fleet-health
+  probe), not this repo's own JOB-DISPATCHER hand-off.
 * **PTP-synced dispatch** — coordinates timing with SWARM-SYNC so multiple
   robots executing the same mission stay collision-free per
   PATH-PLANNER-3D's checks.

@@ -63,11 +63,21 @@ flowchart TB
 existierenden echten Zustandsautomaten aufgebaut werden:
 * **API-Schicht** — empfängt Missionsanfragen von Studios/Apps und übersetzt
   sie in Aktionen auf Flottenebene.
-* **Missionswarteschlange** — übergibt angenommene Missionen an
-  JOB-DISPATCHER und verfolgt ihren Lebenszyklus in der Flotte mit dem
-  echten `Mission`/`MissionRegistry`-Zustandsautomaten, der bereits in
-  `mission.rs` existiert - was noch fehlt, ist die gRPC-Verdrahtung zu
-  einem echten JOB-DISPATCHER, an den Missionen übergeben werden.
+* **Missionswarteschlangen-Integration** — schon jetzt real, nicht nur
+  geplant: übergibt angenommene Missionen an JOB-DISPATCHER über
+  denselben echten HTTP/JSON-Transport, den `server.rs` selbst nutzt
+  (`src/job_dispatcher.rs`, dessen eigene `submit_job`/`complete_job`/
+  `requeue_job`/`run_dispatch`, bereits in jeden echten
+  Missions-Lebenszyklus-Handler verdrahtet), und verfolgt ihren
+  Lebenszyklus in der Flotte mit dem echten
+  `Mission`/`MissionRegistry`-Zustandsautomaten, der bereits in
+  `mission.rs` existiert, dauerhaft über einen echten Prozess-Neustart
+  hinweg (`--data-dir`, standardmäßig `data/missions.json`). Diese
+  Schicht hat niemals gRPC genutzt und das war auch nie geplant - der
+  gemeinsame `HealthService`-Vertrag aus `proto/hydra_common.proto` ist
+  eine eigene Angelegenheit (die echte Flotten-Gesundheitssonde von
+  HYDRA-UMC-NODE-HEALING selbst), nicht die Missionsübergabe dieses
+  Repositorys an JOB-DISPATCHER.
 * **PTP-synchronisierte Verteilung** — koordiniert die Zeitsteuerung mit
   SWARM-SYNC, damit mehrere Roboter derselben Mission gemäß den Prüfungen von
   PATH-PLANNER-3D kollisionsfrei bleiben.

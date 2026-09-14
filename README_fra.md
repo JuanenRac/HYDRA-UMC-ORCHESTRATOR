@@ -63,11 +63,20 @@ flowchart TB
 états réelle qui existe déjà :
 * **Couche API** — reçoit les requêtes de mission de haut niveau des Studios
   et applications, puis les traduit en actions au niveau de la flotte.
-* **Intégration de file de missions** — transmet les missions acceptées à
-  JOB-DISPATCHER et suit leur cycle de vie dans toute la flotte en utilisant
-  la machine à états réelle `Mission`/`MissionRegistry` qui existe déjà dans
-  `mission.rs` - ce qui manque encore est le câblage gRPC vers un vrai
-  JOB-DISPATCHER à qui transmettre les missions.
+* **Intégration de file de missions** — réelle dès maintenant, pas
+  seulement prévue : transmet les missions acceptées à JOB-DISPATCHER
+  via le même transport réel HTTP/JSON que `server.rs` lui-même utilise
+  (`src/job_dispatcher.rs`, ses propres `submit_job`/`complete_job`/
+  `requeue_job`/`run_dispatch`, déjà câblés dans chaque gestionnaire réel
+  du cycle de vie d'une mission), et suit leur cycle de vie dans toute la
+  flotte en utilisant la machine à états réelle `Mission`/`MissionRegistry`
+  qui existe déjà dans `mission.rs`, durable à travers un vrai redémarrage
+  du processus (`--data-dir`, `data/missions.json` par défaut). Cette
+  couche n'a jamais utilisé gRPC et cela n'a jamais été prévu - le
+  contrat partagé `HealthService` de `proto/hydra_common.proto` est un
+  sujet distinct (la vraie sonde de santé de flotte de
+  HYDRA-UMC-NODE-HEALING elle-même), pas la remise des missions à
+  JOB-DISPATCHER par ce dépôt.
 * **Distribution synchronisée par PTP** — coordonne le temps avec SWARM-SYNC
   afin que plusieurs robots exécutant la même mission restent sans collision
   selon les contrôles de PATH-PLANNER-3D.

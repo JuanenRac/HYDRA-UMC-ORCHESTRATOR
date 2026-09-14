@@ -63,11 +63,19 @@ flowchart TB
 sobre la máquina de estados real que ya existe:
 * **Capa API** — recibe solicitudes de misión de alto nivel desde Studios y
   aplicaciones, y las traduce a acciones de flota.
-* **Integración con la cola de misiones** — entrega las misiones aceptadas a
-  JOB-DISPATCHER y sigue su ciclo de vida en toda la flota usando la máquina
-  de estados real `Mission`/`MissionRegistry` que ya existe en `mission.rs` -
-  lo que falta es el cableado gRPC hacia un JOB-DISPATCHER real al que
-  entregar las misiones.
+* **Integración con la cola de misiones** — real ya, no planificada:
+  entrega las misiones aceptadas a JOB-DISPATCHER a través del mismo
+  transporte real HTTP/JSON que usa el propio `server.rs`
+  (`src/job_dispatcher.rs`, sus propios `submit_job`/`complete_job`/
+  `requeue_job`/`run_dispatch`, ya cableados en cada manejador real del
+  ciclo de vida de misión), y sigue su ciclo de vida en toda la flota
+  usando la máquina de estados real `Mission`/`MissionRegistry` que ya
+  existe en `mission.rs`, duradera ante un reinicio real del proceso
+  (`--data-dir`, `data/missions.json` por defecto). Esta capa nunca usó
+  gRPC ni estaba planificado que lo hiciera - el contrato compartido
+  `HealthService` de `proto/hydra_common.proto` es un asunto aparte (la
+  propia sonda real de salud de flota de HYDRA-UMC-NODE-HEALING), no la
+  entrega de misiones a JOB-DISPATCHER de este repositorio.
 * **Despacho sincronizado por PTP** — coordina la temporización con
   SWARM-SYNC para que varios robots que ejecuten la misma misión permanezcan
   libres de colisiones según las comprobaciones de PATH-PLANNER-3D.

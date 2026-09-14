@@ -61,7 +61,7 @@ flowchart TB
 
 **计划中的内部分层**，将在已经存在的真实状态机基础上逐步构建：
 * **API 层** —— 接收来自 Studio/应用程序的高层任务请求，并将其转化为车队级操作。
-* **任务队列集成** —— 将已接受的任务移交给 JOB-DISPATCHER，并使用 `mission.rs` 中已经存在的真实 `Mission`/`MissionRegistry` 状态机在整个车队中跟踪其生命周期——目前仍缺少的是通往真实 JOB-DISPATCHER、用于移交任务的 gRPC 接线。
+* **任务队列集成** —— 现在已经是真实的，而不只是计划：通过与 `server.rs` 自身使用的同一个真实 HTTP/JSON 传输（`src/job_dispatcher.rs` 自身的 `submit_job`/`complete_job`/`requeue_job`/`run_dispatch`，早已接入每一个真实的任务生命周期处理程序）将已接受的任务移交给 JOB-DISPATCHER，并使用 `mission.rs` 中已经存在的真实 `Mission`/`MissionRegistry` 状态机在整个车队中跟踪其生命周期，即使在真实的进程重启后依然持久保存（`--data-dir`，默认 `data/missions.json`）。这一层从未使用过 gRPC，也从未计划使用——`proto/hydra_common.proto` 自身共享的 `HealthService` 契约是另一回事（HYDRA-UMC-NODE-HEALING 自身真实的车队健康探测），并非本仓库向 JOB-DISPATCHER 移交任务的机制。
 * **PTP 同步调度** —— 与 SWARM-SYNC 协调时序，使执行同一任务的多台机器人根据 PATH-PLANNER-3D 的检查结果保持无碰撞状态。
 * **车队健康聚合** —— 将 NODE-HEALING 提供的各节点信号整合为统一的全车队视图，并在每个信号到达时调用（已经真实的）`MissionRegistry::recover_node_unavailable()`；这也是全局 E-STOP 到达每个节点所经过的路径。
 
