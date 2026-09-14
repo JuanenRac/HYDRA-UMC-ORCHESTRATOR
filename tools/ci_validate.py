@@ -16,6 +16,7 @@ from pathlib import Path
 
 
 from _doc_policy import check_public_private_boundary
+from _readme_parity import check_readme_section_parity
 
 ROOT = Path(__file__).resolve().parent.parent
 MANIFEST_PATH = ROOT / "hydra-umc.project.json"
@@ -240,6 +241,8 @@ def main() -> int:
     doc_policy_error = check_public_private_boundary(ROOT)
     if doc_policy_error:
         fail(doc_policy_error)
+    for readme_problem in check_readme_section_parity(ROOT):
+        fail(readme_problem)
 
     print(f"CI_VALIDATION=PASS project={manifest['name']} version={manifest['version']}")
     return 0
