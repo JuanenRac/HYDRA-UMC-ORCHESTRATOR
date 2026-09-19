@@ -20,9 +20,9 @@ a separate concern (HYDRA-UMC-NODE-HEALING's own fleet-health probe),
 unrelated to this repo's own JOB-DISPATCHER integration. No code
 changed; 77/77 tests still passing.
 
-## [0.1.1] - H023/H024/H025/H066: a pending job survived cancellation, /fail never told JOB-DISPATCHER, and a fatal crash exited 0
+## [0.1.1] - a pending job survived cancellation, /fail never told JOB-DISPATCHER, and a fatal crash exited 0
 
-- **H023:** `complete_job()`'s 400-disambiguation logic treated `pending`/
+- `complete_job()`'s 400-disambiguation logic treated `pending`/
   `blocked`/`unreachable` job statuses exactly like `done`/`failed` -
   "already terminal, nothing real to close". A pending/blocked job is
   NOT terminal: it is still sitting live in JOB-DISPATCHER's own queue
@@ -32,20 +32,20 @@ changed; 77/77 tests still passing.
   the mission was already marked Cancelled locally. Now only `done`/
   `failed` are treated as safely closed; every other status (including
   `assigned`, already handled) is reported as a real failure.
-- **H024:** `handle_fail` (`POST /missions/:id/fail`) only ever updated
+- `handle_fail` (`POST /missions/:id/fail`) only ever updated
   the local mission registry - unlike `handle_cancel`/`handle_complete`,
   it never confirmed the terminal outcome to JOB-DISPATCHER at all, so a
   failed mission's own job/robot reservation there was never released or
   reconciled. Now mirrors `handle_cancel`'s exact real-confirmation and
   outbox-fallback behavior.
-- **H025:** every fatal startup failure in `run_serve()` (data
+- every fatal startup failure in `run_serve()` (data
   directory/mission registry unreadable, or the port already bound)
   printed `[orchestrator] fatal: ...` and then exited `0` - a process
   supervisor watching the exit code could never tell a real crash apart
   from a clean shutdown. `run_serve()` now returns whether startup
   actually succeeded, and `main()` exits `1` on a real failure - verified
   live against a real bind-failure (two instances on the same port).
-- **H066 (docs):** `CLI_REFERENCE.md` claimed "there is no real
+- **Docs:** `CLI_REFERENCE.md` claimed "there is no real
   gRPC/network layer yet", omitting the real `serve` subcommand
   entirely - a genuine HTTP/JSON API (`tiny_http`) with real, tested
   JOB-DISPATCHER integration (`ureq`) and a real inbound endpoint
@@ -56,12 +56,12 @@ changed; 77/77 tests still passing.
   call to NODE-HEALING/SWARM-SYNC from this side) instead of denying
   capability that exists.
 - 4 new regression tests. `cargo fmt --check`/`clippy -D warnings`/
-  `test --all-targets` all clean; H025 additionally verified live
+  `test --all-targets` all clean; the bind-failure fix additionally verified live
   (a real bind conflict now exits 1, confirmed not 0).
 
-## [0.1.0] - C07: MissionRegistry itself now survives a real restart
+## [0.1.0] - MissionRegistry itself now survives a real restart
 
-A revalidation pass found the one durability gap V07-012/`outbox.rs`
+A revalidation pass found the one durability gap `outbox.rs`
 (0.0.9) deliberately did not cover: `MissionRegistry` itself was still
 purely in-memory, so a real restart forgot every mission's own state,
 history and node assignment - only the pending remote-close *intent*
@@ -97,7 +97,7 @@ No new dependency, no gRPC/network I/O added to `mission.rs` itself -
 this is real local file durability for state that already existed,
 following the exact pattern already proven in this same crate.
 
-## [0.0.9] - V07-012: the pending remote-close reconciliation now survives a real restart
+## [0.0.9] - the pending remote-close reconciliation now survives a real restart
 
 A second review pass found `reconcile_pending_remote_closes()`'s
 own honest, previously-documented limit was real: `MissionRegistry` is
@@ -128,12 +128,12 @@ Fixed:
   real to close"; and a remote state that cannot even be verified fails
   closed rather than assuming success.
 
-## [0.0.8] - REV-010: real regression found by independent revalidation
+## [0.0.8] - real regression found by independent revalidation
 
 A review pass reproduced a real gap in v0.0.7's own
 ORCH-02 fix (against a real fake Job-Dispatcher, no mocked HTTP):
 
-- **REV-010 [P1]:** `handle_complete()`/`handle_cancel()` commit a
+- `handle_complete()`/`handle_cancel()` commit a
   mission's terminal state locally first, then make a best-effort
   attempt to confirm it to Job-Dispatcher (ORCH-02's own real
   integration) - a failed confirmation (a transient network error,
