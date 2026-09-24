@@ -24,7 +24,7 @@
 //! stateless computations), the `MissionRegistry` is real, shared,
 //! mutable state that must persist across requests - `Arc<Mutex<..>>`,
 //! one lock acquired per request, released before the response is
-//! written. C07: as of
+//! written. as of
 //! this delivery the registry itself is also durable across a real
 //! process restart (`mission.rs`'s own `MissionRegistry::load()`/
 //! `persist()`, wired in by `main.rs`) - every handler below that
@@ -44,7 +44,7 @@ use crate::job_dispatcher;
 use crate::mission::{CancelOutcome, MissionRegistry, TransitionError};
 use crate::outbox::RemoteCloseOutbox;
 
-// REV-010 (P1): how often
+// how often
 // the background pass below retries confirming a mission's terminal
 // outcome to Job-Dispatcher - see reconcile_pending_remote_closes()'s
 // own doc comment. Frequent enough that a transient Job-Dispatcher
@@ -53,7 +53,7 @@ use crate::outbox::RemoteCloseOutbox;
 const REMOTE_CLOSE_RETRY_INTERVAL: Duration = Duration::from_secs(30);
 
 type SharedRegistry = Arc<Mutex<MissionRegistry>>;
-// V07-012: shared the same way SharedRegistry is - both the request
+// shared the same way SharedRegistry is - both the request
 // handlers below and the background reconciliation thread touch it.
 // RemoteCloseOutbox already guards its own internal state with a Mutex
 // (see outbox.rs), so only the Arc for cross-thread sharing is needed
@@ -65,7 +65,7 @@ type SharedOutbox = Arc<RemoteCloseOutbox>;
 /// Orchestrator was started without `--job-dispatcher-url` - the
 /// integration is a real, but optional, best-effort add-on, not a hard
 /// dependency this server refuses to start without), and the real,
-/// durable pending-remote-close outbox (V07-012, see outbox.rs's own
+/// durable pending-remote-close outbox (, see outbox.rs's own
 /// module doc).
 pub struct AppState {
     pub registry: SharedRegistry,
@@ -118,13 +118,13 @@ pub fn run(
         close_outbox: Arc::new(close_outbox),
     };
 
-    // REV-010: only spawned when Job-Dispatcher integration is actually
+    // only spawned when Job-Dispatcher integration is actually
     // configured at all (matching every other real call site in this
     // file) - see reconcile_pending_remote_closes()'s own doc comment.
     if let Some(base_url) = state.job_dispatcher_url.clone() {
         let registry = Arc::clone(&state.registry);
         let outbox = Arc::clone(&state.close_outbox);
-        // V07-012: a real attempt right now, before this incarnation
+        // a real attempt right now, before this incarnation
         // waits a full REMOTE_CLOSE_RETRY_INTERVAL - the whole point of
         // persisting the outbox is a restart recovering FAST, not just
         // eventually. Even now that MissionRegistry itself also survives
@@ -362,7 +362,7 @@ fn handle_auto_dispatch(request: tiny_http::Request, state: &AppState, id: &str)
         }
     };
 
-    // ORCH-01 (P1): a single /dispatch pass on Job-Dispatcher is its own real,
+    // a single /dispatch pass on Job-Dispatcher is its own real,
     // global scheduling algorithm - it can assign several jobs at once,
     // not just the one this caller asked about. Reconciling EVERY
     // returned assignment (not only the one matching `id`) keeps this
@@ -446,10 +446,10 @@ fn handle_start(request: tiny_http::Request, state: &AppState, id: &str) {
     }
 }
 
-/// REV-010 (P1):
+/// (P1):
 /// handle_complete()/handle_cancel() below commit a mission's terminal
 /// state locally first, then make a best-effort attempt to confirm it
-/// to Job-Dispatcher - ORCH-02's own real integration. Before this fix,
+/// to Job-Dispatcher - this project's own real integration. Before this fix,
 /// a failed confirmation (a transient network error, Job-Dispatcher
 /// briefly unreachable) was only ever logged: the mission looked
 /// identical to one that WAS confirmed, so Job-Dispatcher could keep
@@ -466,7 +466,7 @@ fn handle_start(request: tiny_http::Request, state: &AppState, id: &str) {
 /// because only THIS side's confirmation of that success got lost, is
 /// always safe.
 ///
-/// V07-012 (P1): the
+/// the
 /// "honest limit" this function's own docstring used to state out loud
 /// (a real process restart losing the pending list along with every
 /// other mission `MissionRegistry` ever knew about) is now closed. The
@@ -515,7 +515,7 @@ fn handle_complete(request: tiny_http::Request, state: &AppState, id: &str) {
     };
     match result {
         Ok(()) => {
-            // ORCH-02: tells Job-Dispatcher this job reached its real
+            // tells Job-Dispatcher this job reached its real
             // terminal outcome, so it frees the robot's reservation
             // instead of continuing to believe it's still assigned to a
             // mission this Orchestrator already closed out locally.
@@ -526,12 +526,12 @@ fn handle_complete(request: tiny_http::Request, state: &AppState, id: &str) {
                     eprintln!(
                         "[orchestrator] could not confirm completion of mission {id} to job-dispatcher: {e}"
                     );
-                    // REV-010: mark this pending rather than let it look
+                    // mark this pending rather than let it look
                     // confirmed - the background pass above retries it.
                     if let Some(mission) = state.registry.lock().unwrap().get_mut(id) {
                         mission.mark_remote_close_pending();
                     }
-                    // V07-012: ALSO persisted, durably, independent of
+                    // ALSO persisted, durably, independent of
                     // MissionRegistry - see outbox.rs's own module doc
                     // for why this is what actually survives a restart.
                     state.close_outbox.mark_pending(id, true);
@@ -572,7 +572,7 @@ fn handle_cancel(request: tiny_http::Request, state: &AppState, id: &str) {
     };
     match result {
         Ok(outcome) => {
-            // ORCH-02: same real confirmation as handle_complete, but
+            // same real confirmation as handle_complete, but
             // only for a FRESH cancellation (CancelOutcome::Cancelled) -
             // a no-op re-cancel of an already-cancelled mission has
             // nothing new to confirm to Job-Dispatcher.
@@ -582,11 +582,11 @@ fn handle_cancel(request: tiny_http::Request, state: &AppState, id: &str) {
                         eprintln!(
                             "[orchestrator] could not confirm cancellation of mission {id} to job-dispatcher: {e}"
                         );
-                        // REV-010: same real bookkeeping as handle_complete above.
+                        // same real bookkeeping as handle_complete above.
                         if let Some(mission) = state.registry.lock().unwrap().get_mut(id) {
                             mission.mark_remote_close_pending();
                         }
-                        // V07-012: same real, durable outbox entry as
+                        // same real, durable outbox entry as
                         // handle_complete above.
                         state.close_outbox.mark_pending(id, false);
                     }
@@ -643,11 +643,11 @@ fn handle_fail(request: tiny_http::Request, state: &AppState, id: &str, raw: &st
     };
     match outcome {
         Ok(()) => {
-            // H024: this used to update only the local mission registry -
+            // this used to update only the local mission registry -
             // Job-Dispatcher could keep believing a job (and its robot's
             // reservation) was still active for a mission this Orchestrator
             // had already closed out locally as Failed, the exact same real
-            // gap ORCH-02 already closed for handle_cancel just above.
+            // gap already closed for handle_cancel just above.
             // fail() only ever returns Ok(()) for a FRESH transition (it
             // refuses outright - Err - once the mission is already
             // terminal), so unlike handle_cancel there is no
@@ -657,7 +657,7 @@ fn handle_fail(request: tiny_http::Request, state: &AppState, id: &str, raw: &st
                     eprintln!(
                         "[orchestrator] could not confirm failure of mission {id} to job-dispatcher: {e}"
                     );
-                    // REV-010/V07-012: same real reconciliation bookkeeping
+                    // same real reconciliation bookkeeping
                     // as handle_cancel/handle_complete above.
                     if let Some(mission) = state.registry.lock().unwrap().get_mut(id) {
                         mission.mark_remote_close_pending();
@@ -771,7 +771,7 @@ mod tests {
     /// this module's own tests need to survive both the /jobs/submit
     /// call handle_add makes AND a later /dispatch call in the same test.
     ///
-    /// ORCH-03 (P1): this used to read the incoming request with one single,
+    /// this used to read the incoming request with one single,
     /// non-looping `stream.read()` call, then immediately write the
     /// canned response and let the connection close. `ureq`'s own
     /// `send_string()` can write a request's headers and body as
@@ -1106,7 +1106,7 @@ mod tests {
         );
     }
 
-    // ORCH-01 (P1): a single /dispatch pass can assign several missions at once -
+    // a single /dispatch pass can assign several missions at once -
     // only the requested one was ever reconciled locally.
     #[test]
     fn auto_dispatch_reconciles_every_real_assignment_the_pass_returned_not_only_the_requested_one()
@@ -1135,7 +1135,7 @@ mod tests {
         );
     }
 
-    // ORCH-02 (found in the same review pass, P1): completing/cancelling a
+    // (found in the same review pass, P1): completing/cancelling a
     // mission never told Job-Dispatcher, which could keep believing the
     // job (and its robot's reservation) was still active.
     #[test]
@@ -1209,7 +1209,7 @@ mod tests {
         );
     }
 
-    // REV-010 (P1): a failed
+    // a failed
     // confirmation to Job-Dispatcher used to be invisible to any real
     // caller - the mission looked identical to a confirmed one.
     #[test]
@@ -1257,7 +1257,7 @@ mod tests {
         RemoteCloseOutbox::load(path).expect("a fresh test outbox path must always load cleanly")
     }
 
-    // V07-012 (P1): these
+    // these
     // three tests now exercise reconcile_pending_remote_closes()'s real
     // worklist source - the durable RemoteCloseOutbox, not
     // MissionRegistry's own in-memory pending_remote_closes() - proving
@@ -1352,7 +1352,7 @@ mod tests {
 
     #[test]
     fn reconcile_pending_remote_closes_recovers_a_mission_a_real_restart_has_forgotten() {
-        // The real point of V07-012: a fresh MissionRegistry (exactly
+        // The real point of a fresh MissionRegistry (exactly
         // what a real process restart produces - see mission.rs's own
         // module doc) has NEVER heard of "m1" at all, yet the durable
         // outbox alone is still enough to retry confirming its closure

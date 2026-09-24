@@ -138,7 +138,7 @@ fn find_flag(args: &[String], flag: &str) -> Option<String> {
         .cloned()
 }
 
-/// H025: every fatal startup failure below used to `eprintln!` and fall
+/// every fatal startup failure below used to `eprintln!` and fall
 /// through to the end of this function (or an early `return;`) with no
 /// way for `main()` to tell a real failure apart from a clean shutdown -
 /// the process always exited 0. A process supervisor (systemd, Docker,
@@ -153,7 +153,7 @@ fn run_serve(args: &[String]) -> bool {
     let port = find_flag(args, "--port").unwrap_or_else(|| "8114".to_string());
     let bind_addr = format!("{addr}:{port}");
     let job_dispatcher_url = find_flag(args, "--job-dispatcher-url");
-    // V07-012: where the real, durable pending-remote-close outbox lives
+    // where the real, durable pending-remote-close outbox lives
     // (see outbox.rs's own module doc) - same "./data" convention this
     // ecosystem's other services already use for their own real
     // persisted state (e.g. HYDRA-UMC-SERVER's data/settings.json).
@@ -171,7 +171,7 @@ fn run_serve(args: &[String]) -> bool {
         }
     };
 
-    // C07: the real
+    // the real
     // durable MissionRegistry snapshot - same "./data" convention as the
     // pending remote-close outbox above. Any mission reloaded as
     // `Unknown` (was Dispatched/InProgress at last persist) is requeued

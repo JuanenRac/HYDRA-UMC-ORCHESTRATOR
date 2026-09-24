@@ -35,7 +35,7 @@ pub struct Assignment {
     pub robot_id: String,
 }
 
-/// V07-012 (P1): the real
+/// the real
 /// shape `GET /jobs` reports for one job - only the two fields
 /// `complete_job()`'s own 400-disambiguation below actually needs.
 #[derive(Debug, Deserialize)]
@@ -132,13 +132,13 @@ pub fn submit_job(base_url: &str, mission_id: &str) -> Result<(), ClientError> {
 /// submitted at all, or already finished on its own) - nothing real to
 /// close out there, not a failure of this call.
 ///
-/// ORCH-02 (P1):
+/// (P1):
 /// `server.rs`'s own `handle_complete`/`handle_cancel` used to update
 /// only the local mission registry - Job-Dispatcher could keep believing
 /// a job (and its robot's reservation) was still active for a mission
 /// this Orchestrator had already closed out locally.
 ///
-/// V07-012 (P1): a 400 from
+/// a 400 from
 /// `POST /jobs/complete` is genuinely AMBIGUOUS on Job-Dispatcher's own
 /// side - `handleCompleteJob` returns the exact same status for "this
 /// job id was never even submitted", "this job already reached done/
@@ -172,7 +172,7 @@ pub fn complete_job(base_url: &str, mission_id: &str, success: bool) -> Result<(
         Ok(_) => Ok(()),
         Err(ureq::Error::Status(400, _)) => match fetch_job_status(base_url, mission_id)? {
             None => Ok(()), // never existed there at all - nothing real to close
-            // H023: "pending"/"blocked"/"unreachable" are NOT terminal -
+            // "pending"/"blocked"/"unreachable" are NOT terminal -
             // this used to lump them in with "already closed", but a
             // pending/blocked job is still sitting live in Job-Dispatcher's
             // own queue and can still be picked up and assigned to a real
@@ -197,7 +197,7 @@ pub fn complete_job(base_url: &str, mission_id: &str, success: bool) -> Result<(
     }
 }
 
-/// V07-012: looks up `mission_id`'s own real, current status directly
+/// looks up `mission_id`'s own real, current status directly
 /// from Job-Dispatcher's `GET /jobs` listing - the real remote-state
 /// query `complete_job()` above uses to disambiguate an otherwise-opaque
 /// 400 instead of blindly trusting it means "already closed". `Ok(None)`
@@ -426,7 +426,7 @@ mod tests {
         assert!(request.contains("\"success\":true"));
     }
 
-    // V07-012 (P1): a 400
+    // a 400
     // from /jobs/complete used to be blindly treated as "already
     // closed" - these four prove it is now disambiguated against
     // Job-Dispatcher's own real GET /jobs status instead of guessed at.
@@ -479,7 +479,7 @@ mod tests {
         );
     }
 
-    // H023: a "pending"/"blocked"/"unreachable" job is NOT terminal - it
+    // a "pending"/"blocked"/"unreachable" job is NOT terminal - it
     // is still sitting live in Job-Dispatcher's own queue and can still
     // be assigned to a real robot on a future dispatch pass. Cancelling
     // or failing the mission here must not be silently treated as

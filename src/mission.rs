@@ -11,7 +11,7 @@
 // dispatcher wiring this to JOB-DISPATCHER/NODE-HEALING over gRPC lands
 // once those services have something real to call.
 //
-// C07: `MissionRegistry` does own real local file I/O now -
+// `MissionRegistry` does own real local file I/O now -
 // `load()`/`persist()`, the same "one JSON file, load-or-empty,
 // temp+rename persist" shape `outbox.rs` already established in this
 // same crate - so a real mission this process knows about survives a
@@ -30,7 +30,7 @@ use serde::{Deserialize, Serialize};
 /// that is exactly the information `recover_from_unavailable_node` needs
 /// to decide whether a mission is affected by a given node going down.
 ///
-/// C07: `Unknown` is a first-class state, not an absence of state. It
+/// `Unknown` is a first-class state, not an absence of state. It
 /// exists for exactly one real situation - `MissionRegistry::load()`
 /// reloading a mission that was `Dispatched`/`InProgress` at the moment
 /// this process last persisted its own state, before an unclean
@@ -118,7 +118,7 @@ pub enum RecoveryOutcome {
 pub struct Mission {
     pub id: String,
     pub state: MissionState,
-    // C07: how many times this mission has ever been dispatched, across
+    // how many times this mission has ever been dispatched, across
     // every attempt - including one that ended in `Unknown` after a
     // restart. Never reset by `recover_from_unavailable_node`/
     // `recover_unknown_missions()` requeuing it back to `Pending`,
@@ -129,7 +129,7 @@ pub struct Mission {
     // ahead of a real HYDRA-UMC-DEV-SERVER task queue implementing the
     // same requirement for its own jobs.
     pub attempt: u32,
-    // REV-010 (P1): whether
+    // whether
     // this mission's own terminal outcome has actually been confirmed to
     // Job-Dispatcher yet. Reaching a terminal `state` above is a purely
     // LOCAL fact this struct's own transition methods below already
@@ -156,13 +156,13 @@ impl Mission {
         }
     }
 
-    /// REV-010: called by server.rs right after a terminal transition
+    /// called by server.rs right after a terminal transition
     /// (complete()/cancel()) when confirming it to Job-Dispatcher failed.
     pub fn mark_remote_close_pending(&mut self) {
         self.remote_close_confirmed = false;
     }
 
-    /// REV-010: called by server.rs once a retried confirmation to
+    /// called by server.rs once a retried confirmation to
     /// Job-Dispatcher actually succeeds.
     pub fn mark_remote_close_confirmed(&mut self) {
         self.remote_close_confirmed = true;
@@ -186,7 +186,7 @@ impl Mission {
         }
     }
 
-    /// C07: marks this mission `Unknown` - called only by
+    /// marks this mission `Unknown` - called only by
     /// `MissionRegistry::load()` for a mission that was `Dispatched`/
     /// `InProgress` at the moment this process last persisted its own
     /// state. `last_node` preserves which node it was last assigned to,
@@ -197,7 +197,7 @@ impl Mission {
         self.state = MissionState::Unknown { last_node };
     }
 
-    /// C07: the only way an `Unknown` mission ever leaves that state -
+    /// the only way an `Unknown` mission ever leaves that state -
     /// see `MissionRegistry::recover_unknown_missions()`'s own doc
     /// comment for why "requeue to Pending" is this registry's one real
     /// policy today (never "assume it completed", never "assume it
@@ -316,7 +316,7 @@ struct PersistedRegistry {
 /// id. `BTreeMap` (not `HashMap`) so `all()`/iteration order is
 /// deterministic - useful for both the demo CLI output and tests.
 ///
-/// C07: `path` is `None`
+/// `path` is `None`
 /// for every existing caller of `new()` (the demo CLI, and every test in
 /// this module) - pure in-memory, exactly as before. Only `load()`
 /// attaches a real path, following the same "one JSON file, `Mutex`-
@@ -414,7 +414,7 @@ impl MissionRegistry {
         }
     }
 
-    /// C07: this registry's one real recovery policy for a mission
+    /// this registry's one real recovery policy for a mission
     /// reloaded as `Unknown` - requeue it to `Pending` so the next real
     /// dispatch pass gives it a fresh attempt. Never "assume it
     /// completed" (an interruption must never masquerade as a real
