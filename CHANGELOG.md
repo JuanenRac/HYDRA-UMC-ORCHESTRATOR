@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.3] - Restart and cancellation semantics are pinned by tests
+
+- Four new tests pin what a restart does to each mission state: a cancelled mission stays
+  cancelled and is never reopened by recovery, a failed mission keeps its reason, a
+  cancellation made right after a restart is durable, and an unknown mission stays unknown
+  (attempt count intact) until recovery decides. Together with the existing tests every
+  state is now covered across a restart.
+
 ## [0.1.2] - Doc fix: the mission-to-JOB-DISPATCHER hand-off was already real, README×7 still called it "missing gRPC wiring"
 
 The "Planned internal layers" section's own "Mission queue integration"

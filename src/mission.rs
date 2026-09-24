@@ -887,6 +887,94 @@ mod tests {
     }
 
     #[test]
+    fn a_cancelled_mission_stays_cancelled_across_restarts_and_recovery() {
+        let path = temp_registry_path("cancelled-stays-cancelled");
+        {
+            let mut reg = MissionRegistry::load(path.clone()).unwrap();
+            let m = reg.add("m1");
+            m.dispatch("node-a").unwrap();
+            m.cancel().unwrap();
+            reg.persist();
+        }
+        let mut reloaded = MissionRegistry::load(path.clone()).unwrap();
+        assert_eq!(reloaded.get("m1").unwrap().state, MissionState::Cancelled);
+        // A cancelled mission is a deliberate decision, not an
+        // interruption: recovery must never turn it back into work.
+        assert!(reloaded.recover_unknown_missions().is_empty());
+        assert!(reloaded.recover_node_unavailable("node-a").is_empty());
+        assert_eq!(
+            MissionRegistry::load(path.clone())
+                .unwrap()
+                .get("m1")
+                .unwrap()
+                .state,
+            MissionState::Cancelled
+        );
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn a_failed_mission_keeps_its_reason_across_a_restart() {
+        let path = temp_registry_path("failed-stays-failed");
+        {
+            let mut reg = MissionRegistry::load(path.clone()).unwrap();
+            let m = reg.add("m1");
+            m.dispatch("node-a").unwrap();
+            m.fail("node lost power").unwrap();
+            reg.persist();
+        }
+        let mut reloaded = MissionRegistry::load(path.clone()).unwrap();
+        assert_eq!(
+            reloaded.get("m1").unwrap().state,
+            MissionState::Failed {
+                reason: "node lost power".into()
+            }
+        );
+        assert!(reloaded.recover_unknown_missions().is_empty());
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn cancelling_right_after_a_restart_is_durable_too() {
+        let path = temp_registry_path("cancel-after-restart");
+        {
+            let mut reg = MissionRegistry::load(path.clone()).unwrap();
+            reg.add("m1").dispatch("node-a").unwrap();
+            reg.persist();
+        }
+        let mut reloaded = MissionRegistry::load(path.clone()).unwrap();
+        reloaded.get_mut("m1").unwrap().cancel().unwrap();
+        reloaded.persist();
+        let mut again = MissionRegistry::load(path.clone()).unwrap();
+        assert_eq!(again.get("m1").unwrap().state, MissionState::Cancelled);
+        assert!(again.recover_unknown_missions().is_empty());
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn an_unknown_mission_stays_unknown_until_recovery_decides() {
+        let path = temp_registry_path("unknown-twice");
+        {
+            let mut reg = MissionRegistry::load(path.clone()).unwrap();
+            reg.add("m1").dispatch("node-a").unwrap();
+            reg.persist();
+        }
+        // First restart marks it unknown; a second restart before anyone
+        // recovers it must not lose or upgrade that uncertainty.
+        let first = MissionRegistry::load(path.clone()).unwrap();
+        first.persist();
+        let second = MissionRegistry::load(path.clone()).unwrap();
+        assert_eq!(
+            second.get("m1").unwrap().state,
+            MissionState::Unknown {
+                last_node: "node-a".into()
+            }
+        );
+        assert_eq!(second.get("m1").unwrap().attempt, 1);
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
     fn save_is_atomic_and_leaves_no_temp_file_behind() {
         let path = temp_registry_path("atomic");
         let mut reg = MissionRegistry::load(path.clone()).unwrap();
