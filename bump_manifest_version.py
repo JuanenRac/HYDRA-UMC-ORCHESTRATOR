@@ -81,7 +81,14 @@ def read_version(text: str, pattern: str | dict[str, str]) -> str:
             if match is None:
                 raise ValueError(f"native version {key} component was not found")
             parts[key] = match.group(1)
-        return f"{parts['major']}.{parts['minor']}.{parts['patch']}"
+        version = f"{parts['major']}.{parts['minor']}.{parts['patch']}"
+        # A separate field for the fourth component only counts from the
+        # version that carries one; below it a stored 0 is just a placeholder.
+        if "build" in pattern and tuple(int(parts[k]) for k in ("major", "minor", "patch")) >= FOUR_PART_FROM:
+            build = re.search(pattern["build"], text, re.MULTILINE)
+            if build is not None:
+                version += "." + build.group(1)
+        return version
     match = re.search(with_optional_fourth_group(pattern), text, re.MULTILINE)
     if match is None or len(match.groups()) < 3:
         raise ValueError("native version was not found")
@@ -94,10 +101,14 @@ def read_version(text: str, pattern: str | dict[str, str]) -> str:
 def replace_version(text: str, pattern: str | dict[str, str], version: str) -> str:
     values = version.split(".")
     if isinstance(pattern, dict):
-        if len(values) != 3:
-            raise ValueError("this project keeps its version in separate fields; a four-part version is not supported there")
+        keys = ("major", "minor", "patch", "build")[: len(values)]
+        if len(values) == 4 and "build" not in pattern:
+            raise ValueError(
+                "this project keeps its version in separate fields and has no build field yet; "
+                "add a build entry to native_version.pattern and a matching line to the version file"
+            )
         replacements: list[tuple[int, int, str]] = []
-        for key, value in zip(("major", "minor", "patch"), values, strict=True):
+        for key, value in zip(keys, values, strict=True):
             match = re.search(pattern[key], text, re.MULTILINE)
             if match is None:
                 raise ValueError(f"native version {key} component was not found")
@@ -266,7 +277,12 @@ def main() -> int:
         print(f"ERROR: native version {current} differs from manifest {declared}; run validation or use --sync after one native bump")
         return 1
     new = next_version(current)
-    source.write_text(replace_version(source_text, pattern, new), encoding="utf-8")
+    try:
+        updated_text = replace_version(source_text, pattern, new)
+    except ValueError as exc:
+        print(f"ERROR: cannot write {new}: {exc}")
+        return 1
+    source.write_text(updated_text, encoding="utf-8")
     sync_version_mirrors(current, new)
     if new.count(".") == 3:
         manifest["native_version"]["pattern"] = with_optional_fourth_group(pattern)

@@ -151,6 +151,10 @@ def read_native_version(text: str, pattern: str | dict[str, str]) -> str:
             if match is None:
                 raise ValueError(f"native {component} version component not found")
             values.append(match.group(1))
+        if "build" in pattern and tuple(int(v) for v in values) >= (0, 8, 0):
+            build = re.search(pattern["build"], text, re.MULTILINE)
+            if build is not None:
+                values.append(build.group(1))
         return ".".join(values)
     match = re.search(_with_optional_fourth_group(pattern), text, re.MULTILINE)
     if match is None or len(match.groups()) < 3:
