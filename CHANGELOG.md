@@ -131,11 +131,11 @@ Fixed:
 ## [0.0.8] - real regression found by independent revalidation
 
 A review pass reproduced a real gap in v0.0.7's own
-ORCH-02 fix (against a real fake Job-Dispatcher, no mocked HTTP):
+fix (against a real fake Job-Dispatcher, no mocked HTTP):
 
 - `handle_complete()`/`handle_cancel()` commit a
   mission's terminal state locally first, then make a best-effort
-  attempt to confirm it to Job-Dispatcher (ORCH-02's own real
+  attempt to confirm it to Job-Dispatcher (this project's own real
   integration) - a failed confirmation (a transient network error,
   Job-Dispatcher briefly unreachable) used to be only logged, with the
   mission looking identical to a genuinely confirmed one. Job-Dispatcher
@@ -156,9 +156,9 @@ ORCH-02 fix (against a real fake Job-Dispatcher, no mocked HTTP):
   have yet - real, separate future work, not attempted here.
 - 5 new regression tests, `cargo fmt`/`cargo clippy -D warnings` clean.
 
-## [0.0.7] - ORCH-01/02/03: reconcile every assignment, confirm completion, fix a real test race
+## [0.0.7] - /02/03: reconcile every assignment, confirm completion, fix a real test race
 
-- **ORCH-01 (P1):**
+- 
   `handle_auto_dispatch()` ran a real, global `/dispatch` pass on
   Job-Dispatcher, but only reconciled the ONE assignment matching the
   caller's own requested mission id - any OTHER mission the same pass
@@ -166,7 +166,7 @@ ORCH-02 fix (against a real fake Job-Dispatcher, no mocked HTTP):
   pass) stayed looking "Pending" locally while its robot was genuinely
   already reserved on Job-Dispatcher's side. Every returned assignment is
   now reconciled against the local registry, not only the requested one.
-- **ORCH-02 (found in the same review pass, P1):** `handle_complete()`/
+- **(found in the same review pass, P1):** `handle_complete`/
   `handle_cancel()` only ever updated the local mission registry - Job-
   Dispatcher could keep believing a job (and its robot's reservation) was
   still active for a mission this Orchestrator had already closed out
@@ -176,7 +176,7 @@ ORCH-02 fix (against a real fake Job-Dispatcher, no mocked HTTP):
   (`CancelOutcome::Cancelled`), never on a no-op re-cancel of an
   already-cancelled mission. Best-effort, same reasoning as every other
   job_dispatcher.rs call - dropped the registry lock first.
-- **ORCH-03 (found in the same review pass, P1):** `server.rs`'s own
+- **(found in the same review pass, P1):** `server.rs`'s own
   `fake_job_dispatcher` test helper captured an incoming request with a
   single, non-looping `stream.read()` call - the identical race
   `job_dispatcher.rs`'s own `fake_server` helper was already fixed for in

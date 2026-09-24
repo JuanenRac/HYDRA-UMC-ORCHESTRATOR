@@ -2,7 +2,7 @@
 // Copyright (C) 2026 JuanenRac (Electro Hobby 3D) <electrohobby3d@gmail.com>
 // GPL-3.0 - see LICENSE
 //
-// V07-012 (P1): server.rs's
+// server.rs's
 // own `reconcile_pending_remote_closes()` already retries confirming a
 // mission's terminal outcome to Job-Dispatcher - but its own worklist
 // (`MissionRegistry::pending_remote_closes()`) was purely in-memory,
