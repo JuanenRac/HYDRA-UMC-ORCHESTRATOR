@@ -35,7 +35,7 @@ PRIVATE_PHRASES: tuple[str, ...] = (
 # those stay a review matter. Written as character classes so this module's
 # own source never contains a literal code and never trips its own check.
 TRACKING_CODE_REGEX = (
-    r"(V07-[0-9]{3}|REV-[0-9]{3}|PROM-[A-Z]+-[A-Z]?[0-9]+|(DOC|CODE)-BUG-[0-9]+)"
+    r"(V07-[0-9]{3}|REV-[0-9]{3}|PROM-[A-Z]+-[A-Z]?[0-9]+|(DOC|CODE)-BUG-[0-9]+|[[][[](project|feedback|reference|user)_[a-z0-9_]+[]][]])"
 )
 
 
