@@ -29,11 +29,21 @@ PRIVATE_PHRASES: tuple[str, ...] = (
     "registro de trabajo" + " interno",
 )
 
+# Internal audit/tracking code shapes that must never appear in a public
+# file (source comments, tests, docs, manifests). Only the shapes that are
+# unambiguous are matched - a bare "C08" or "I42" could be a part number, so
+# those stay a review matter. Written as character classes so this module's
+# own source never contains a literal code and never trips its own check.
+TRACKING_CODE_REGEX = (
+    r"(V07-[0-9]{3}|REV-[0-9]{3}|PROM-[A-Z]+-[A-Z]?[0-9]+|(DOC|CODE)-BUG-[0-9]+)"
+)
+
 
 def check_public_private_boundary(root: Path) -> str | None:
     """Runs this ecosystem's real, two-part public/private documentation
     boundary check against `root`'s own git-tracked files: no PRIVATE_MARKERS
-    name anywhere, and no PRIVATE_PHRASES prose anywhere. Returns a real,
+    name anywhere, and no PRIVATE_PHRASES prose anywhere, and no internal tracking code
+    (TRACKING_CODE_REGEX) anywhere. Returns a real,
     ready-to-`fail()` error message on the first violation or check failure,
     or `None` if the boundary genuinely holds.
 
@@ -73,6 +83,21 @@ def check_public_private_boundary(root: Path) -> str | None:
     if prose_result.returncode == 0:
         return "public files must not reference private planning or audit documents"
     if prose_result.returncode not in (0, 1):
+        return "could not check public/private documentation boundary"
+
+    code_result = subprocess.run(
+        ("git", "grep", "-n", "-I", "-E", "-e", TRACKING_CODE_REGEX),
+        cwd=root,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    if code_result.returncode == 0:
+        return "public files must not carry internal tracking codes"
+    if code_result.returncode not in (0, 1):
         return "could not check public/private documentation boundary"
 
     return None
