@@ -27,6 +27,7 @@ DEFAULT_LANGUAGE_FILES: tuple[str, ...] = (
 )
 
 _HEADING_RE = re.compile(r"(?m)^##\s+(?:\d+\.\s+)?(\S+)")
+_LINK_RE = re.compile(r"[]][(](https?://[^)\s]+)[)]")
 
 
 def readme_section_signature(path: Path) -> list[str]:
@@ -37,10 +38,16 @@ def readme_section_signature(path: Path) -> list[str]:
     return _HEADING_RE.findall(text)
 
 
+def readme_link_set(path: Path) -> set[str]:
+    """The external (http/https) link targets in `path`."""
+    return set(_LINK_RE.findall(path.read_text(encoding="utf-8")))
+
+
 def check_readme_section_parity(
     root: Path, language_files: Sequence[str] = DEFAULT_LANGUAGE_FILES
 ) -> list[str]:
-    """Compares `README.md`'s own heading signature against every other
+    """Compares `README.md`'s own heading signature (and its set of external
+    links) against every other
     language file in `language_files` that actually exists under `root`.
     Returns a list of real, ready-to-report mismatch descriptions (empty
     if every present translation's structure matches the English
@@ -52,6 +59,7 @@ def check_readme_section_parity(
     if not english_path.is_file():
         return [f"{language_files[0]} is missing - cannot check section parity"]
     english_signature = readme_section_signature(english_path)
+    english_links = readme_link_set(english_path)
 
     problems: list[str] = []
     for language_file in language_files[1:]:
@@ -63,5 +71,12 @@ def check_readme_section_parity(
             problems.append(
                 f"{language_file} section structure does not match {language_files[0]}: "
                 f"expected {english_signature}, got {signature}"
+            )
+        links = readme_link_set(path)
+        if links != english_links:
+            missing = sorted(english_links - links)
+            extra = sorted(links - english_links)
+            problems.append(
+                f"{language_file} links do not match {language_files[0]}: missing {missing}, extra {extra}"
             )
     return problems
