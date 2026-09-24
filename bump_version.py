@@ -69,5 +69,34 @@ def main() -> int:
     return 0
 
 
+def _delegate_to_shared_utility():
+    """Hand the bump over to the shared utility once the version has four parts.
+
+    Returns its exit code, or None when this step is an ordinary three-part one.
+    """
+    import importlib.util
+    import json as _json
+    from pathlib import Path as _Path
+
+    here = _Path(__file__).resolve().parent
+    root = here if (here / "bump_manifest_version.py").is_file() else here.parent
+    utility, manifest = root / "bump_manifest_version.py", root / "hydra-umc.project.json"
+    if not utility.is_file() or not manifest.is_file():
+        return None
+    spec = importlib.util.spec_from_file_location("_shared_bump", utility)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    version = _json.loads(manifest.read_text(encoding="utf-8")).get("version", "")
+    if not hasattr(module, "FOUR_PART_FROM") or module.next_version(version).count(".") != 3:
+        return None
+    return module.main()
+
+
+if __name__ == "__main__":
+    _shared_exit = _delegate_to_shared_utility()
+    if _shared_exit is not None:
+        raise SystemExit(_shared_exit)
+
+
 if __name__ == "__main__":
     raise SystemExit(main())
