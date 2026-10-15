@@ -201,7 +201,7 @@ fix (against a real fake Job-Dispatcher, no mocked HTTP):
   and `cargo test --all-targets` (51/51) all pass.
 
 - **New `job_dispatcher::requeue_job()`, called from `handle_recover()`**
-  - found while auditing the code:
+  - found on code review:
   `POST /nodes/:node/recover` only ever updated the local in-memory
   mission registry, never Job-Dispatcher - so Job-Dispatcher could keep
   believing a job was still assigned to a node that just went
