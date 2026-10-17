@@ -24,7 +24,13 @@ DEFAULT_LANGUAGE_FILES: tuple[str, ...] = (
     "README_deu.md",
     "README_zho.md",
     "README_jpn.md",
+    "README_por.md",
 )
+
+# Translations whose absence is itself a violation. Portuguese is part of the
+# ecosystem's eight languages (en/es/fr/it/de/zh/ja/pt), so a repository
+# without README_por.md fails its own CI instead of silently falling behind.
+REQUIRED_LANGUAGE_FILES: tuple[str, ...] = ("README_por.md",)
 
 _HEADING_RE = re.compile(r"(?m)^##\s+(?:\d+\.\s+)?(\S+)")
 _LINK_RE = re.compile(r"[]][(](https?://[^)\s]+)[)]")
@@ -44,7 +50,9 @@ def readme_link_set(path: Path) -> set[str]:
 
 
 def check_readme_section_parity(
-    root: Path, language_files: Sequence[str] = DEFAULT_LANGUAGE_FILES
+    root: Path,
+    language_files: Sequence[str] = DEFAULT_LANGUAGE_FILES,
+    required: Sequence[str] = REQUIRED_LANGUAGE_FILES,
 ) -> list[str]:
     """Compares `README.md`'s own heading signature (and its set of external
     links) against every other
@@ -53,7 +61,9 @@ def check_readme_section_parity(
     if every present translation's structure matches the English
     original exactly). A missing translation file is not itself a
     parity violation here - `ci_validate.py`'s own REQUIRED_DOCUMENTS
-    check already covers that separately.
+    check already covers that separately - EXCEPT the files named in
+    `required` (the Portuguese README by default), whose absence is
+    reported here too, so the rule travels with the vendored copy.
     """
     english_path = root / language_files[0]
     if not english_path.is_file():
@@ -62,6 +72,12 @@ def check_readme_section_parity(
     english_links = readme_link_set(english_path)
 
     problems: list[str] = []
+    for required_file in required:
+        if required_file in language_files and not (root / required_file).is_file():
+            problems.append(
+                f"{required_file} is missing - the Portuguese README is required in every repository "
+                f"(see the other translations for the expected structure)"
+            )
     for language_file in language_files[1:]:
         path = root / language_file
         if not path.is_file():
