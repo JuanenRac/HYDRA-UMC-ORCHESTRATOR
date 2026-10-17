@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.5] - Starts on loopback again
+
+- **Fix:** 0.1.4 refused to start even on `127.0.0.1` without a token, because the address handed to the loopback check still carried its port (`127.0.0.1:8114`) and was not recognised as loopback. The check now accepts a host with or without a port (`127.0.0.1`, `127.0.0.1:8114`, `localhost:8114`, `[::1]:8114`), and the tests cover the `host:port` form main passes. Verified with the real binary: loopback starts without a token, `0.0.0.0` without a token is refused, `0.0.0.0` with `ORCHESTRATOR_TOKEN` starts.
+
 ## [0.1.4] - A late report cannot overwrite a handover; token, body limit and a compose that starts services
 
 - **Fencing by attempt:** `start`, `complete` and `fail` accept the `attempt` a mission was dispatched with (and the `node` reporting). A report with a stale attempt, or from a node that no longer holds the mission, is refused with `409` and a `fence` object and does not touch the mission. Before this, a node declared unavailable that came back from a partition could complete or fail a mission that had been handed to another node. `--require-attempt` makes the attempt mandatory (`400` without it) once every node sends it; without the flag a request that omits these fields still works.

@@ -94,12 +94,23 @@ pub struct ServerOptions {
 /// with 413 instead of being read into memory.
 pub const MAX_BODY_BYTES: u64 = 64 * 1024;
 
-/// True for the addresses that cannot be reached from another machine.
+/// True for the addresses that cannot be reached from another machine. Takes
+/// a bare host (`127.0.0.1`, `::1`, `localhost`) or a host with a port
+/// (`127.0.0.1:8114`, `[::1]:8114`, `localhost:8114`).
 pub fn is_loopback_addr(addr: &str) -> bool {
-    if addr.eq_ignore_ascii_case("localhost") {
+    if let Ok(socket) = addr.parse::<std::net::SocketAddr>() {
+        return socket.ip().is_loopback();
+    }
+    let host = match addr.rsplit_once(':') {
+        Some((host, port)) if !host.contains(':') && port.chars().all(|c| c.is_ascii_digit()) => {
+            host
+        }
+        _ => addr,
+    };
+    if host.eq_ignore_ascii_case("localhost") {
         return true;
     }
-    addr.trim_matches(|c| c == '[' || c == ']')
+    host.trim_matches(|c| c == '[' || c == ']')
         .parse::<std::net::IpAddr>()
         .map(|ip| ip.is_loopback())
         .unwrap_or(false)
@@ -1576,10 +1587,23 @@ mod tests {
             "::1",
             "[::1]",
             "127.0.0.5",
+            "127.0.0.1:8114",
+            "localhost:8114",
+            "[::1]:8114",
         ] {
             assert!(is_loopback_addr(addr), "{addr} is loopback");
         }
-        for addr in ["0.0.0.0", "192.168.0.180", "::", "example.com", ""] {
+        for addr in [
+            "0.0.0.0",
+            "192.168.0.180",
+            "::",
+            "example.com",
+            "",
+            "0.0.0.0:8114",
+            "192.168.0.180:8114",
+            "[::]:8114",
+            "example.com:8114",
+        ] {
             assert!(!is_loopback_addr(addr), "{addr} is not loopback");
         }
     }
@@ -1587,6 +1611,9 @@ mod tests {
     #[test]
     fn the_process_refuses_to_serve_the_network_without_a_token() {
         assert!(startup_problem("127.0.0.1", None, false).is_none());
+        // main.rs hands over "host:port", exactly as it binds
+        assert!(startup_problem("127.0.0.1:8114", None, false).is_none());
+        assert!(startup_problem("0.0.0.0:8114", None, false).is_some());
         assert!(startup_problem("0.0.0.0", None, false).is_some());
         assert!(startup_problem("192.168.0.180", Some(""), false).is_some());
         assert!(startup_problem("0.0.0.0", Some("a-token"), false).is_none());
