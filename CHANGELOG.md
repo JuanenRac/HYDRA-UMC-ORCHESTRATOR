@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.4] - A late report cannot overwrite a handover; token, body limit and a compose that starts services
+
+- **Fencing by attempt:** `start`, `complete` and `fail` accept the `attempt` a mission was dispatched with (and the `node` reporting). A report with a stale attempt, or from a node that no longer holds the mission, is refused with `409` and a `fence` object and does not touch the mission. Before this, a node declared unavailable that came back from a partition could complete or fail a mission that had been handed to another node. `--require-attempt` makes the attempt mandatory (`400` without it) once every node sends it; without the flag a request that omits these fields still works.
+- **Access control:** `--token` (or `ORCHESTRATOR_TOKEN`) makes every route except the new `GET /health` demand `Authorization: Bearer`. On a non-loopback `--addr` the process refuses to start without a token unless `--allow-anonymous` is given. `--job-dispatcher-token` (or `JOB_DISPATCHER_TOKEN`) is sent on every call to JOB-DISPATCHER. Request bodies over 64 KB are refused with `413` instead of being read into memory.
+- **Durable writes:** the mission registry and the outbox are written to a temp file, forced to disk and renamed over the real file, so a power cut cannot leave a truncated registry.
+- **systemd unit:** the process now gets `StateDirectory=hydra-umc-orchestrator` and `--data-dir /var/lib/hydra-umc-orchestrator`. With `ProtectSystem=strict` the default relative `data` directory was read-only, persistence failed with a log line, and nothing survived a restart. An optional `EnvironmentFile` carries the tokens.
+- **docker-compose.yml starts real services:** `serve` commands (a bare invocation prints the identity and exits), health checks, required tokens (`${VAR:?}`), a non-root user, named volumes, pinned image tags, only the orchestrator published and only on the host loopback, and `depends_on` waiting for health. PATH-PLANNER-3D is a command-line tool and moves behind the `tools` profile. `nodes.compose.json` is the registry NODE-HEALING uses inside the stack, `.env.example` lists the tokens, and `tools/verify_compose.py` checks all of that without Docker.
+- `docs/CLI_REFERENCE.md` documents the access options and the fencing fields and corrects the description of `POST /missions/:id/dispatch`. 12 new tests (93 in all).
+
 ## [0.1.3] - Restart and cancellation semantics are pinned by tests
 
 - Four new tests pin what a restart does to each mission state: a cancelled mission stays

@@ -12,7 +12,26 @@
 //! no routing/matching logic of its own, it only ever recorded whatever
 //! node a caller told it to (see that module's own docs).
 
+use std::sync::OnceLock;
+
 use serde::{Deserialize, Serialize};
+
+/// Bearer token sent on every call to Job-Dispatcher, set once at startup
+/// from `--job-dispatcher-token` / `JOB_DISPATCHER_TOKEN`. Job-Dispatcher
+/// refuses to listen on a network address without one, so an orchestrator
+/// talking to a dispatcher on another host needs it.
+static TOKEN: OnceLock<String> = OnceLock::new();
+
+pub fn set_token(token: String) {
+    let _ = TOKEN.set(token);
+}
+
+fn authed(request: ureq::Request) -> ureq::Request {
+    match TOKEN.get() {
+        Some(token) => request.set("Authorization", &format!("Bearer {token}")),
+        None => request,
+    }
+}
 
 #[derive(Serialize)]
 struct SubmitRequest<'a> {
@@ -81,7 +100,7 @@ pub fn submit_job(base_url: &str, mission_id: &str) -> Result<(), ClientError> {
         id: mission_id,
         dedup_key: mission_id,
     };
-    let result = ureq::post(&url)
+    let result = authed(ureq::post(&url))
         .set("Content-Type", "application/json")
         .send_string(
             &serde_json::to_string(&body).map_err(|e| ClientError::BadResponse(e.to_string()))?,
@@ -161,7 +180,7 @@ pub fn complete_job(base_url: &str, mission_id: &str, success: bool) -> Result<(
         id: mission_id,
         success,
     };
-    let complete_result = ureq::post(&complete_url)
+    let complete_result = authed(ureq::post(&complete_url))
         .set("Content-Type", "application/json")
         .send_string(
             &serde_json::to_string(&complete_body)
@@ -207,7 +226,7 @@ pub fn complete_job(base_url: &str, mission_id: &str, success: bool) -> Result<(
 /// what makes `complete_job()` fail closed instead of guessing.
 fn fetch_job_status(base_url: &str, mission_id: &str) -> Result<Option<String>, ClientError> {
     let url = format!("{base_url}/jobs");
-    let result = ureq::get(&url).call();
+    let result = authed(ureq::get(&url)).call();
     match result {
         Ok(response) => {
             let text = response
@@ -250,7 +269,7 @@ pub fn requeue_job(base_url: &str, mission_id: &str) -> Result<(), ClientError> 
         id: mission_id,
         success: false,
     };
-    let complete_result = ureq::post(&complete_url)
+    let complete_result = authed(ureq::post(&complete_url))
         .set("Content-Type", "application/json")
         .send_string(
             &serde_json::to_string(&complete_body)
@@ -278,7 +297,7 @@ pub fn requeue_job(base_url: &str, mission_id: &str) -> Result<(), ClientError> 
 /// has no logic for itself.
 pub fn run_dispatch(base_url: &str) -> Result<Vec<Assignment>, ClientError> {
     let url = format!("{}/dispatch", base_url.trim_end_matches('/'));
-    let result = ureq::post(&url).call();
+    let result = authed(ureq::post(&url)).call();
 
     match result {
         // into_string() (always available) + serde_json::from_str(),

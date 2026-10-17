@@ -1,0 +1,5 @@
+[
+  { "name": "HYDRA-UMC-ORCHESTRATOR", "healthUrl": "http://orchestrator:8114/health" },
+  { "name": "HYDRA-UMC-JOB-DISPATCHER", "healthUrl": "http://job-dispatcher:8090/health" },
+  { "name": "HYDRA-UMC-SWARM-SYNC", "healthUrl": "http://swarm-sync:8112/stats" }
+]

@@ -115,8 +115,7 @@ impl RemoteCloseOutbox {
         if let Some(parent) = self.path.parent() {
             fs::create_dir_all(parent)?;
         }
-        fs::write(&tmp_path, json)?;
-        fs::rename(&tmp_path, &self.path)
+        crate::mission::durable_replace(&tmp_path, &self.path, json.as_bytes())
     }
 
     /// Records `mission_id` as having a real, still-unconfirmed terminal

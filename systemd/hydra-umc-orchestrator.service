@@ -9,9 +9,12 @@
 # in-memory, and no real E-STOP-sending code anywhere in this repository
 # - this does not grant any new physical authority over the LAN, it
 # makes the exact same state machine mission-demo already exercised
-# reachable over a real API instead of only a fixed demo script. State
-# resets on every restart (Arc<Mutex<MissionRegistry>>, no persistence
-# yet) - a real, known limitation, not silently hidden.
+# reachable over a real API instead of only a fixed demo script. The mission
+# registry and the pending remote-close outbox are written to
+# /var/lib/hydra-umc-orchestrator (StateDirectory= below). ProtectSystem=strict
+# makes everything else read-only, so the relative "data" directory the
+# binary defaults to would have been unwritable here and nothing would have
+# survived a restart.
 #
 # --job-dispatcher-url wires the real "full chain" this session put
 # together: a mission added here is also submitted to
@@ -35,7 +38,11 @@ Type=simple
 User=hydra-umc-orchestrator
 Group=hydra-umc-orchestrator
 WorkingDirectory=/opt/hydra-umc/orchestrator
-ExecStart=/opt/hydra-umc/orchestrator/hydra-umc-orchestrator serve --addr 127.0.0.1 --port 8114 --job-dispatcher-url http://127.0.0.1:8090
+StateDirectory=hydra-umc-orchestrator
+# Optional: ORCHESTRATOR_TOKEN (required to serve a non-loopback address) and
+# JOB_DISPATCHER_TOKEN (when the dispatcher runs with a token), one per line.
+EnvironmentFile=-/etc/hydra-umc/orchestrator.env
+ExecStart=/opt/hydra-umc/orchestrator/hydra-umc-orchestrator serve --addr 127.0.0.1 --port 8114 --job-dispatcher-url http://127.0.0.1:8090 --data-dir /var/lib/hydra-umc-orchestrator
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true

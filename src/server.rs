@@ -32,6 +32,7 @@
 //! explicit convention `outbox.rs`'s own callers already use for the
 //! pending remote-close outbox.
 
+use std::io::Read;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -41,7 +42,7 @@ use serde_json::json;
 use tiny_http::{Header, Method, Response, Server};
 
 use crate::job_dispatcher;
-use crate::mission::{CancelOutcome, MissionRegistry, TransitionError};
+use crate::mission::{CancelOutcome, FenceError, MissionRegistry, TransitionError};
 use crate::outbox::RemoteCloseOutbox;
 
 // how often
@@ -71,6 +72,69 @@ pub struct AppState {
     pub registry: SharedRegistry,
     pub job_dispatcher_url: Option<String>,
     pub close_outbox: SharedOutbox,
+    pub token: Option<String>,
+    pub require_attempt: bool,
+}
+
+/// How the HTTP surface is protected. The default - no token, attempt
+/// optional - is what a loopback-only deployment (the shipped systemd unit)
+/// has always run with.
+#[derive(Debug, Clone, Default)]
+pub struct ServerOptions {
+    /// when set, every route except `GET /health` needs
+    /// `Authorization: Bearer <token>`
+    pub token: Option<String>,
+    /// when set, `start`/`complete`/`fail` must carry the `attempt` the
+    /// mission was dispatched with, so a node that lost the mission (and was
+    /// declared unavailable) cannot overwrite the one that holds it now
+    pub require_attempt: bool,
+}
+
+/// Request bodies here are a few dozen bytes; anything past this is refused
+/// with 413 instead of being read into memory.
+pub const MAX_BODY_BYTES: u64 = 64 * 1024;
+
+/// True for the addresses that cannot be reached from another machine.
+pub fn is_loopback_addr(addr: &str) -> bool {
+    if addr.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+    addr.trim_matches(|c| c == '[' || c == ']')
+        .parse::<std::net::IpAddr>()
+        .map(|ip| ip.is_loopback())
+        .unwrap_or(false)
+}
+
+/// Why this process must not start: an API that dispatches, completes and
+/// fails the missions of the fleet must not listen on the network without a
+/// token unless the operator said so on purpose.
+pub fn startup_problem(addr: &str, token: Option<&str>, allow_anonymous: bool) -> Option<String> {
+    let has_token = token.is_some_and(|t| !t.is_empty());
+    if is_loopback_addr(addr) || has_token || allow_anonymous {
+        return None;
+    }
+    Some(format!(
+        "refusing to listen on {addr} without a token: set --token (or ORCHESTRATOR_TOKEN), bind --addr 127.0.0.1, or pass --allow-anonymous to run an open API on purpose"
+    ))
+}
+
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
+
+fn authorized(request: &tiny_http::Request, token: &Option<String>) -> bool {
+    let Some(expected) = token else {
+        return true;
+    };
+    request
+        .headers()
+        .iter()
+        .find(|h| h.field.equiv("Authorization"))
+        .and_then(|h| h.value.as_str().strip_prefix("Bearer "))
+        .is_some_and(|given| constant_time_eq(given.as_bytes(), expected.as_bytes()))
 }
 
 fn json_header() -> Header {
@@ -85,14 +149,37 @@ fn write_json(request: tiny_http::Request, status: u16, body: &serde_json::Value
     let _ = request.respond(response);
 }
 
-fn read_body(request: &mut tiny_http::Request) -> std::io::Result<String> {
-    // as_reader() returns `&mut dyn Read` - a trait object, so the method
-    // call below resolves via dynamic dispatch and needs no local
-    // `use std::io::Read` (only calling through a generic `T: Read`
-    // bound would).
+struct BodyError {
+    status: u16,
+    message: String,
+}
+
+fn read_body(request: &mut tiny_http::Request) -> Result<String, BodyError> {
     let mut raw = String::new();
-    request.as_reader().read_to_string(&mut raw)?;
-    Ok(raw)
+    match Read::take(request.as_reader(), MAX_BODY_BYTES + 1).read_to_string(&mut raw) {
+        Ok(_) if raw.len() as u64 > MAX_BODY_BYTES => Err(BodyError {
+            status: 413,
+            message: format!("request body is larger than {MAX_BODY_BYTES} bytes"),
+        }),
+        Ok(_) => Ok(raw),
+        Err(e) => Err(BodyError {
+            status: 400,
+            message: e.to_string(),
+        }),
+    }
+}
+
+/// Reads the body or answers 400/413 and moves on to the next request.
+macro_rules! body_or_reply {
+    ($request:ident) => {
+        match read_body(&mut $request) {
+            Ok(raw) => raw,
+            Err(e) => {
+                write_json($request, e.status, &json!({"error": e.message}));
+                continue;
+            }
+        }
+    };
 }
 
 /// Splits `/missions/m1/dispatch` into `["missions", "m1", "dispatch"]`,
@@ -111,11 +198,14 @@ pub fn run(
     job_dispatcher_url: Option<String>,
     close_outbox: RemoteCloseOutbox,
     registry: MissionRegistry,
+    options: ServerOptions,
 ) {
     let state = AppState {
         registry: Arc::new(Mutex::new(registry)),
         job_dispatcher_url,
         close_outbox: Arc::new(close_outbox),
+        token: options.token.filter(|t| !t.is_empty()),
+        require_attempt: options.require_attempt,
     };
 
     // only spawned when Job-Dispatcher integration is actually
@@ -146,43 +236,51 @@ pub fn run(
         let method = request.method().clone();
         let parts = segments(&path);
 
+        // liveness stays open so a watchdog can probe it without a credential
+        let is_health = matches!((&method, parts.as_slice()), (Method::Get, ["health"]));
+        if !is_health && !authorized(&request, &state.token) {
+            write_json(
+                request,
+                401,
+                &json!({"error": "missing or wrong bearer token"}),
+            );
+            continue;
+        }
+
         match (method.clone(), parts.as_slice()) {
+            (Method::Get, ["health"]) => write_json(
+                request,
+                200,
+                &json!({
+                    "status": "ok",
+                    "name": "HYDRA-UMC-ORCHESTRATOR",
+                    "version": env!("CARGO_PKG_VERSION"),
+                }),
+            ),
             (Method::Get, ["missions"]) => handle_list(request, &state),
             (Method::Get, ["missions", id]) => handle_get(request, &state, id),
             (Method::Post, ["missions"]) => {
-                let raw = match read_body(&mut request) {
-                    Ok(r) => r,
-                    Err(e) => {
-                        write_json(request, 400, &json!({"error": e.to_string()}));
-                        continue;
-                    }
-                };
+                let raw = body_or_reply!(request);
                 handle_add(request, &state, &raw);
             }
             (Method::Post, ["missions", id, "dispatch"]) => {
-                let raw = match read_body(&mut request) {
-                    Ok(r) => r,
-                    Err(e) => {
-                        write_json(request, 400, &json!({"error": e.to_string()}));
-                        continue;
-                    }
-                };
+                let raw = body_or_reply!(request);
                 handle_dispatch(request, &state, id, &raw);
             }
             (Method::Post, ["missions", id, "auto-dispatch"]) => {
                 handle_auto_dispatch(request, &state, id)
             }
-            (Method::Post, ["missions", id, "start"]) => handle_start(request, &state, id),
-            (Method::Post, ["missions", id, "complete"]) => handle_complete(request, &state, id),
+            (Method::Post, ["missions", id, "start"]) => {
+                let raw = body_or_reply!(request);
+                handle_start(request, &state, id, &raw);
+            }
+            (Method::Post, ["missions", id, "complete"]) => {
+                let raw = body_or_reply!(request);
+                handle_complete(request, &state, id, &raw);
+            }
             (Method::Post, ["missions", id, "cancel"]) => handle_cancel(request, &state, id),
             (Method::Post, ["missions", id, "fail"]) => {
-                let raw = match read_body(&mut request) {
-                    Ok(r) => r,
-                    Err(e) => {
-                        write_json(request, 400, &json!({"error": e.to_string()}));
-                        continue;
-                    }
-                };
+                let raw = body_or_reply!(request);
                 handle_fail(request, &state, id, &raw);
             }
             (Method::Post, ["nodes", node, "recover"]) => handle_recover(request, &state, node),
@@ -199,6 +297,29 @@ pub fn run(
             }
             _ => write_json(request, 404, &json!({"error": "not found"})),
         }
+    }
+}
+
+/// The optional fencing fields of a start/complete/fail request.
+#[derive(Deserialize, Default)]
+struct FenceFields {
+    #[serde(default)]
+    attempt: Option<u32>,
+    #[serde(default)]
+    node: Option<String>,
+}
+
+fn parse_fence(raw: &str) -> Result<FenceFields, String> {
+    if raw.trim().is_empty() {
+        return Ok(FenceFields::default());
+    }
+    serde_json::from_str(raw).map_err(|e| format!("malformed request JSON: {e}"))
+}
+
+fn fence_status(error: &FenceError) -> u16 {
+    match error {
+        FenceError::AttemptRequired => 400,
+        FenceError::StaleAttempt { .. } | FenceError::WrongNode { .. } => 409,
     }
 }
 
@@ -418,7 +539,14 @@ fn handle_auto_dispatch(request: tiny_http::Request, state: &AppState, id: &str)
     }
 }
 
-fn handle_start(request: tiny_http::Request, state: &AppState, id: &str) {
+fn handle_start(request: tiny_http::Request, state: &AppState, id: &str, raw: &str) {
+    let fence = match parse_fence(raw) {
+        Ok(f) => f,
+        Err(message) => {
+            write_json(request, 400, &json!({"error": message}));
+            return;
+        }
+    };
     let mut reg = state.registry.lock().unwrap();
     let Some(mission) = reg.get_mut(id) else {
         write_json(
@@ -428,6 +556,15 @@ fn handle_start(request: tiny_http::Request, state: &AppState, id: &str) {
         );
         return;
     };
+    if let Err(e) = mission.check_fence(fence.attempt, fence.node.as_deref(), state.require_attempt)
+    {
+        write_json(
+            request,
+            fence_status(&e),
+            &json!({"error": e.to_string(), "fence": e}),
+        );
+        return;
+    }
     let outcome = mission.start();
     if outcome.is_ok() {
         reg.persist();
@@ -496,7 +633,14 @@ fn reconcile_pending_remote_closes(
     }
 }
 
-fn handle_complete(request: tiny_http::Request, state: &AppState, id: &str) {
+fn handle_complete(request: tiny_http::Request, state: &AppState, id: &str, raw: &str) {
+    let fence = match parse_fence(raw) {
+        Ok(f) => f,
+        Err(message) => {
+            write_json(request, 400, &json!({"error": message}));
+            return;
+        }
+    };
     let result = {
         let mut reg = state.registry.lock().unwrap();
         let Some(mission) = reg.get_mut(id) else {
@@ -507,6 +651,16 @@ fn handle_complete(request: tiny_http::Request, state: &AppState, id: &str) {
             );
             return;
         };
+        if let Err(e) =
+            mission.check_fence(fence.attempt, fence.node.as_deref(), state.require_attempt)
+        {
+            write_json(
+                request,
+                fence_status(&e),
+                &json!({"error": e.to_string(), "fence": e}),
+            );
+            return;
+        }
         let outcome = mission.complete();
         if outcome.is_ok() {
             reg.persist();
@@ -611,6 +765,10 @@ fn handle_cancel(request: tiny_http::Request, state: &AppState, id: &str) {
 #[derive(Deserialize)]
 struct FailRequest {
     reason: String,
+    #[serde(default)]
+    attempt: Option<u32>,
+    #[serde(default)]
+    node: Option<String>,
 }
 
 fn handle_fail(request: tiny_http::Request, state: &AppState, id: &str, raw: &str) {
@@ -635,6 +793,15 @@ fn handle_fail(request: tiny_http::Request, state: &AppState, id: &str, raw: &st
             );
             return;
         };
+        if let Err(e) = mission.check_fence(req.attempt, req.node.as_deref(), state.require_attempt)
+        {
+            write_json(
+                request,
+                fence_status(&e),
+                &json!({"error": e.to_string(), "fence": e}),
+            );
+            return;
+        }
         let outcome = mission.fail(req.reason);
         if outcome.is_ok() {
             reg.persist();
@@ -742,6 +909,10 @@ mod tests {
     }
 
     fn start_test_server_with_job_dispatcher(job_dispatcher_url: Option<String>) -> u16 {
+        start_test_server_with(job_dispatcher_url, ServerOptions::default())
+    }
+
+    fn start_test_server_with(job_dispatcher_url: Option<String>, options: ServerOptions) -> u16 {
         let server = bind("127.0.0.1:0").expect("bind on an OS-assigned port must succeed");
         let port = server
             .server_addr()
@@ -762,7 +933,7 @@ mod tests {
             std::env::temp_dir().join(format!("orchestrator-server-test-missions-{port}.json"));
         let registry = MissionRegistry::load(missions_path)
             .expect("a fresh test registry path must always load cleanly");
-        thread::spawn(move || run(server, job_dispatcher_url, close_outbox, registry));
+        thread::spawn(move || run(server, job_dispatcher_url, close_outbox, registry, options));
         port
     }
 
@@ -854,9 +1025,22 @@ mod tests {
     }
 
     fn request(port: u16, method: &str, path: &str, body: &str) -> (u16, String) {
+        request_with_auth(port, method, path, body, None)
+    }
+
+    fn request_with_auth(
+        port: u16,
+        method: &str,
+        path: &str,
+        body: &str,
+        token: Option<&str>,
+    ) -> (u16, String) {
         let mut stream = TcpStream::connect(("127.0.0.1", port)).expect("connect must succeed");
+        let auth = token
+            .map(|t| format!("Authorization: Bearer {t}\r\n"))
+            .unwrap_or_default();
         let raw_request = format!(
-            "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1\r\n{auth}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
             body.len()
         );
         stream.write_all(raw_request.as_bytes()).unwrap();
@@ -1380,6 +1564,172 @@ mod tests {
         assert!(
             registry.lock().unwrap().get("m1").is_none(),
             "this test's whole point: the registry genuinely never knew about m1"
+        );
+    }
+
+    #[test]
+    fn loopback_addresses_are_recognised_and_nothing_else_is() {
+        for addr in [
+            "127.0.0.1",
+            "localhost",
+            "LOCALHOST",
+            "::1",
+            "[::1]",
+            "127.0.0.5",
+        ] {
+            assert!(is_loopback_addr(addr), "{addr} is loopback");
+        }
+        for addr in ["0.0.0.0", "192.168.0.180", "::", "example.com", ""] {
+            assert!(!is_loopback_addr(addr), "{addr} is not loopback");
+        }
+    }
+
+    #[test]
+    fn the_process_refuses_to_serve_the_network_without_a_token() {
+        assert!(startup_problem("127.0.0.1", None, false).is_none());
+        assert!(startup_problem("0.0.0.0", None, false).is_some());
+        assert!(startup_problem("192.168.0.180", Some(""), false).is_some());
+        assert!(startup_problem("0.0.0.0", Some("a-token"), false).is_none());
+        assert!(startup_problem("0.0.0.0", None, true).is_none());
+    }
+
+    #[test]
+    fn with_a_token_every_route_but_health_demands_it() {
+        let _guard = net_test_lock();
+        let port = start_test_server_with(
+            None,
+            ServerOptions {
+                token: Some("s3cret-token".to_string()),
+                require_attempt: false,
+            },
+        );
+        for (method, path) in [
+            ("GET", "/missions"),
+            ("GET", "/stats"),
+            ("POST", "/missions"),
+            ("POST", "/nodes/node-a/recover"),
+            ("POST", "/missions/m1/complete"),
+        ] {
+            let (status, _) = request(port, method, path, "{}");
+            assert_eq!(status, 401, "{method} {path} without a token");
+            let (status, _) = request_with_auth(port, method, path, "{}", Some("wrong-token"));
+            assert_eq!(status, 401, "{method} {path} with a wrong token");
+        }
+        let (status, body) = get(port, "/health");
+        assert_eq!(status, 200, "liveness stays open");
+        assert!(body.contains("HYDRA-UMC-ORCHESTRATOR"));
+        let (status, _) = request_with_auth(port, "GET", "/missions", "", Some("s3cret-token"));
+        assert_eq!(status, 200);
+    }
+
+    #[test]
+    fn without_a_token_nothing_changes_for_a_loopback_deployment() {
+        let _guard = net_test_lock();
+        let port = start_test_server();
+        assert_eq!(get(port, "/missions").0, 200);
+        assert_eq!(get(port, "/health").0, 200);
+    }
+
+    #[test]
+    fn a_body_over_the_limit_is_413_and_the_server_keeps_serving() {
+        let _guard = net_test_lock();
+        let port = start_test_server();
+        let big = format!(
+            "{{\"id\":\"{}\"}}",
+            "x".repeat(MAX_BODY_BYTES as usize + 1024)
+        );
+        assert_eq!(post(port, "/missions", &big).0, 413);
+        assert_eq!(post(port, "/missions/m1/complete", &big).0, 413);
+        assert_eq!(post(port, "/missions/m1/fail", &big).0, 413);
+        assert_eq!(post(port, "/missions", r#"{"id":"m1"}"#).0, 200);
+    }
+
+    #[test]
+    fn a_late_report_from_the_node_that_lost_the_mission_is_refused_over_http() {
+        let _guard = net_test_lock();
+        let port = start_test_server();
+        post(port, "/missions", r#"{"id":"m1"}"#);
+        post(port, "/missions/m1/dispatch", r#"{"node":"node-a"}"#);
+        post(
+            port,
+            "/missions/m1/start",
+            r#"{"attempt":1,"node":"node-a"}"#,
+        );
+
+        // node-a is declared unavailable, the mission goes to node-b
+        post(port, "/nodes/node-a/recover", "");
+        let (status, body) = post(port, "/missions/m1/dispatch", r#"{"node":"node-b"}"#);
+        assert_eq!(status, 200, "{body}");
+        assert!(body.contains("\"attempt\":2"));
+
+        // node-a comes back from the partition and reports what it believes
+        for path in ["/missions/m1/start", "/missions/m1/complete"] {
+            let (status, body) = post(port, path, r#"{"attempt":1,"node":"node-a"}"#);
+            assert_eq!(status, 409, "{path}: {body}");
+            assert!(body.contains("stale"), "{path}: {body}");
+        }
+        let (status, _) = post(port, "/missions/m1/fail", r#"{"reason":"x","attempt":1}"#);
+        assert_eq!(status, 409, "a stale node must not fail the mission either");
+
+        // the mission is untouched, and node-b can carry on
+        let (_, m) = get(port, "/missions/m1");
+        assert!(m.contains("node-b") && m.contains("Dispatched"), "{m}");
+        assert_eq!(
+            post(
+                port,
+                "/missions/m1/start",
+                r#"{"attempt":2,"node":"node-b"}"#
+            )
+            .0,
+            200
+        );
+        assert_eq!(
+            post(port, "/missions/m1/complete", r#"{"attempt":2}"#).0,
+            200
+        );
+    }
+
+    #[test]
+    fn requests_without_fencing_fields_still_work_unless_the_attempt_is_required() {
+        let _guard = net_test_lock();
+        let port = start_test_server();
+        post(port, "/missions", r#"{"id":"m1"}"#);
+        post(port, "/missions/m1/dispatch", r#"{"node":"node-a"}"#);
+        assert_eq!(post(port, "/missions/m1/start", "").0, 200);
+        assert_eq!(post(port, "/missions/m1/complete", "").0, 200);
+
+        let strict = start_test_server_with(
+            None,
+            ServerOptions {
+                token: None,
+                require_attempt: true,
+            },
+        );
+        post(strict, "/missions", r#"{"id":"m2"}"#);
+        post(strict, "/missions/m2/dispatch", r#"{"node":"node-a"}"#);
+        let (status, body) = post(strict, "/missions/m2/start", "");
+        assert_eq!(status, 400, "{body}");
+        assert!(body.contains("attempt"));
+        assert_eq!(
+            post(strict, "/missions/m2/start", r#"{"attempt":1}"#).0,
+            200
+        );
+        assert_eq!(
+            post(strict, "/missions/m2/complete", r#"{"attempt":1}"#).0,
+            200
+        );
+    }
+
+    #[test]
+    fn a_malformed_fencing_body_is_400() {
+        let _guard = net_test_lock();
+        let port = start_test_server();
+        post(port, "/missions", r#"{"id":"m1"}"#);
+        post(port, "/missions/m1/dispatch", r#"{"node":"node-a"}"#);
+        assert_eq!(post(port, "/missions/m1/start", "not json").0, 400);
+        assert_eq!(
+            post(port, "/missions/m1/start", r#"{"attempt":"one"}"#).0,
+            400
         );
     }
 }

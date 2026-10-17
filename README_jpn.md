@@ -4,7 +4,7 @@
 
 # 🕸️ HYDRA-UMC-ORCHESTRATOR
 
-<p align="center"><a href="README.md">🇺🇸 English</a> | <a href="README_spa.md">🇪🇸 Español</a> | <a href="README_fra.md">🇫🇷 Français</a> | <a href="README_ita.md">🇮🇹 Italiano</a> | <a href="README_deu.md">🇩🇪 Deutsch</a> | <a href="README_zho.md">🇨🇳 简体中文</a> | 🇯🇵 <b>日本語</b></p>
+<p align="center"><a href="README.md">🇺🇸 English</a> | <a href="README_spa.md">🇪🇸 Español</a> | <a href="README_fra.md">🇫🇷 Français</a> | <a href="README_ita.md">🇮🇹 Italiano</a> | <a href="README_deu.md">🇩🇪 Deutsch</a> | <a href="README_zho.md">🇨🇳 简体中文</a> | 🇯🇵 <b>日本語</b> | <a href="README_por.md">🇵🇹 Português</a></p>
 
 ### 🤖 分散型スウォームマネージャー & マルチノードコーディネーター
 
@@ -37,6 +37,7 @@
 * 🛡️ **集中安全管理：** グローバル E-STOP 管理とフリート全体の健全性監視。
 * 📡 **統一 API：** アプリと Studio が工場全体とやり取りするための単一のエントリポイントを提供します。
 * 🧩 **実装済み v0 —— ミッション状態機械：** `mission.rs` が各ミッションを `Pending -> Dispatched -> InProgress -> Completed`（および終端状態の `Cancelled`/`Failed`）を通じて追跡し、冪等なキャンセルと、ノードが到達不能/無効と報告された場合の実際のリカバリーを備えています——下記の `mission-demo` を参照してください。純粋なインメモリロジックであり、実行やテストに JOB-DISPATCHER/NODE-HEALING とのライブ gRPC ピアは不要です。
+* 🧱 **デフォルトで安全。遅れて届いた報告は引き継ぎを上書きできません（v0）：** API は指定がなければ `127.0.0.1:8114` で待ち受け、別のアドレスにはベアラートークン（`--token` / `ORCHESTRATOR_TOKEN`。設定すると `GET /health` 以外のすべてのルートが要求します）か、明示的な `--allow-anonymous` が必要です。64 KB を超えるリクエストボディは `413` で拒否されます。ディスパッチのたびにミッションの `attempt` が増え、古い `attempt`（またはもうそのミッションを保持していないノードの名前）を持つ `start`/`complete`/`fail` は、ミッションに触れずに `409` で拒否されます。利用不可と宣言されたノードがネットワーク分断から戻ってきても、ミッションの引き継ぎ先ノードを上書きできません（`--require-attempt` でこのフィールドを必須にできます）。ミッションレジストリとアウトボックスは、前のファイルを置き換える前にディスクへ強制書き込みされ、同梱の systemd ユニットはプロセスに書き込み可能な状態ディレクトリを与えます（以前は `ProtectSystem=strict` により既定の `data` ディレクトリが読み取り専用になり、再起動で何も残りませんでした）。また `docker-compose.yml` は実際にサービスを起動します（`serve` コマンド、ヘルスチェック、必須トークン、固定イメージ、公開されるのはオーケストレーターのみでホストのループバックだけ）。*（実装済み）*
 
 ---
 
@@ -111,7 +112,8 @@ HYDRA-UMC-ORCHESTRATOR/
 │   └── hydra-umc-orchestrator.service # ローカルCM5 mission/dispatch APIのsystemdユニット
 ├── tools/
 │   ├── build_test.py # バージョンを増やさないビルドチェック
-│   └── ci_validate.py # CI が使用するマニフェスト/CHANGELOG/ドキュメント検証
+│   ├── ci_validate.py # CI が使用するマニフェスト/CHANGELOG/ドキュメント検証
+│   └── verify_compose.py # docker-compose.yml の静的チェック（コマンド、固定されたイメージ、ループバックのポート、必須トークン）
 ├── Cargo.toml        # Rust パッケージマニフェスト（名前、バージョン、依存関係）
 ├── bump_version.py   # ネイティブバージョンのオドメーター式インクリメント、build.sh/.bat が実行
 ├── bump_manifest_version.py # hydra-umc.project.json のバージョンをネイティブ版と同期(--sync)
@@ -119,6 +121,8 @@ HYDRA-UMC-ORCHESTRATOR/
 ├── build-test.sh/.bat # バージョンを増やさないビルドチェック
 ├── run.sh/.bat       # コンパイル済みバイナリを実行
 ├── docker-compose.yml # 本リポジトリを実際の 4 つの子プロジェクトと統合
+├── nodes.compose.json # compose スタック内で NODE-HEALING が使うノードレジストリ
+├── .env.example # compose スタックが要求するトークン（.env にコピー）
 └── README.md
 ```
 
@@ -175,7 +179,7 @@ run.bat mission-demo
 ```
 
 ```bash
-cargo test   # 77 件のテスト：mission.rs の全状態遷移・不正な遷移の拒否・
+cargo test   # 93 件のテスト：mission.rs の全状態遷移・不正な遷移の拒否・
              # 冪等なキャンセル・ノード障害後のリカバリーに加え、
              # outbox.rs のクラッシュに強い永続化、job_dispatcher.rs の
              # 実際のHTTPクライアント、server.rs のHTTPハンドラー

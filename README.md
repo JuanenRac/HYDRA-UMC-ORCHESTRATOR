@@ -4,7 +4,7 @@
 
 # 🕸️ HYDRA-UMC-ORCHESTRATOR
 
-<p align="center">🇺🇸 <b>English</b> | <a href="README_spa.md">🇪🇸 Español</a> | <a href="README_fra.md">🇫🇷 Français</a> | <a href="README_ita.md">🇮🇹 Italiano</a> | <a href="README_deu.md">🇩🇪 Deutsch</a> | <a href="README_zho.md">🇨🇳 简体中文</a> | <a href="README_jpn.md">🇯🇵 日本語</a></p>
+<p align="center">🇺🇸 <b>English</b> | <a href="README_spa.md">🇪🇸 Español</a> | <a href="README_fra.md">🇫🇷 Français</a> | <a href="README_ita.md">🇮🇹 Italiano</a> | <a href="README_deu.md">🇩🇪 Deutsch</a> | <a href="README_zho.md">🇨🇳 简体中文</a> | <a href="README_jpn.md">🇯🇵 日本語</a> | <a href="README_por.md">🇵🇹 Português</a></p>
 
 ### 🤖 Distributed Swarm Manager & Multi-Node Coordinator
 
@@ -17,7 +17,7 @@
 
 ---
 
-**Honesty check - what actually runs today:** the mission state machine (`src/mission.rs`: `Mission`/`MissionRegistry`, every `Pending -> Dispatched -> InProgress -> Completed`/`Cancelled`/`Failed` transition, idempotent cancel, node-failure recovery), its own disk persistence (`MissionRegistry::load`/`persist`, `data/missions.json`), the durable pending-remote-close outbox (`src/outbox.rs`), the real HTTP client to HYDRA-UMC-JOB-DISPATCHER (`src/job_dispatcher.rs`), and the plain JSON/HTTP server exposing all of it (`src/server.rs`, `tiny_http`, no async runtime) are real and tested (77 tests, `cargo test`). The `mission-demo` CLI subcommand runs a real end-to-end scenario against that same `MissionRegistry` - not a mock. What is still aspirational: the "Planned internal layers" in section 3 below (API layer, PTP-synced dispatch, fleet health aggregation as a standing service) describe design intent, not code that exists yet; there is no gRPC wiring from this repo to a live JOB-DISPATCHER or NODE-HEALING process, no PATH-PLANNER-3D/SWARM-SYNC integration, and no live multi-node fleet has ever run against this binary - `docker-compose.yml` builds and starts the 4 sibling services together, but that has not been exercised against real robot hardware. See `CHANGELOG.md` for exactly what has shipped so far, and the ROADMAP below for what remains open.
+**Honesty check - what actually runs today:** the mission state machine (`src/mission.rs`: `Mission`/`MissionRegistry`, every `Pending -> Dispatched -> InProgress -> Completed`/`Cancelled`/`Failed` transition, idempotent cancel, node-failure recovery), its own disk persistence (`MissionRegistry::load`/`persist`, `data/missions.json`), the durable pending-remote-close outbox (`src/outbox.rs`), the real HTTP client to HYDRA-UMC-JOB-DISPATCHER (`src/job_dispatcher.rs`), and the plain JSON/HTTP server exposing all of it (`src/server.rs`, `tiny_http`, no async runtime) are real and tested (93 tests, `cargo test`). The `mission-demo` CLI subcommand runs a real end-to-end scenario against that same `MissionRegistry` - not a mock. What is still aspirational: the "Planned internal layers" in section 3 below (API layer, PTP-synced dispatch, fleet health aggregation as a standing service) describe design intent, not code that exists yet; there is no gRPC wiring from this repo to a live JOB-DISPATCHER or NODE-HEALING process, no PATH-PLANNER-3D/SWARM-SYNC integration, and no live multi-node fleet has ever run against this binary - `docker-compose.yml` builds and starts the 4 sibling services together, but that has not been exercised against real robot hardware. See `CHANGELOG.md` for exactly what has shipped so far, and the ROADMAP below for what remains open.
 
 ---
 
@@ -33,6 +33,7 @@ It handles global mission planning, load balancing across the fleet, and real-ti
 * 🛡️ **Centralized Safety:** Global E-STOP management and fleet-wide health monitoring.
 * 📡 **Unified API:** Provides a single entry point for APPs and Studios to interact with the entire factory.
 * 🧩 **Real v0 - Mission State Machine:** `mission.rs` tracks every mission through `Pending -> Dispatched -> InProgress -> Completed` (plus `Cancelled`/`Failed` terminal states), with idempotent cancellation and real recovery when a node is reported unreachable/invalid - see `mission-demo` below. Pure in-memory logic - no live JOB-DISPATCHER/NODE-HEALING gRPC peer needed to run or test it.
+* 🧱 **Safe by default, and a late report cannot overwrite a handover (v0):** the API listens on `127.0.0.1:8114` unless told otherwise; another address needs a bearer token (`--token` / `ORCHESTRATOR_TOKEN`; every route but `GET /health` then demands it) or an explicit `--allow-anonymous`, and request bodies over 64 KB are refused with `413`. Every dispatch bumps the mission's `attempt`; a `start`/`complete`/`fail` that carries a stale `attempt` (or the name of a node that no longer holds the mission) is refused with `409` without touching the mission, so a node that was declared unavailable and comes back from a network partition cannot overwrite the node the mission was handed to (`--require-attempt` makes the field mandatory). The mission registry and the outbox are forced to disk before they replace the previous file, the shipped systemd unit now gives the process a writable state directory (before, `ProtectSystem=strict` made the default `data` directory read-only and nothing survived a restart), and `docker-compose.yml` now starts real services (`serve` commands, health checks, required tokens, pinned images, only the orchestrator published and only on the host loopback). *(implemented)*
 
 ---
 
@@ -131,7 +132,8 @@ HYDRA-UMC-ORCHESTRATOR/
 │   └── hydra-umc-orchestrator.service # Local CM5 mission/dispatch API systemd unit
 ├── tools/
 │   ├── build_test.py # Non-versioning build/compile check
-│   └── ci_validate.py # Manifest/CHANGELOG/docs validation used by CI
+│   ├── ci_validate.py # Manifest/CHANGELOG/docs validation used by CI
+│   └── verify_compose.py # Static checks of docker-compose.yml (commands, pinned images, loopback ports, required tokens)
 ├── Cargo.toml        # Rust package manifest (name, version, deps)
 ├── bump_version.py   # Odometer-style native version bump, run by build.sh/.bat
 ├── bump_manifest_version.py # Syncs hydra-umc.project.json's version to the native one (--sync)
@@ -139,6 +141,8 @@ HYDRA-UMC-ORCHESTRATOR/
 ├── build-test.sh/.bat # Non-versioning build check (no CHANGELOG/version bump)
 ├── run.sh/.bat       # Runs the compiled binary
 ├── docker-compose.yml # Integrates this repo with its 4 real children
+├── nodes.compose.json # Node registry NODE-HEALING uses inside the compose stack
+├── .env.example # Tokens the compose stack requires (copy to .env)
 └── README.md
 ```
 
@@ -192,7 +196,7 @@ odometer rule, see `bump_version.py`) and then run `cargo build --release`.
 ```
 
 ```bash
-cargo test   # 77 tests: mission.rs's transitions/invalid-transition
+cargo test   # 93 tests: mission.rs's transitions/invalid-transition
              # rejections/idempotent cancel/node-failure recovery, plus
              # outbox.rs's crash-safe persistence, job_dispatcher.rs's
              # real HTTP client, and server.rs's HTTP handlers

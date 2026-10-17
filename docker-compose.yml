@@ -2,98 +2,162 @@
 # Copyright (C) 2026 JuanenRac (Electro Hobby 3D) <electrohobby3d@gmail.com>
 # GPL-3.0 - see LICENSE
 #
-# Documents how the ORCHESTRATOR (this repo, Rust) integrates its 4 real
-# child services as independent containers on one internal network, the
-# same topology described in README.md's mermaid diagram:
+# The ORCHESTRATOR (this repo, Rust) with the services it works with, as
+# independent containers on one internal network:
 #
-#   API -> ORCHESTRATOR -> JOB-DISPATCHER -> PATH-PLANNER-3D -> SWARM-SYNC
-#   ORCHESTRATOR -> NODE-HEALING (failover, watches every node)
+#   ORCHESTRATOR -> JOB-DISPATCHER      (queue and robot choice)
+#   NODE-HEALING -> ORCHESTRATOR        (asks for recovery of a node that went down)
+#   NODE-HEALING -> every service       (probes the health URL of each)
+#   SWARM-SYNC                          (state replication between cells)
 #
 # Each child is built from its own sibling repo checked out next to this
-# one (../HYDRA-UMC-<child>). This is the real integration wiring, not
-# just documentation: `docker compose up` from this directory builds and
-# starts the orchestrator plus its 4 children together.
+# one (../HYDRA-UMC-<child>). PATH-PLANNER-3D is a command-line tool that
+# checks and shrinks a path file and exits, not a service, so it is behind
+# the "tools" profile and never started by a plain `docker compose up`.
+#
+# Required before the first start - the stack refuses to start without them
+# instead of running an open mission API:
+#   ORCHESTRATOR_TOKEN    bearer token of the orchestrator API
+#   JOB_DISPATCHER_TOKEN  bearer token of the job dispatcher API
+# Put them in a `.env` file next to this one (see .env.example), e.g.
+#   ORCHESTRATOR_TOKEN=$(openssl rand -hex 32)
 #
 # Usage:
 #   docker compose up --build
+#   docker compose --profile tools run --rm path-planner-3d validate scenario.json path.json
+#
+# Only the orchestrator is published, and only on the loopback interface of
+# the host. The other services answer on the internal network alone.
 
-version: "3.9"
+name: hydra-swarm
 
 services:
   orchestrator:
     build:
       context: .
       dockerfile_inline: |
-        FROM rust:1-slim AS build
+        FROM rust:1.90-slim-bookworm AS build
         WORKDIR /app
         COPY . .
         RUN cargo build --release
-        FROM debian:stable-slim
+        FROM debian:bookworm-slim
+        RUN useradd --system --uid 10001 --home-dir /data hydra && mkdir -p /data && chown hydra /data
         COPY --from=build /app/target/release/hydra-umc-orchestrator /usr/local/bin/hydra-umc-orchestrator
+        USER hydra
         ENTRYPOINT ["/usr/local/bin/hydra-umc-orchestrator"]
+    command: ["serve", "--addr", "0.0.0.0", "--port", "8114", "--job-dispatcher-url", "http://job-dispatcher:8090", "--data-dir", "/data"]
     container_name: hydra-umc-orchestrator
+    environment:
+      ORCHESTRATOR_TOKEN: ${ORCHESTRATOR_TOKEN:?set ORCHESTRATOR_TOKEN in .env}
+      JOB_DISPATCHER_TOKEN: ${JOB_DISPATCHER_TOKEN:?set JOB_DISPATCHER_TOKEN in .env}
+    ports:
+      - "127.0.0.1:8114:8114"
+    volumes:
+      - orchestrator-data:/data
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8114 && printf 'GET /health HTTP/1.0\\r\\n\\r\\n' >&3 && head -n1 <&3 | grep -q ' 200 '"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
     networks: [hydra-swarm]
     depends_on:
-      - swarm-sync
-      - path-planner-3d
-      - job-dispatcher
-      - node-healing
-
-  swarm-sync:
-    build:
-      context: ../HYDRA-UMC-SWARM-SYNC
-      dockerfile_inline: |
-        FROM rust:1-slim AS build
-        WORKDIR /app
-        COPY . .
-        RUN cargo build --release
-        FROM debian:stable-slim
-        COPY --from=build /app/target/release/hydra-umc-swarm-sync /usr/local/bin/hydra-umc-swarm-sync
-        ENTRYPOINT ["/usr/local/bin/hydra-umc-swarm-sync"]
-    container_name: hydra-umc-swarm-sync
-    networks: [hydra-swarm]
-
-  path-planner-3d:
-    build:
-      context: ../HYDRA-UMC-PATH-PLANNER-3D
-      dockerfile_inline: |
-        FROM rust:1-slim AS build
-        WORKDIR /app
-        COPY . .
-        RUN cargo build --release
-        FROM debian:stable-slim
-        COPY --from=build /app/target/release/hydra-umc-path-planner-3d /usr/local/bin/hydra-umc-path-planner-3d
-        ENTRYPOINT ["/usr/local/bin/hydra-umc-path-planner-3d"]
-    container_name: hydra-umc-path-planner-3d
-    networks: [hydra-swarm]
+      job-dispatcher:
+        condition: service_healthy
 
   job-dispatcher:
     build:
       context: ../HYDRA-UMC-JOB-DISPATCHER
       dockerfile_inline: |
-        FROM golang:1-alpine AS build
+        FROM golang:1.26-alpine AS build
         WORKDIR /app
         COPY . .
         RUN go build -o /out/hydra-umc-job-dispatcher .
-        FROM alpine:latest
+        FROM alpine:3.22
+        RUN adduser -S -u 10001 hydra && mkdir -p /data && chown hydra /data
         COPY --from=build /out/hydra-umc-job-dispatcher /usr/local/bin/hydra-umc-job-dispatcher
+        USER hydra
         ENTRYPOINT ["/usr/local/bin/hydra-umc-job-dispatcher"]
+    command: ["-addr", ":8090", "-db", "/data/job-dispatcher.sqlite3"]
     container_name: hydra-umc-job-dispatcher
+    environment:
+      JOB_DISPATCHER_TOKEN: ${JOB_DISPATCHER_TOKEN:?set JOB_DISPATCHER_TOKEN in .env}
+    volumes:
+      - job-dispatcher-data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8090/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
     networks: [hydra-swarm]
 
   node-healing:
     build:
       context: ../HYDRA-UMC-NODE-HEALING
       dockerfile_inline: |
-        FROM golang:1-alpine AS build
+        FROM golang:1.26-alpine AS build
         WORKDIR /app
         COPY . .
         RUN go build -o /out/hydra-umc-node-healing .
-        FROM alpine:latest
+        FROM alpine:3.22
+        RUN adduser -S -u 10001 hydra
         COPY --from=build /out/hydra-umc-node-healing /usr/local/bin/hydra-umc-node-healing
+        USER hydra
         ENTRYPOINT ["/usr/local/bin/hydra-umc-node-healing"]
+    command: ["-nodes", "/etc/node-healing/nodes.json", "-orchestrator-url", "http://orchestrator:8114"]
     container_name: hydra-umc-node-healing
+    environment:
+      ORCHESTRATOR_TOKEN: ${ORCHESTRATOR_TOKEN:?set ORCHESTRATOR_TOKEN in .env}
+    volumes:
+      - ./nodes.compose.json:/etc/node-healing/nodes.json:ro
+    restart: unless-stopped
     networks: [hydra-swarm]
+    depends_on:
+      orchestrator:
+        condition: service_healthy
+
+  swarm-sync:
+    build:
+      context: ../HYDRA-UMC-SWARM-SYNC
+      dockerfile_inline: |
+        FROM rust:1.90-slim-bookworm AS build
+        WORKDIR /app
+        COPY . .
+        RUN cargo build --release
+        FROM debian:bookworm-slim
+        RUN useradd --system --uid 10001 --home-dir /data hydra && mkdir -p /data && chown hydra /data
+        COPY --from=build /app/target/release/hydra-umc-swarm-sync /usr/local/bin/hydra-umc-swarm-sync
+        USER hydra
+        ENTRYPOINT ["/usr/local/bin/hydra-umc-swarm-sync"]
+    command: ["serve", "--addr", "0.0.0.0", "--port", "8112", "--state-file", "/data/state.json"]
+    container_name: hydra-umc-swarm-sync
+    volumes:
+      - swarm-sync-data:/data
+    restart: unless-stopped
+    networks: [hydra-swarm]
+
+  path-planner-3d:
+    profiles: ["tools"]
+    build:
+      context: ../HYDRA-UMC-PATH-PLANNER-3D
+      dockerfile_inline: |
+        FROM rust:1.90-slim-bookworm AS build
+        WORKDIR /app
+        COPY . .
+        RUN cargo build --release
+        FROM debian:bookworm-slim
+        COPY --from=build /app/target/release/hydra-umc-path-planner-3d /usr/local/bin/hydra-umc-path-planner-3d
+        ENTRYPOINT ["/usr/local/bin/hydra-umc-path-planner-3d"]
+    container_name: hydra-umc-path-planner-3d
+    networks: [hydra-swarm]
+
+volumes:
+  orchestrator-data:
+  job-dispatcher-data:
+  swarm-sync-data:
 
 networks:
   hydra-swarm:

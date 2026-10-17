@@ -153,6 +153,27 @@ fn run_serve(args: &[String]) -> bool {
     let port = find_flag(args, "--port").unwrap_or_else(|| "8114".to_string());
     let bind_addr = format!("{addr}:{port}");
     let job_dispatcher_url = find_flag(args, "--job-dispatcher-url");
+    // The API that dispatches, completes and fails the missions of the
+    // fleet: on a network address it needs a token. The environment
+    // variable is the way to give it, a command-line value shows up in the
+    // process list.
+    let token = find_flag(args, "--token")
+        .or_else(|| std::env::var("ORCHESTRATOR_TOKEN").ok())
+        .filter(|t| !t.is_empty());
+    let allow_anonymous = args.iter().any(|a| a == "--allow-anonymous");
+    let require_attempt = args.iter().any(|a| a == "--require-attempt");
+    if let Some(problem) = server::startup_problem(&bind_addr, token.as_deref(), allow_anonymous) {
+        eprintln!("[orchestrator] fatal: {problem}");
+        return false;
+    }
+    // Job-Dispatcher refuses to listen on a network address without a
+    // token, so the calls this orchestrator makes to it carry one too.
+    if let Some(dispatcher_token) = find_flag(args, "--job-dispatcher-token")
+        .or_else(|| std::env::var("JOB_DISPATCHER_TOKEN").ok())
+        .filter(|t| !t.is_empty())
+    {
+        job_dispatcher::set_token(dispatcher_token);
+    }
     // where the real, durable pending-remote-close outbox lives
     // (see outbox.rs's own module doc) - same "./data" convention this
     // ecosystem's other services already use for their own real
@@ -204,7 +225,19 @@ fn run_serve(args: &[String]) -> bool {
             eprintln!("[orchestrator] HTTP API listening on {bind_addr}");
             eprintln!("[orchestrator] POST /missions, GET /missions, GET /missions/:id,");
             eprintln!("[orchestrator] POST /missions/:id/{{dispatch,auto-dispatch,start,complete,cancel,fail}},");
-            eprintln!("[orchestrator] POST /nodes/:node/recover, GET /stats");
+            eprintln!("[orchestrator] POST /nodes/:node/recover, GET /stats, GET /health");
+            if token.is_some() {
+                eprintln!("[orchestrator] bearer token required on every route except GET /health");
+            } else if !server::is_loopback_addr(&addr) {
+                eprintln!(
+                    "[orchestrator] WARNING: --allow-anonymous - this API is open to the network"
+                );
+            }
+            if require_attempt {
+                eprintln!(
+                    "[orchestrator] start/complete/fail must carry the mission's current attempt"
+                );
+            }
             match &job_dispatcher_url {
                 Some(url) => eprintln!("[orchestrator] real jobs will be submitted to job-dispatcher at {url}"),
                 None => eprintln!("[orchestrator] --job-dispatcher-url not set - missions stay local-only, auto-dispatch disabled"),
@@ -217,7 +250,16 @@ fn run_serve(args: &[String]) -> bool {
                 "[orchestrator] mission registry: {}",
                 missions_path.display()
             );
-            server::run(bound, job_dispatcher_url, close_outbox, registry);
+            server::run(
+                bound,
+                job_dispatcher_url,
+                close_outbox,
+                registry,
+                server::ServerOptions {
+                    token,
+                    require_attempt,
+                },
+            );
             true
         }
         Err(e) => {

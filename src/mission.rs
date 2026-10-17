@@ -92,6 +92,66 @@ impl std::fmt::Display for TransitionError {
     }
 }
 
+/// Writes `bytes` to `tmp_path`, forces them to disk, then renames over
+/// `path`. A rename alone is atomic against a crash of this process but not
+/// against a power cut: without the `sync_all` the new file can be renamed
+/// into place while its contents are still only in the page cache, and the
+/// mission registry comes back empty or truncated after the reboot.
+pub(crate) fn durable_replace(
+    tmp_path: &std::path::Path,
+    path: &std::path::Path,
+    bytes: &[u8],
+) -> io::Result<()> {
+    use std::io::Write;
+    {
+        let mut file = fs::File::create(tmp_path)?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+    }
+    fs::rename(tmp_path, path)?;
+    // best effort: persist the rename itself (a no-op where a directory
+    // cannot be opened, e.g. Windows)
+    if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
+        if let Ok(handle) = fs::File::open(dir) {
+            let _ = handle.sync_all();
+        }
+    }
+    Ok(())
+}
+
+/// Why a report about a mission was refused before it could change anything.
+/// A node that was declared unavailable may still be running the mission it
+/// lost; the `attempt` number (bumped on every dispatch and never reused) is
+/// the fencing token that lets this registry tell its late report apart from
+/// the report of the node that holds the mission now.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum FenceError {
+    /// the registry was told to demand an attempt number and none came
+    AttemptRequired,
+    /// the report names an attempt that is no longer the current one
+    StaleAttempt { reported: u32, current: u32 },
+    /// the report comes from a node that is not the one holding the mission
+    WrongNode { reported: String },
+}
+
+impl std::fmt::Display for FenceError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FenceError::AttemptRequired => {
+                write!(f, "this orchestrator requires the \"attempt\" the mission was dispatched with")
+            }
+            FenceError::StaleAttempt { reported, current } => write!(
+                f,
+                "attempt {reported} is stale: the mission is on attempt {current} and was handed over since"
+            ),
+            FenceError::WrongNode { reported } => {
+                write!(f, "node {reported:?} does not hold this mission")
+            }
+        }
+    }
+}
+
 /// What actually happened when `cancel()` was called - distinct from a
 /// `TransitionError` because "already cancelled" is a successful,
 /// idempotent outcome, not a failure.
@@ -260,6 +320,42 @@ impl Mission {
         }
     }
 
+    /// Checks a start/complete/fail report against the dispatch that is
+    /// current. `attempt` and `node` are optional in the request for
+    /// compatibility with callers that predate them; a supplied value is
+    /// always checked, and `require_attempt` makes the attempt mandatory.
+    pub fn check_fence(
+        &self,
+        attempt: Option<u32>,
+        node: Option<&str>,
+        require_attempt: bool,
+    ) -> Result<(), FenceError> {
+        match attempt {
+            Some(reported) if reported != self.attempt => {
+                return Err(FenceError::StaleAttempt {
+                    reported,
+                    current: self.attempt,
+                })
+            }
+            None if require_attempt => return Err(FenceError::AttemptRequired),
+            _ => {}
+        }
+        if let Some(reported) = node {
+            let holder = match &self.state {
+                MissionState::Dispatched { node } | MissionState::InProgress { node } => {
+                    Some(node.as_str())
+                }
+                _ => None,
+            };
+            if holder != Some(reported) {
+                return Err(FenceError::WrongNode {
+                    reported: reported.to_string(),
+                });
+            }
+        }
+        Ok(())
+    }
+
     /// Recovery for a node that just became unavailable (unreachable, or
     /// reporting an invalid identity - see HYDRA-UMC-NODE-HEALING's
     /// watchdog::Status). If this mission is currently assigned to
@@ -403,8 +499,7 @@ impl MissionRegistry {
             if let Some(parent) = path.parent() {
                 fs::create_dir_all(parent)?;
             }
-            fs::write(&tmp_path, json)?;
-            fs::rename(&tmp_path, path)
+            durable_replace(&tmp_path, path, json.as_bytes())
         })();
         if let Err(e) = result {
             eprintln!(
@@ -995,5 +1090,71 @@ mod tests {
             "expected no leftover temp file, found: {leftover:?}"
         );
         fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn a_report_from_the_node_that_lost_the_mission_is_fenced_out() {
+        let mut m = Mission::new("m1");
+        m.dispatch("node-a").unwrap();
+        m.start().unwrap();
+        assert_eq!(m.attempt, 1);
+        // node-a is declared unavailable, the mission is handed to node-b
+        m.recover_from_unavailable_node("node-a");
+        m.dispatch("node-b").unwrap();
+        assert_eq!(m.attempt, 2);
+
+        // node-a comes back and reports with the attempt it was given
+        assert_eq!(
+            m.check_fence(Some(1), Some("node-a"), true),
+            Err(FenceError::StaleAttempt {
+                reported: 1,
+                current: 2
+            })
+        );
+        // even without an attempt, node-a is not the holder
+        assert_eq!(
+            m.check_fence(None, Some("node-a"), false),
+            Err(FenceError::WrongNode {
+                reported: "node-a".to_string()
+            })
+        );
+        // node-b, the holder, passes
+        assert_eq!(m.check_fence(Some(2), Some("node-b"), true), Ok(()));
+    }
+
+    #[test]
+    fn the_attempt_is_only_demanded_when_the_orchestrator_is_told_to() {
+        let mut m = Mission::new("m1");
+        m.dispatch("node-a").unwrap();
+        assert_eq!(m.check_fence(None, None, false), Ok(()));
+        assert_eq!(
+            m.check_fence(None, None, true),
+            Err(FenceError::AttemptRequired)
+        );
+        assert_eq!(m.check_fence(Some(1), None, true), Ok(()));
+    }
+
+    #[test]
+    fn a_mission_nobody_holds_has_no_node_to_report_from() {
+        let m = Mission::new("m1");
+        assert_eq!(
+            m.check_fence(None, Some("node-a"), false),
+            Err(FenceError::WrongNode {
+                reported: "node-a".to_string()
+            })
+        );
+    }
+
+    #[test]
+    fn durable_replace_leaves_the_new_content_and_no_temp_file() {
+        let dir = std::env::temp_dir().join(format!("orchestrator-durable-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("missions.json");
+        let tmp = dir.join("missions.json.tmp");
+        fs::write(&path, b"old").unwrap();
+        durable_replace(&tmp, &path, b"new").unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"new");
+        assert!(!tmp.exists());
+        let _ = fs::remove_dir_all(&dir);
     }
 }
