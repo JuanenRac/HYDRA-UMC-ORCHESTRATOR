@@ -1,7 +1,7 @@
 # =============================================================================
 # HYDRA-UMC / URTC Ecosystem - Hardware validation form
 # Copyright (C) 2026 JuanenRac (Electro Hobby 3D) <electrohobby3d@gmail.com>
-# GPL-3.0 - see LICENSE.md
+# GPL-3.0-or-later - see LICENSE.md
 # =============================================================================
 name: Hardware validation result
 description: Record a controlled CM5, MCU, sensor, actuator or machine validation.

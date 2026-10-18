@@ -9,7 +9,7 @@
 ### 🤖 Gestore dello sciame distribuito e coordinatore multi-nodo
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Licenza-GPL%203.0-blue.svg" alt="GPL 3.0">
+  <img src="https://img.shields.io/badge/Licenza-GPL%203.0--or--later-blue.svg" alt="GPL 3.0 or later">
   <img src="https://img.shields.io/badge/Linguaggio-Rust-orange.svg" alt="Rust">
   <img src="https://img.shields.io/badge/Architettura-Distributed%20Edge-blue.svg" alt="Distributed">
   <img src="https://img.shields.io/badge/Sincronizzazione-JSON%2FHTTP-yellow.svg" alt="Sync">
@@ -330,4 +330,4 @@ Questo progetto fa parte dell'ecosistema robotico HYDRA-UMC dello stesso autore 
 📺 [youtube.com/@electrohobby3d](https://youtube.com/@electrohobby3d)
 
 ## 📜 LICENZA
-GPL-3.0 - Vedere LICENSE per i dettagli.
+GPL-3.0-or-later - Vedere LICENSE per i dettagli.

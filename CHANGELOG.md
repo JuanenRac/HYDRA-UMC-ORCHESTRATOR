@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.7]
+
+- Build version synchronized with `hydra-umc.project.json` and the repository-native version source.
+- The licence is written as GPL-3.0-or-later in every header and in the package metadata.
+
 ## [0.1.6] - The chain with JOB-DISPATCHER works against the real binary
 
 - **Closing a mission now reaches JOB-DISPATCHER.** Every `POST /jobs/complete` was refused (`robotId` is required there), so completed, cancelled and failed missions left their robot reserved for ever and the outbox grew without end. Closing now looks the job up (`GET /jobs/{id}`) and acts on what the dispatcher holds: work nobody was given is withdrawn with `/jobs/cancel` (so a later dispatch pass cannot hand cancelled work to a robot), work a robot holds is completed naming that robot, and a job that is gone or already over counts as closed. Conflicts and unknown statuses are errors that keep the close pending.

@@ -7,7 +7,7 @@
 # Author    : JuanenRac (Electro Hobby 3D)
 # Email     : electrohobby3d@gmail.com
 # Copyright : (C) 2026 JuanenRac
-# License   : GPL-3.0 - see LICENSE
+# License   : GPL-3.0-or-later - see LICENSE
 # *****************************************************************************
 # HYDRA_UMC_SCRIPT_STANDARD_HEADER_END
 # HYDRA_UMC_SCRIPT_STANDARD_BANNER_BEGIN
@@ -17,7 +17,7 @@ printf '%s\n' "* Mode      : RUN WORKFLOW"
 printf '%s\n' "* Author    : JuanenRac (Electro Hobby 3D)"
 printf '%s\n' "* Email     : electrohobby3d@gmail.com"
 printf '%s\n' "* Copyright : (C) 2026 JuanenRac"
-printf '%s\n' "* License   : GPL-3.0 - see LICENSE"
+printf '%s\n' "* License   : GPL-3.0-or-later - see LICENSE"
 printf '%s\n' "* ------------------------------------------------------------------------- *"
 printf '%s\n' "* 1. Resolve the runtime prerequisites declared by this script."
 printf '%s\n' "* 2. Start the project entry point and forward user arguments unchanged."

@@ -1,6 +1,6 @@
 // HYDRA-UMC-ORCHESTRATOR - entry point
 // Copyright (C) 2026 JuanenRac (Electro Hobby 3D) <electrohobby3d@gmail.com>
-// GPL-3.0 - see LICENSE
+// GPL-3.0-or-later - see LICENSE
 //
 // Why Rust for this specific service: this process is the one with the
 // most authority over the fleet - it is what sends the global E-STOP and

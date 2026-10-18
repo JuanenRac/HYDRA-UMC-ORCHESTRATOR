@@ -1,7 +1,7 @@
 # =============================================================================
 # HYDRA-UMC / URTC Ecosystem - Central dashboard dispatch notifier
 # Copyright (C) 2026 JuanenRac (Electro Hobby 3D) <electrohobby3d@gmail.com>
-# GPL-3.0 - see LICENSE
+# GPL-3.0-or-later - see LICENSE
 # =============================================================================
 # Notifies the central JuanenRac dashboard after a main-branch push. This
 # independent workflow never changes, delays or invalidates the project CI.

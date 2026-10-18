@@ -1,7 +1,7 @@
 # =============================================================================
 # HYDRA-UMC / URTC Ecosystem - Issue form configuration
 # Copyright (C) 2026 JuanenRac (Electro Hobby 3D) <electrohobby3d@gmail.com>
-# GPL-3.0 - see LICENSE.md
+# GPL-3.0-or-later - see LICENSE.md
 # =============================================================================
 blank_issues_enabled: false
 contact_links:

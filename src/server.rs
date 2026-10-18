@@ -1,7 +1,7 @@
 // =============================================================================
 // HYDRA-UMC-ORCHESTRATOR - src/server.rs
 // Copyright (C) 2026 JuanenRac (Electro Hobby 3D) <electrohobby3d@gmail.com>
-// GPL-3.0 - see LICENSE
+// GPL-3.0-or-later - see LICENSE
 // =============================================================================
 //! Plain JSON/HTTP surface (`tiny_http`, blocking, no async runtime) -
 //! same convention as `HYDRA-UMC-TWIN`'s/`HYDRA-UMC-SWARM-SYNC`'s/

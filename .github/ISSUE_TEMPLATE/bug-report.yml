@@ -1,7 +1,7 @@
 # =============================================================================
 # HYDRA-UMC / URTC Ecosystem - Software bug report form
 # Copyright (C) 2026 JuanenRac (Electro Hobby 3D) <electrohobby3d@gmail.com>
-# GPL-3.0 - see LICENSE.md
+# GPL-3.0-or-later - see LICENSE.md
 # =============================================================================
 name: Software bug report
 description: Report a reproducible software, build, CI or integration defect.

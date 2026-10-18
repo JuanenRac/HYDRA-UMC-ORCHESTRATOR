@@ -2,7 +2,7 @@
 # =============================================================================
 # HYDRA-UMC-ORCHESTRATOR - bump_version.py
 # Copyright (C) 2026 JuanenRac (Electro Hobby 3D) <electrohobby3d@gmail.com>
-# GPL-3.0 - see LICENSE
+# GPL-3.0-or-later - see LICENSE
 #
 # Ecosystem-wide versioning policy: the version bumps automatically on
 # every REAL build (every run of build.bat/build.sh - the only thing

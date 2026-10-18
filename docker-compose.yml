@@ -1,6 +1,6 @@
 # HYDRA-UMC-ORCHESTRATOR - docker-compose.yml
 # Copyright (C) 2026 JuanenRac (Electro Hobby 3D) <electrohobby3d@gmail.com>
-# GPL-3.0 - see LICENSE
+# GPL-3.0-or-later - see LICENSE
 #
 # The ORCHESTRATOR (this repo, Rust) with the services it works with, as
 # independent containers on one internal network:

@@ -1,6 +1,6 @@
 // HYDRA-UMC-ORCHESTRATOR - src/mission.rs
 // Copyright (C) 2026 JuanenRac (Electro Hobby 3D) <electrohobby3d@gmail.com>
-// GPL-3.0 - see LICENSE
+// GPL-3.0-or-later - see LICENSE
 //
 // The real mission state machine: what "arbitrating which robot gets
 // which mission" (main.rs's own description of this process's role)

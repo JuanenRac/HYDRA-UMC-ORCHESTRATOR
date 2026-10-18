@@ -7,7 +7,7 @@ REM Purpose   : Incremental project build, verification and packaging workflow.
 REM Author    : JuanenRac (Electro Hobby 3D)
 REM Email     : electrohobby3d@gmail.com
 REM Copyright : (C) 2026 JuanenRac
-REM License   : GPL-3.0 - see LICENSE
+REM License   : GPL-3.0-or-later - see LICENSE
 REM *****************************************************************************
 REM HYDRA_UMC_SCRIPT_STANDARD_HEADER_END
 REM HYDRA_UMC_SCRIPT_STANDARD_BANNER_BEGIN
@@ -18,7 +18,7 @@ echo * Mode      : INCREMENTAL BUILD
 echo * Author    : JuanenRac (Electro Hobby 3D)
 echo * Email     : electrohobby3d@gmail.com
 echo * Copyright : (C) 2026 JuanenRac
-echo * License   : GPL-3.0 - see LICENSE
+echo * License   : GPL-3.0-or-later - see LICENSE
 echo * ------------------------------------------------------------------------- *
 echo * 1. Increment the project version and synchronise its manifest.
 echo * 2. Run this project's declared build, verification and packaging commands.

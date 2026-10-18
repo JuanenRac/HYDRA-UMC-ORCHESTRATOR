@@ -1,7 +1,7 @@
 // =============================================================================
 // HYDRA-UMC-ORCHESTRATOR - src/job_dispatcher.rs
 // Copyright (C) 2026 JuanenRac (Electro Hobby 3D) <electrohobby3d@gmail.com>
-// GPL-3.0 - see LICENSE
+// GPL-3.0-or-later - see LICENSE
 // =============================================================================
 //! A real, minimal client for HYDRA-UMC-JOB-DISPATCHER's own real HTTP API
 //! (`docs/API.md` in that repo), the second half of the "full chain" this

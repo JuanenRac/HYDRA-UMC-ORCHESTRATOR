@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # HYDRA-UMC-ORCHESTRATOR - tools/verify_compose.py
 # Copyright (C) 2026 JuanenRac (Electro Hobby 3D) <electrohobby3d@gmail.com>
-# GPL-3.0 - see LICENSE
+# GPL-3.0-or-later - see LICENSE
 """Static checks of docker-compose.yml, runnable without Docker or PyYAML.
 
 A compose file that builds but starts nothing useful, or starts an open API,

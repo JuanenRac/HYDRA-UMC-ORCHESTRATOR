@@ -1,7 +1,7 @@
 // =============================================================================
 // HYDRA-UMC Ecosystem - proto/hydra_common.proto
 // Copyright (C) 2026 JuanenRac (Electro Hobby 3D) <electrohobby3d@gmail.com>
-// GPL-3.0 - see LICENSE
+// GPL-3.0-or-later - see LICENSE
 //
 // Shared gRPC contract for node-to-node traffic across the ecosystem's AI
 // and orchestration nodes (Vision AI Node, Cognitive AI Node, Orchestration

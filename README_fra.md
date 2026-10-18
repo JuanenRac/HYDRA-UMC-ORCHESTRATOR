@@ -9,7 +9,7 @@
 ### 🤖 Gestionnaire d'essaim distribué et coordinateur multi-nœuds
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Licence-GPL%203.0-blue.svg" alt="GPL 3.0">
+  <img src="https://img.shields.io/badge/Licence-GPL%203.0--or--later-blue.svg" alt="GPL 3.0 or later">
   <img src="https://img.shields.io/badge/Langage-Rust-orange.svg" alt="Rust">
   <img src="https://img.shields.io/badge/Architecture-Edge%20distribué-blue.svg" alt="Distributed">
   <img src="https://img.shields.io/badge/Sync-JSON%2FHTTP-yellow.svg" alt="Sync">
@@ -331,4 +331,4 @@ Ce projet fait partie de l'écosystème robotique HYDRA-UMC du même auteur (Jua
 📺 [youtube.com/@electrohobby3d](https://youtube.com/@electrohobby3d)
 
 ## 📜 LICENCE
-GPL-3.0 - Voir le fichier LICENSE pour plus de détails.
+GPL-3.0-or-later - Voir le fichier LICENSE pour plus de détails.
