@@ -10,14 +10,14 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/Licencia-GPL%203.0-blue.svg" alt="GPL 3.0">
-  <img src="https://img.shields.io/badge/Lenguaje-Rust%20%2F%20Go-orange.svg" alt="Rust/Go">
+  <img src="https://img.shields.io/badge/Lenguaje-Rust-orange.svg" alt="Rust">
   <img src="https://img.shields.io/badge/Arquitectura-Borde%20Distribuido-blue.svg" alt="Distributed">
-  <img src="https://img.shields.io/badge/Sync-PTP%20%2F%20gRPC-yellow.svg" alt="Sync">
+  <img src="https://img.shields.io/badge/Sync-JSON%2FHTTP-yellow.svg" alt="Sync">
 </p>
 
 ---
 
-**Verificación de honestidad - qué funciona de verdad hoy:** la máquina de estados de misiones (`src/mission.rs`: `Mission`/`MissionRegistry`, cada transición `Pending -> Dispatched -> InProgress -> Completed`/`Cancelled`/`Failed`, cancelación idempotente, recuperación ante fallo de nodo), su propia persistencia en disco (`MissionRegistry::load`/`persist`, `data/missions.json`), el outbox duradero de cierres remotos pendientes (`src/outbox.rs`), el cliente HTTP real hacia HYDRA-UMC-JOB-DISPATCHER (`src/job_dispatcher.rs`) y el servidor JSON/HTTP plano que expone todo esto (`src/server.rs`, `tiny_http`, sin runtime async) son reales y están probados (93 tests, `cargo test`). El subcomando de CLI `mission-demo` ejecuta un escenario real de principio a fin contra ese mismo `MissionRegistry` - no es un mock. Lo que sigue siendo aspiracional: las "capas internas planeadas" de la sección 3 más abajo (capa de API, despacho sincronizado por PTP, agregación de salud de la flota como servicio permanente) describen intención de diseño, no código que ya exista; no hay cableado gRPC de este repo hacia un JOB-DISPATCHER o NODE-HEALING real en ejecución, no hay integración con PATH-PLANNER-3D/SWARM-SYNC, y nunca se ha ejecutado una flota multi-nodo real contra este binario - `docker-compose.yml` construye y arranca los 4 servicios hermanos juntos, pero eso no se ha probado contra hardware real de robots. Ver `CHANGELOG.md` para lo que ya se ha entregado exactamente, y el ROADMAP más abajo para lo que sigue abierto.
+**Verificación de honestidad - qué funciona de verdad hoy:** la máquina de estados de misiones (`src/mission.rs`: `Mission`/`MissionRegistry`, cada transición `Pending -> Dispatched -> InProgress -> Completed`/`Cancelled`/`Failed`, cancelación idempotente, recuperación ante fallo de nodo), su propia persistencia en disco (`MissionRegistry::load`/`persist`, `data/missions.json`), el outbox duradero de cierres remotos pendientes (`src/outbox.rs`), el cliente HTTP real hacia HYDRA-UMC-JOB-DISPATCHER (`src/job_dispatcher.rs`) y el servidor JSON/HTTP plano que expone todo esto (`src/server.rs`, `tiny_http`, sin runtime async) son reales y están probados (111 tests, `cargo test`). El subcomando de CLI `mission-demo` ejecuta un escenario real de principio a fin contra ese mismo `MissionRegistry` - no es un mock. Lo que sigue siendo aspiracional: las "capas internas planeadas" de la sección 3 más abajo (capa de API, despacho sincronizado por PTP, agregación de salud de la flota como servicio permanente) describen intención de diseño, no código que ya exista; no hay cableado gRPC de este repo hacia un JOB-DISPATCHER o NODE-HEALING real en ejecución, no hay integración con PATH-PLANNER-3D/SWARM-SYNC, y nunca se ha ejecutado una flota multi-nodo real contra este binario - `docker-compose.yml` construye y arranca los 3 servicios hermanos juntos, pero eso no se ha probado contra hardware real de robots. Ver `CHANGELOG.md` para lo que ya se ha entregado exactamente, y el ROADMAP más abajo para lo que sigue abierto.
 
 ---
 
@@ -28,10 +28,10 @@
 Se encarga de la planificación global de misiones, el balanceo de carga en toda la flota y la sincronización en tiempo real entre robots para evitar colisiones físicas y garantizar una precisión milimétrica en tareas colaborativas multi-robot.
 
 ### Características Clave:
-* 🕸️ **Coordinación de Enjambres:** Orquesta hasta 32+ brazos robóticos independientes a través de múltiples controladores.
+* 🕸️ **Coordinación de Enjambres:** Orquesta hasta 32+ brazos robóticos independientes a través de múltiples controladores. *(previsto)*
 * ⚖️ **Balanceo de Carga:** Asigna misiones automáticamente al robot más disponible o mejor equipado.
-* 🛡️ **Seguridad Centralizada:** Gestión global de E-STOP y monitorización de salud de toda la flota.
-* 📡 **API Unificada:** Proporciona un único punto de entrada para que las Apps y Studios interactúen con toda la fábrica.
+* 🛡️ **Seguridad Centralizada:** Gestión global de E-STOP y monitorización de salud de toda la flota. *(previsto)*
+* 📡 **API Unificada:** Proporciona un único punto de entrada para que las Apps y Studios interactúen con toda la fábrica. *(previsto)*
 * 🧩 **Real v0 - Máquina de Estados de Misión:** `mission.rs` sigue cada misión a través de `Pending -> Dispatched -> InProgress -> Completed` (más los estados terminales `Cancelled`/`Failed`), con cancelación idempotente y recuperación real cuando un nodo se reporta inalcanzable/inválido - ver `mission-demo` más abajo. Lógica pura en memoria - no necesita un par gRPC en vivo con JOB-DISPATCHER/NODE-HEALING para ejecutarse ni testearse.
 * 🧱 **Seguro por defecto, y un informe tardío no puede deshacer un traspaso (v0):** la API escucha en `127.0.0.1:8114` salvo que se indique otra cosa; otra dirección exige un token bearer (`--token` / `ORCHESTRATOR_TOKEN`; entonces todas las rutas salvo `GET /health` lo piden) o un `--allow-anonymous` explícito, y los cuerpos de petición de más de 64 KB se rechazan con `413`. Cada despacho sube el `attempt` de la misión; un `start`/`complete`/`fail` con un `attempt` caducado (o con el nombre de un nodo que ya no tiene la misión) se rechaza con `409` sin tocar la misión, de modo que un nodo declarado no disponible que vuelve de una partición de red no puede pisar al nodo al que se traspasó la misión (`--require-attempt` hace el campo obligatorio). El registro de misiones y el buzón de salida se fuerzan a disco antes de reemplazar el fichero anterior, la unidad systemd incluida ahora da al proceso un directorio de estado escribible (antes `ProtectSystem=strict` dejaba el directorio `data` por defecto en solo lectura y nada sobrevivía a un reinicio) y `docker-compose.yml` ahora arranca servicios de verdad (comandos `serve`, comprobaciones de salud, tokens obligatorios, imágenes fijadas, y solo el orquestador publicado y solo en el loopback del host). *(implementado)*
 
@@ -42,13 +42,15 @@ Se encarga de la planificación global de misiones, el balanceo de carga en toda
 ```mermaid
 flowchart TB
     API["API Externa (Studios / Apps)"] --> ORCH["HYDRA-ORCHESTRATOR"]
-    ORCH --> JOB["JOB-DISPATCHER (Cola de Misiones)"]
-    JOB --> PATH["PATH-PLANNER-3D (Chequeo de Colisión)"]
-    PATH --> SYNC["SWARM-SYNC (Sincronización PTP)"]
-    SYNC --> NODE1["HydraNode 1 (H745)"]
-    SYNC --> NODE2["HydraNode 2 (H745)"]
-    ORCH --> HEAL["NODE-HEALING (Failover)"]
+    ORCH <--> JOB["JOB-DISPATCHER (Cola de Misiones)"]
+    JOB -.-> PATH["PATH-PLANNER-3D (Chequeo de Colisión)"]
+    PATH -.-> SYNC["SWARM-SYNC (Sincronización PTP)"]
+    SYNC -.-> NODE1["HydraNode 1 (H745)"]
+    SYNC -.-> NODE2["HydraNode 2 (H745)"]
+    HEAL["NODE-HEALING (Failover)"] --> ORCH
 ```
+
+> Las flechas continuas existen hoy (la API HTTP, JOB-DISPATCHER y NODE-HEALING llamando a `POST /nodes/:node/recover`). Las flechas punteadas están previstas, no implementadas: ningún código llama a PATH-PLANNER-3D ni a SWARM-SYNC.
 
 ---
 
@@ -67,12 +69,12 @@ sobre la máquina de estados real que ya existe:
 * **Integración con la cola de misiones** — real ya, no planificada:
   entrega las misiones aceptadas a JOB-DISPATCHER a través del mismo
   transporte real HTTP/JSON que usa el propio `server.rs`
-  (`src/job_dispatcher.rs`, sus propios `submit_job`/`complete_job`/
+  (`src/job_dispatcher.rs`, sus propios `submit_job`/`close_job`/
   `requeue_job`/`run_dispatch`, ya cableados en cada manejador real del
   ciclo de vida de misión), y sigue su ciclo de vida en toda la flota
   usando la máquina de estados real `Mission`/`MissionRegistry` que ya
   existe en `mission.rs`, duradera ante un reinicio real del proceso
-  (`--data-dir`, `data/missions.json` por defecto). Esta capa nunca usó
+  (`--data-dir`, `data/missions.json` por defecto - una misión recargada a mitad de vuelo pasa a `Unknown` y se reencola a `Pending`, nunca se da por completada en silencio). Esta capa nunca usó
   gRPC ni estaba planificado que lo hiciera - el contrato compartido
   `HealthService` de `proto/hydra_common.proto` es un asunto aparte (la
   propia sonda real de salud de flota de HYDRA-UMC-NODE-HEALING), no la
@@ -140,7 +142,7 @@ HYDRA-UMC-ORCHESTRATOR/
 ├── build.sh/.bat     # Sube la versión y ejecuta `cargo build --release`
 ├── build-test.sh/.bat # Comprobación de compilación sin versionado
 ├── run.sh/.bat       # Ejecuta el binario compilado
-├── docker-compose.yml # Integra este repo con sus 4 hijos reales
+├── docker-compose.yml # Integra este repo con sus 3 hijos reales
 ├── nodes.compose.json # Registro de nodos que NODE-HEALING usa dentro del stack compose
 ├── .env.example # Tokens que exige el stack compose (copiar a .env)
 └── README.md
@@ -198,7 +200,7 @@ resultante.
 ```
 
 ```bash
-cargo test   # 93 tests: las transiciones/rechazos de transición inválida/
+cargo test   # 111 tests: las transiciones/rechazos de transición inválida/
              # cancelación idempotente/recuperación tras fallo de nodo de
              # mission.rs, más la persistencia a prueba de caídas de
              # outbox.rs, el cliente HTTP real de job_dispatcher.rs y los
@@ -206,8 +208,8 @@ cargo test   # 93 tests: las transiciones/rechazos de transición inválida/
 ```
 
 Como proyecto padre de integración del ecosistema, este repo también incluye
-un `docker-compose.yml` real que levanta este servicio junto a sus 4 hijos
-(SWARM-SYNC, PATH-PLANNER-3D, JOB-DISPATCHER, NODE-HEALING), esperados como
+un `docker-compose.yml` real que levanta este servicio junto a sus 3 hijos
+(SWARM-SYNC, JOB-DISPATCHER, NODE-HEALING; PATH-PLANNER-3D, una herramienta de línea de comandos, queda tras el perfil `tools`), esperados como
 carpetas hermanas:
 
 ```bash

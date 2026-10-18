@@ -174,20 +174,49 @@ pub enum RecoveryOutcome {
     NotAffected,
 }
 
+/// What Job-Dispatcher needs to route the mission: the priority, the tool
+/// the robot must have, the location it prefers and the jobs that must be
+/// done first. All optional; the defaults mean "any robot, normal priority".
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JobSpec {
+    #[serde(default)]
+    pub priority: i32,
+    #[serde(default, rename = "requiredTool")]
+    pub required_tool: String,
+    #[serde(default)]
+    pub location: String,
+    #[serde(default, rename = "dependsOn")]
+    pub depends_on: Vec<String>,
+}
+
+impl JobSpec {
+    fn is_default(&self) -> bool {
+        *self == JobSpec::default()
+    }
+}
+
+/// True for an id that can be addressed in a URL path and that
+/// Job-Dispatcher will take: 1 to 128 of `A-Z a-z 0-9 . _ -`.
+pub fn is_valid_mission_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 128
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Mission {
     pub id: String,
     pub state: MissionState,
-    // how many times this mission has ever been dispatched, across
-    // every attempt - including one that ended in `Unknown` after a
-    // restart. Never reset by `recover_from_unavailable_node`/
-    // `recover_unknown_missions()` requeuing it back to `Pending`,
-    // precisely so a caller can tell "this is a fresh mission" from
-    // "this is retry #3 of one that already had trouble" - the real
-    // per-attempt generation a durable queue needs, applied here to the
-    // one piece of durable state this repository has (MissionRegistry),
-    // ahead of a real HYDRA-UMC-DEV-SERVER task queue implementing the
-    // same requirement for its own jobs.
+    // The fencing generation of this mission: it goes up on every dispatch
+    // AND every time the mission is taken away from a node and requeued
+    // (a node declared unavailable, or a restart that left it `Unknown`),
+    // and is never reset or reused. A node reports the attempt it was given
+    // at dispatch, so everything it says after the mission was taken from
+    // it - even while the mission waits in `Pending` for its next dispatch -
+    // carries a number that is no longer the current one and is refused.
+    #[serde(default)]
     pub attempt: u32,
     // whether
     // this mission's own terminal outcome has actually been confirmed to
@@ -203,7 +232,16 @@ pub struct Mission {
     // confirmation attempt just failed) or back to `true` (a retry
     // actually succeeded) - this module stays pure, network-free logic,
     // per its own header comment.
+    #[serde(default = "default_true")]
     pub remote_close_confirmed: bool,
+    // routing hints forwarded to Job-Dispatcher; absent from the JSON when
+    // they are all default
+    #[serde(default, skip_serializing_if = "JobSpec::is_default")]
+    pub spec: JobSpec,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl Mission {
@@ -213,6 +251,7 @@ impl Mission {
             state: MissionState::Pending,
             attempt: 0,
             remote_close_confirmed: true,
+            spec: JobSpec::default(),
         }
     }
 
@@ -267,6 +306,8 @@ impl Mission {
     pub fn resolve_unknown_as_pending(&mut self) {
         if matches!(self.state, MissionState::Unknown { .. }) {
             self.state = MissionState::Pending;
+            // whoever held it before the restart no longer does
+            self.attempt += 1;
         }
     }
 
@@ -371,6 +412,9 @@ impl Mission {
         match assigned_node {
             Some(node) if node == unavailable_node => {
                 self.state = MissionState::Pending;
+                // revoke the attempt that node was given: its late reports
+                // now name a number that is no longer current
+                self.attempt += 1;
                 RecoveryOutcome::Requeued
             }
             _ => RecoveryOutcome::NotAffected,
@@ -379,6 +423,11 @@ impl Mission {
 
     pub fn is_terminal(&self) -> bool {
         self.state.is_terminal()
+    }
+
+    /// The name of the state (`Pending`, `Dispatched`, ...), without its data.
+    pub fn state_label(&self) -> &'static str {
+        self.state.label()
     }
 
     /// Marks the mission permanently `Failed`, valid from any
@@ -541,6 +590,17 @@ impl MissionRegistry {
             .entry(id.clone())
             .or_insert_with(|| Mission::new(id));
         mission
+    }
+
+    /// Like `add`, and when the mission is new it carries `spec`. An
+    /// existing mission is returned as it is (its spec is never rewritten).
+    pub fn add_with_spec(&mut self, id: impl Into<String>, spec: JobSpec) -> &mut Mission {
+        let id = id.into();
+        self.missions.entry(id.clone()).or_insert_with(|| {
+            let mut mission = Mission::new(id);
+            mission.spec = spec;
+            mission
+        })
     }
 
     /// Persists the current snapshot - call after mutating a `Mission`
@@ -860,13 +920,53 @@ mod tests {
         assert_eq!(m.attempt, 0);
         m.dispatch("node-a").unwrap();
         assert_eq!(m.attempt, 1);
-        // A requeue (node went unavailable) does not reset the count -
-        // this is real attempt HISTORY, not "attempts since last Pending".
+        // A requeue (node went unavailable) never resets the count; it moves
+        // it forward, so what the node that lost the mission says next is
+        // already stale while the mission waits in Pending.
         m.recover_from_unavailable_node("node-a");
         assert_eq!(m.state, MissionState::Pending);
-        assert_eq!(m.attempt, 1);
-        m.dispatch("node-b").unwrap();
         assert_eq!(m.attempt, 2);
+        m.dispatch("node-b").unwrap();
+        assert_eq!(m.attempt, 3);
+    }
+
+    #[test]
+    fn a_late_report_from_the_node_that_lost_the_mission_is_stale_even_before_the_next_dispatch() {
+        let mut m = Mission::new("m1");
+        m.dispatch("node-a").unwrap();
+        m.start().unwrap();
+        m.recover_from_unavailable_node("node-a");
+        // the mission is back in the queue; node-a (partitioned) reports late
+        assert_eq!(
+            m.check_fence(Some(1), None, true),
+            Err(FenceError::StaleAttempt {
+                reported: 1,
+                current: 2
+            })
+        );
+    }
+
+    #[test]
+    fn a_mission_file_without_the_newer_fields_still_loads() {
+        let old = r#"{"missions":[{"id":"m1","state":"Pending"}]}"#;
+        let path = temp_registry_path("old-format");
+        fs::write(&path, old).unwrap();
+        let reg = MissionRegistry::load(path.clone()).unwrap();
+        let m = reg.get("m1").unwrap();
+        assert_eq!(m.attempt, 0);
+        assert!(m.remote_close_confirmed);
+        assert_eq!(m.spec, JobSpec::default());
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn mission_ids_are_validated() {
+        for ok in ["m1", "a.b_c-d", &"x".repeat(128)] {
+            assert!(is_valid_mission_id(ok), "{ok}");
+        }
+        for bad in ["", "a/b", "a b", "ñ", &"x".repeat(129)] {
+            assert!(!is_valid_mission_id(bad), "{bad}");
+        }
     }
 
     fn temp_registry_path(name: &str) -> PathBuf {
@@ -1101,14 +1201,14 @@ mod tests {
         // node-a is declared unavailable, the mission is handed to node-b
         m.recover_from_unavailable_node("node-a");
         m.dispatch("node-b").unwrap();
-        assert_eq!(m.attempt, 2);
+        assert_eq!(m.attempt, 3);
 
         // node-a comes back and reports with the attempt it was given
         assert_eq!(
             m.check_fence(Some(1), Some("node-a"), true),
             Err(FenceError::StaleAttempt {
                 reported: 1,
-                current: 2
+                current: 3
             })
         );
         // even without an attempt, node-a is not the holder
@@ -1119,7 +1219,7 @@ mod tests {
             })
         );
         // node-b, the holder, passes
-        assert_eq!(m.check_fence(Some(2), Some("node-b"), true), Ok(()));
+        assert_eq!(m.check_fence(Some(3), Some("node-b"), true), Ok(()));
     }
 
     #[test]

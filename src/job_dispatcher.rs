@@ -4,17 +4,23 @@
 // GPL-3.0 - see LICENSE
 // =============================================================================
 //! A real, minimal client for HYDRA-UMC-JOB-DISPATCHER's own real HTTP API
-//! (`docs/API.md` in that repo - `POST /jobs/submit`, `POST /dispatch`),
-//! the second half of the "full chain" this project's own `server.rs`
-//! wires together: a mission added here is also submitted as a real job
-//! there, and a real dispatch pass there is what actually decides which
-//! robot a mission is assigned to - `mission.rs`'s own state machine has
-//! no routing/matching logic of its own, it only ever recorded whatever
-//! node a caller told it to (see that module's own docs).
+//! (`docs/API.md` in that repo), the second half of the "full chain" this
+//! project's own `server.rs` wires together: a mission added here is also
+//! submitted as a real job there, and a real dispatch pass there is what
+//! actually decides which robot a mission is assigned to - `mission.rs`'s
+//! own state machine has no routing/matching logic of its own, it only ever
+//! recorded whatever node a caller told it to (see that module's own docs).
+//!
+//! Every call goes through one shared agent with a connect and a total
+//! timeout: a dispatcher that accepts the connection and never answers
+//! cannot hang a worker for ever.
 
 use std::sync::OnceLock;
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
+
+use crate::mission::JobSpec;
 
 /// Bearer token sent on every call to Job-Dispatcher, set once at startup
 /// from `--job-dispatcher-token` / `JOB_DISPATCHER_TOKEN`. Job-Dispatcher
@@ -22,8 +28,26 @@ use serde::{Deserialize, Serialize};
 /// talking to a dispatcher on another host needs it.
 static TOKEN: OnceLock<String> = OnceLock::new();
 
+/// How long a connection attempt may take.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
+/// How long one whole call (connect, send, wait, read) may take.
+#[cfg(not(test))]
+const CALL_TIMEOUT: Duration = Duration::from_secs(10);
+#[cfg(test)]
+const CALL_TIMEOUT: Duration = Duration::from_secs(2);
+
 pub fn set_token(token: String) {
     let _ = TOKEN.set(token);
+}
+
+fn agent() -> &'static ureq::Agent {
+    static AGENT: OnceLock<ureq::Agent> = OnceLock::new();
+    AGENT.get_or_init(|| {
+        ureq::AgentBuilder::new()
+            .timeout_connect(CONNECT_TIMEOUT)
+            .timeout(CALL_TIMEOUT)
+            .build()
+    })
 }
 
 fn authed(request: ureq::Request) -> ureq::Request {
@@ -38,12 +62,33 @@ struct SubmitRequest<'a> {
     id: &'a str,
     #[serde(rename = "dedupKey")]
     dedup_key: &'a str,
+    priority: i32,
+    #[serde(rename = "requiredTool")]
+    required_tool: &'a str,
+    location: &'a str,
+    #[serde(rename = "dependsOn")]
+    depends_on: &'a [String],
 }
 
 #[derive(Serialize)]
 struct CompleteRequest<'a> {
     id: &'a str,
     success: bool,
+    #[serde(rename = "robotId")]
+    robot_id: &'a str,
+}
+
+#[derive(Serialize)]
+struct CancelRequest<'a> {
+    id: &'a str,
+}
+
+#[derive(Serialize)]
+struct RequeueRequest<'a> {
+    id: &'a str,
+    #[serde(rename = "robotId")]
+    robot_id: &'a str,
+    reason: &'a str,
 }
 
 #[derive(Debug, Deserialize)]
@@ -54,15 +99,13 @@ pub struct Assignment {
     pub robot_id: String,
 }
 
-/// the real
-/// shape `GET /jobs` reports for one job - only the two fields
-/// `complete_job()`'s own 400-disambiguation below actually needs.
+/// The fields of `GET /jobs/{id}` this client needs.
 #[derive(Debug, Deserialize)]
-struct JobStatusView {
-    #[serde(rename = "ID")]
-    id: String,
-    #[serde(rename = "Status")]
+struct JobView {
+    #[serde(rename = "Status", default)]
     status: String,
+    #[serde(rename = "AssignedRobot", default)]
+    assigned_robot: String,
 }
 
 /// Real error a caller can act on distinctly: `Unreachable` (Job-
@@ -87,24 +130,67 @@ impl std::fmt::Display for ClientError {
     }
 }
 
-/// Submits `mission_id` as a real job to Job-Dispatcher's queue, using
+fn bad_status(code: u16, resp: ureq::Response) -> ClientError {
+    ClientError::BadResponse(format!(
+        "HTTP {code}: {}",
+        resp.into_string().unwrap_or_default()
+    ))
+}
+
+fn transport(t: ureq::Transport) -> ClientError {
+    ClientError::Unreachable(t.to_string())
+}
+
+/// Percent-encodes a path segment (a mission id is restricted to
+/// `[A-Za-z0-9._-]`, but a stored id from an older file might not be).
+fn path_segment(id: &str) -> String {
+    let mut out = String::with_capacity(id.len());
+    for b in id.bytes() {
+        if b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-' | b'~') {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
+/// True when the body of a `404` is Job-Dispatcher's own JSON error
+/// (`{"error": ...}`) about an unknown job, as opposed to the plain
+/// `404 page not found` an older dispatcher without the route answers.
+fn is_json_error(body: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .is_some_and(|v| v.get("error").is_some())
+}
+
+fn json_body<T: Serialize>(body: &T) -> Result<String, ClientError> {
+    serde_json::to_string(body).map_err(|e| ClientError::BadResponse(e.to_string()))
+}
+
+/// Submits the mission as a real job to Job-Dispatcher's queue, using
 /// the mission id as both the job id and the dedup key - a retried
 /// POST /missions call (this project's own caller, on a timeout) must
 /// never double-submit the same mission as two separate jobs there.
+/// The priority, required tool, preferred location and dependencies the
+/// mission was created with travel along, so Job-Dispatcher's tool-aware
+/// and multi-stage routing has something to work with.
 /// Best-effort: a 200/201/409 (already submitted) all count as success
 /// here, since the real intent - "this mission is now in the queue" -
 /// is satisfied either way.
-pub fn submit_job(base_url: &str, mission_id: &str) -> Result<(), ClientError> {
+pub fn submit_job(base_url: &str, mission_id: &str, spec: &JobSpec) -> Result<(), ClientError> {
     let url = format!("{}/jobs/submit", base_url.trim_end_matches('/'));
     let body = SubmitRequest {
         id: mission_id,
         dedup_key: mission_id,
+        priority: spec.priority,
+        required_tool: &spec.required_tool,
+        location: &spec.location,
+        depends_on: &spec.depends_on,
     };
-    let result = authed(ureq::post(&url))
+    let result = authed(agent().post(&url))
         .set("Content-Type", "application/json")
-        .send_string(
-            &serde_json::to_string(&body).map_err(|e| ClientError::BadResponse(e.to_string()))?,
-        );
+        .send_string(&json_body(&body)?);
 
     match result {
         Ok(_) => Ok(()),
@@ -112,183 +198,140 @@ pub fn submit_job(base_url: &str, mission_id: &str) -> Result<(), ClientError> {
         // real "job ID already exists" response for a job this exact
         // mission id already submitted successfully before.
         Err(ureq::Error::Status(409, _)) => Ok(()),
-        Err(ureq::Error::Status(code, resp)) => Err(ClientError::BadResponse(format!(
-            "HTTP {code}: {}",
-            resp.into_string().unwrap_or_default()
-        ))),
-        Err(ureq::Error::Transport(t)) => Err(ClientError::Unreachable(t.to_string())),
+        Err(ureq::Error::Status(code, resp)) => Err(bad_status(code, resp)),
+        Err(ureq::Error::Transport(t)) => Err(transport(t)),
     }
 }
 
-/// Tells Job-Dispatcher a mission's already-dispatched job needs
-/// redistributing - found while auditing the code: `handle_recover()` in
-/// `server.rs` only ever updated the local
-/// in-memory mission registry, never this real integration, so Job-
-/// Dispatcher could keep believing a job was still assigned to a node
-/// that just went unreachable.
-///
-/// Uses Job-Dispatcher's own existing, documented contract - no new
-/// endpoint needed on that side (see that repo's own `docs/API.md`):
-/// `POST /jobs/complete {success: false}` marks the job "failed" (only
-/// valid from the real "assigned" state - exactly the state a job whose
-/// robot just went unreachable should be in), then `POST /jobs/submit`
-/// with the SAME `dedupKey` `submit_job()` already used for this mission
-/// (its own id) hits the real, documented "retried" path: Job-Dispatcher
-/// resets the job to "pending" under its original id, making it eligible
-/// for the next real `POST /dispatch` pass to assign to a different,
-/// healthy robot.
-///
-/// Best-effort, same reasoning as `submit_job()`: a 400 from
-/// `/jobs/complete` means this mission's job was never actually in the
-/// "assigned" state on Job-Dispatcher's side (never submitted there at
-/// all, or already finished on its own) - nothing real to requeue, not a
-/// failure of this call.
-/// Tells Job-Dispatcher a mission's job reached a real terminal outcome -
-/// `POST /jobs/complete {id, success}`, the same documented endpoint
-/// `requeue_job` below already uses for its own first step. Best-effort,
-/// same reasoning as every other call here: a 400 means this mission's
-/// job was never actually "assigned" on Job-Dispatcher's side (never
-/// submitted at all, or already finished on its own) - nothing real to
-/// close out there, not a failure of this call.
-///
-/// (P1):
-/// `server.rs`'s own `handle_complete`/`handle_cancel` used to update
-/// only the local mission registry - Job-Dispatcher could keep believing
-/// a job (and its robot's reservation) was still active for a mission
-/// this Orchestrator had already closed out locally.
-///
-/// a 400 from
-/// `POST /jobs/complete` is genuinely AMBIGUOUS on Job-Dispatcher's own
-/// side - `handleCompleteJob` returns the exact same status for "this
-/// job id was never even submitted", "this job already reached done/
-/// failed", AND (were a real bug elsewhere to ever leave a job's
-/// `AssignedRobot` pointing at a robot record that no longer exists) a
-/// genuine internal inconsistency - collapsing all of those into one
-/// blind `Ok(())` used to let a REAL failure (the job is still sitting
-/// there `assigned`, a real orphaned reservation) look identical to an
-/// already-closed one. A 400 now triggers a real `GET /jobs` lookup of
-/// this exact mission's own current status before deciding: still
-/// `assigned` is a real, reported failure (nothing was actually
-/// released); anything else found (or not found at all) is the honest
-/// "nothing real left to close" this function already promised; and a
-/// remote state that can't even be verified (the lookup itself fails)
-/// fails closed rather than guessing.
-pub fn complete_job(base_url: &str, mission_id: &str, success: bool) -> Result<(), ClientError> {
-    let base_url = base_url.trim_end_matches('/');
-    let complete_url = format!("{base_url}/jobs/complete");
-    let complete_body = CompleteRequest {
-        id: mission_id,
-        success,
-    };
-    let complete_result = authed(ureq::post(&complete_url))
-        .set("Content-Type", "application/json")
-        .send_string(
-            &serde_json::to_string(&complete_body)
-                .map_err(|e| ClientError::BadResponse(e.to_string()))?,
-        );
-
-    match complete_result {
-        Ok(_) => Ok(()),
-        Err(ureq::Error::Status(400, _)) => match fetch_job_status(base_url, mission_id)? {
-            None => Ok(()), // never existed there at all - nothing real to close
-            // "pending"/"blocked"/"unreachable" are NOT terminal -
-            // this used to lump them in with "already closed", but a
-            // pending/blocked job is still sitting live in Job-Dispatcher's
-            // own queue and can still be picked up and assigned to a real
-            // robot on a future dispatch pass. Cancelling/failing the
-            // mission here left that real remote job completely
-            // unaffected - the exact "cancel a pending mission never
-            // cancels the remote job" gap the finding names. Only "done"
-            // and "failed" are genuinely terminal states nothing further
-            // can happen to; every other status (including "assigned",
-            // already handled) is a real, reported failure to close.
-            Some(status) if status == "done" || status == "failed" => Ok(()),
-            Some(status) => Err(ClientError::BadResponse(format!(
-                "job {mission_id:?} is still reported {status:?} on job-dispatcher (not done/failed) - \
-                 the 400 from /jobs/complete was NOT a benign already-closed state"
-            ))),
-        },
-        Err(ureq::Error::Status(code, resp)) => Err(ClientError::BadResponse(format!(
-            "HTTP {code}: {}",
-            resp.into_string().unwrap_or_default()
-        ))),
-        Err(ureq::Error::Transport(t)) => Err(ClientError::Unreachable(t.to_string())),
-    }
-}
-
-/// looks up `mission_id`'s own real, current status directly
-/// from Job-Dispatcher's `GET /jobs` listing - the real remote-state
-/// query `complete_job()` above uses to disambiguate an otherwise-opaque
-/// 400 instead of blindly trusting it means "already closed". `Ok(None)`
-/// means the job genuinely is not in the list at all (never submitted,
-/// or Job-Dispatcher itself lost its own state) - itself a real, honest
-/// fact, not an error; a real `Err` here (the lookup itself fails) is
-/// what makes `complete_job()` fail closed instead of guessing.
-fn fetch_job_status(base_url: &str, mission_id: &str) -> Result<Option<String>, ClientError> {
-    let url = format!("{base_url}/jobs");
-    let result = authed(ureq::get(&url)).call();
-    match result {
+/// Looks up one job on Job-Dispatcher (`GET /jobs/{id}`). `Ok(None)` means
+/// the job genuinely is not there (never submitted, or the dispatcher lost
+/// its state); a dispatcher too old to have the route is reported as a
+/// `BadResponse`, never mistaken for "no such job".
+fn fetch_job(base_url: &str, mission_id: &str) -> Result<Option<JobView>, ClientError> {
+    let url = format!("{base_url}/jobs/{}", path_segment(mission_id));
+    match authed(agent().get(&url)).call() {
         Ok(response) => {
             let text = response
                 .into_string()
                 .map_err(|e| ClientError::BadResponse(e.to_string()))?;
-            let jobs: Vec<JobStatusView> =
-                serde_json::from_str(&text).map_err(|e| ClientError::BadResponse(e.to_string()))?;
-            Ok(jobs
-                .into_iter()
-                .find(|j| j.id == mission_id)
-                .map(|j| j.status))
+            serde_json::from_str::<JobView>(&text)
+                .map(Some)
+                .map_err(|e| ClientError::BadResponse(e.to_string()))
         }
-        Err(ureq::Error::Status(code, resp)) => Err(ClientError::BadResponse(format!(
-            "HTTP {code}: {}",
-            resp.into_string().unwrap_or_default()
-        ))),
-        Err(ureq::Error::Transport(t)) => Err(ClientError::Unreachable(t.to_string())),
+        Err(ureq::Error::Status(404, resp)) => {
+            let text = resp.into_string().unwrap_or_default();
+            if is_json_error(&text) {
+                Ok(None)
+            } else {
+                Err(ClientError::BadResponse(
+                    "GET /jobs/{id} is not served: this job-dispatcher is older than the orchestrator expects"
+                        .to_string(),
+                ))
+            }
+        }
+        Err(ureq::Error::Status(code, resp)) => Err(bad_status(code, resp)),
+        Err(ureq::Error::Transport(t)) => Err(transport(t)),
     }
 }
 
-/// Requeues mission_id's job onto a DIFFERENT robot: marks it Failed via
-/// the same `/jobs/complete` endpoint `complete_job` above uses, then
-/// re-submits it under its own dedup key so Job-Dispatcher's real
-/// "retried" path resets it to `Pending` for a fresh dispatch attempt.
+/// Tells Job-Dispatcher a mission reached a real terminal outcome, in the
+/// way that matches what Job-Dispatcher holds for that job right now:
 ///
-/// Deliberately NOT built on top of `complete_job` above, despite the
-/// shared first request: a 400 here means "stop - there is nothing real
-/// to requeue" (this mission's job was never in Job-Dispatcher's real
-/// "assigned" state to begin with, so re-submitting would be a guess,
-/// not a real requeue), while `complete_job`'s own callers (a mission
-/// simply finishing) have no such follow-up step and want a 400 treated
-/// as the same benign no-op either way. Collapsing both into one shared
-/// helper previously made a 400 during `complete_job` silently continue
-/// on to `submit_job` too - a real regression a dedicated test below now
-/// guards against.
-pub fn requeue_job(base_url: &str, mission_id: &str) -> Result<(), ClientError> {
+/// * not there, or already `done`/`failed`/`cancelled`: nothing to close;
+/// * `pending`/`blocked`/`unreachable` (nobody was given it): withdrawn
+///   with `POST /jobs/cancel`, so a later dispatch pass cannot hand
+///   cancelled work to a robot;
+/// * `assigned`/`unknown` (a robot holds it): closed with
+///   `POST /jobs/complete`, naming the robot Job-Dispatcher itself says
+///   holds it, which frees that robot's reservation.
+///
+/// A conflict from either write (the job moved between the lookup and the
+/// write) is an error: the caller keeps the close pending and the next
+/// attempt sees the new state. Idempotent, so retrying a close that already
+/// went through is always safe.
+pub fn close_job(base_url: &str, mission_id: &str, success: bool) -> Result<(), ClientError> {
     let base_url = base_url.trim_end_matches('/');
-    let complete_url = format!("{base_url}/jobs/complete");
-    let complete_body = CompleteRequest {
-        id: mission_id,
-        success: false,
+    let Some(job) = fetch_job(base_url, mission_id)? else {
+        return Ok(());
     };
-    let complete_result = authed(ureq::post(&complete_url))
-        .set("Content-Type", "application/json")
-        .send_string(
-            &serde_json::to_string(&complete_body)
-                .map_err(|e| ClientError::BadResponse(e.to_string()))?,
-        );
-
-    match complete_result {
-        Ok(_) => {}
-        Err(ureq::Error::Status(400, _)) => return Ok(()),
-        Err(ureq::Error::Status(code, resp)) => {
-            return Err(ClientError::BadResponse(format!(
-                "HTTP {code}: {}",
-                resp.into_string().unwrap_or_default()
-            )))
+    match job.status.as_str() {
+        "done" | "failed" | "cancelled" => Ok(()),
+        "assigned" | "unknown" => {
+            let body = CompleteRequest {
+                id: mission_id,
+                success,
+                robot_id: &job.assigned_robot,
+            };
+            let url = format!("{base_url}/jobs/complete");
+            match authed(agent().post(&url))
+                .set("Content-Type", "application/json")
+                .send_string(&json_body(&body)?)
+            {
+                Ok(_) => Ok(()),
+                // the job (or its robot) is gone: nothing left to close
+                Err(ureq::Error::Status(404, _)) => Ok(()),
+                Err(ureq::Error::Status(code, resp)) => Err(bad_status(code, resp)),
+                Err(ureq::Error::Transport(t)) => Err(transport(t)),
+            }
         }
-        Err(ureq::Error::Transport(t)) => return Err(ClientError::Unreachable(t.to_string())),
+        "pending" | "blocked" | "unreachable" => {
+            let url = format!("{base_url}/jobs/cancel");
+            match authed(agent().post(&url))
+                .set("Content-Type", "application/json")
+                .send_string(&json_body(&CancelRequest { id: mission_id })?)
+            {
+                Ok(_) => Ok(()),
+                Err(ureq::Error::Status(404, _)) => Ok(()),
+                Err(ureq::Error::Status(code, resp)) => Err(bad_status(code, resp)),
+                Err(ureq::Error::Transport(t)) => Err(transport(t)),
+            }
+        }
+        other => Err(ClientError::BadResponse(format!(
+            "job {mission_id:?} has a status this orchestrator does not know: {other:?}"
+        ))),
     }
+}
 
-    submit_job(base_url, mission_id)
+/// Requeues the mission's job onto a DIFFERENT robot after `node` was
+/// declared unavailable: `POST /jobs/requeue` puts the job back to
+/// `pending` and holds `node`'s robot unavailable until it reports in
+/// again, so the same dead robot is not handed the job right back. If
+/// Job-Dispatcher no longer knows the job (it restarted without a
+/// database), it is submitted again. A job that is not assigned any more
+/// is not an error: there is nothing to take away from anybody.
+pub fn requeue_job(
+    base_url: &str,
+    mission_id: &str,
+    node: &str,
+    spec: &JobSpec,
+) -> Result<(), ClientError> {
+    let base_url = base_url.trim_end_matches('/');
+    let url = format!("{base_url}/jobs/requeue");
+    let body = RequeueRequest {
+        id: mission_id,
+        robot_id: node,
+        reason: "node declared unavailable",
+    };
+    match authed(agent().post(&url))
+        .set("Content-Type", "application/json")
+        .send_string(&json_body(&body)?)
+    {
+        Ok(_) => Ok(()),
+        Err(ureq::Error::Status(404, resp)) => {
+            let text = resp.into_string().unwrap_or_default();
+            if is_json_error(&text) {
+                // unknown job there: put it back in the queue
+                submit_job(base_url, mission_id, spec)
+            } else {
+                Err(ClientError::BadResponse(
+                    "POST /jobs/requeue is not served: this job-dispatcher is older than the orchestrator expects"
+                        .to_string(),
+                ))
+            }
+        }
+        Err(ureq::Error::Status(code, resp)) => Err(bad_status(code, resp)),
+        Err(ureq::Error::Transport(t)) => Err(transport(t)),
+    }
 }
 
 /// Runs one real dispatch pass on Job-Dispatcher and returns every
@@ -297,15 +340,14 @@ pub fn requeue_job(base_url: &str, mission_id: &str) -> Result<(), ClientError> 
 /// has no logic for itself.
 pub fn run_dispatch(base_url: &str) -> Result<Vec<Assignment>, ClientError> {
     let url = format!("{}/dispatch", base_url.trim_end_matches('/'));
-    let result = authed(ureq::post(&url)).call();
+    let result = authed(agent().post(&url)).call();
 
     match result {
         // into_string() (always available) + serde_json::from_str(),
         // not Response::into_json() - that helper needs ureq's own
         // optional "json" feature, which this crate deliberately leaves
         // off (see Cargo.toml's own comment: default-features = false,
-        // no TLS needed for loopback-only HTTP) - real compile error
-        // found live, not guessed at.
+        // no TLS needed for loopback-only HTTP).
         Ok(response) => {
             let text = response
                 .into_string()
@@ -313,11 +355,8 @@ pub fn run_dispatch(base_url: &str) -> Result<Vec<Assignment>, ClientError> {
             serde_json::from_str::<Vec<Assignment>>(&text)
                 .map_err(|e| ClientError::BadResponse(e.to_string()))
         }
-        Err(ureq::Error::Status(code, resp)) => Err(ClientError::BadResponse(format!(
-            "HTTP {code}: {}",
-            resp.into_string().unwrap_or_default()
-        ))),
-        Err(ureq::Error::Transport(t)) => Err(ClientError::Unreachable(t.to_string())),
+        Err(ureq::Error::Status(code, resp)) => Err(bad_status(code, resp)),
+        Err(ureq::Error::Transport(t)) => Err(transport(t)),
     }
 }
 
@@ -328,44 +367,48 @@ mod tests {
     use std::net::TcpListener;
     use std::thread;
 
-    /// A tiny, real, single-request fake Job-Dispatcher: accepts one
-    /// real HTTP connection, reads the real request, replies with a
-    /// fixed `status`+`body`, and reports back the raw request text it
-    /// received so a test can assert on the real method/path/body this
-    /// client actually sent - not just that "something" was sent.
+    /// A tiny, real fake Job-Dispatcher: accepts one connection per scripted
+    /// reply, in order, reads the whole request, answers with the scripted
+    /// `(status, body)`, and reports back the raw request text so a test can
+    /// assert on the real method/path/body this client actually sent.
     ///
     /// Reads in a loop rather than trusting one `stream.read()` call to
     /// return the whole request: `ureq`'s `send_string()` can write
     /// headers and body as separate TCP writes, and a loopback stack is
-    /// free to deliver those as separate readable chunks - a single
-    /// non-looping read intermittently captured only the headers here,
-    /// with `Content-Length` correctly declared but the body itself not
-    /// there yet. Reads until it has seen `\r\n\r\n` and, if a
-    /// `Content-Length` header is present, that many body bytes past it.
-    fn fake_server(status: u16, body: &'static str) -> (String, std::sync::mpsc::Receiver<String>) {
+    /// free to deliver those as separate readable chunks. Reads until it
+    /// has seen `\r\n\r\n` and, if a `Content-Length` header is present,
+    /// that many body bytes past it.
+    fn fake_sequence(
+        replies: Vec<(u16, &'static str)>,
+    ) -> (String, std::sync::mpsc::Receiver<String>) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         let (tx, rx) = std::sync::mpsc::channel();
 
         thread::spawn(move || {
-            if let Ok((mut stream, _)) = listener.accept() {
-                let request = read_full_request(&mut stream);
-                let response = format!(
-                    "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                    body.len()
-                );
-                let _ = stream.write_all(response.as_bytes());
-                let _ = tx.send(request);
+            for (status, body) in replies {
+                if let Ok((mut stream, _)) = listener.accept() {
+                    let request = read_full_request(&mut stream);
+                    let response = format!(
+                        "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = stream.write_all(response.as_bytes());
+                    let _ = tx.send(request);
+                }
             }
         });
 
         (format!("http://127.0.0.1:{port}"), rx)
     }
 
+    fn fake_server(status: u16, body: &'static str) -> (String, std::sync::mpsc::Receiver<String>) {
+        fake_sequence(vec![(status, body)])
+    }
+
     /// Reads one full HTTP/1.1 request (headers + declared body, if any)
     /// off `stream`, tolerating the headers and body arriving as separate
-    /// reads - see `fake_server`'s own doc comment for why a single
-    /// `read()` isn't reliable here.
+    /// reads.
     fn read_full_request(stream: &mut std::net::TcpStream) -> String {
         let mut raw = Vec::new();
         let mut buf = [0u8; 4096];
@@ -406,213 +449,188 @@ mod tests {
         haystack.windows(needle.len()).position(|w| w == needle)
     }
 
+    fn next(rx: &std::sync::mpsc::Receiver<String>) -> String {
+        rx.recv_timeout(Duration::from_secs(2)).unwrap()
+    }
+
     #[test]
-    fn submit_job_sends_a_real_request_with_matching_id_and_dedup_key() {
+    fn submit_job_sends_the_id_the_dedup_key_and_the_mission_spec() {
         let (base_url, rx) =
             fake_server(201, r#"{"ID":"m1","Status":"pending","result":"created"}"#);
-        let result = submit_job(&base_url, "m1");
-        assert!(result.is_ok());
+        let spec = JobSpec {
+            priority: 7,
+            required_tool: "Laser".into(),
+            location: "cell-2".into(),
+            depends_on: vec!["prep".into()],
+        };
+        assert!(submit_job(&base_url, "m1", &spec).is_ok());
 
-        let request = rx.recv_timeout(std::time::Duration::from_secs(2)).unwrap();
+        let request = next(&rx);
         assert!(request.starts_with("POST /jobs/submit"));
         assert!(request.contains("\"id\":\"m1\""));
         assert!(request.contains("\"dedupKey\":\"m1\""));
+        assert!(request.contains("\"priority\":7"));
+        assert!(request.contains("\"requiredTool\":\"Laser\""));
+        assert!(request.contains("\"location\":\"cell-2\""));
+        assert!(request.contains("\"dependsOn\":[\"prep\"]"));
     }
 
     #[test]
     fn submit_job_treats_409_as_success() {
         let (base_url, _rx) = fake_server(409, r#"{"error":"job ID already exists: \"m1\""}"#);
-        let result = submit_job(&base_url, "m1");
         assert!(
-            result.is_ok(),
+            submit_job(&base_url, "m1", &JobSpec::default()).is_ok(),
             "a 409 (already submitted) must not be treated as a real failure"
         );
     }
 
     #[test]
     fn submit_job_reports_unreachable_when_nothing_is_listening() {
-        let result = submit_job("http://127.0.0.1:1", "m1");
+        let result = submit_job("http://127.0.0.1:1", "m1", &JobSpec::default());
+        assert!(matches!(result, Err(ClientError::Unreachable(_))));
+    }
+
+    // The close depends on what Job-Dispatcher holds for the job.
+
+    #[test]
+    fn closing_a_job_a_robot_holds_completes_it_naming_that_robot() {
+        let (base_url, rx) = fake_sequence(vec![
+            (
+                200,
+                r#"{"ID":"m1","Status":"assigned","AssignedRobot":"arm-3"}"#,
+            ),
+            (200, r#"{"ID":"m1","Status":"done"}"#),
+        ]);
+        assert!(close_job(&base_url, "m1", true).is_ok());
+
+        assert!(next(&rx).starts_with("GET /jobs/m1 "));
+        let complete = next(&rx);
+        assert!(complete.starts_with("POST /jobs/complete"));
+        assert!(complete.contains("\"id\":\"m1\""));
+        assert!(complete.contains("\"success\":true"));
+        assert!(complete.contains("\"robotId\":\"arm-3\""));
+    }
+
+    #[test]
+    fn closing_a_job_nobody_holds_withdraws_it_instead_of_leaving_it_to_be_dispatched() {
+        for status in ["pending", "blocked", "unreachable"] {
+            let body: &'static str = Box::leak(
+                format!(r#"{{"ID":"m1","Status":"{status}","AssignedRobot":""}}"#).into_boxed_str(),
+            );
+            let (base_url, rx) = fake_sequence(vec![
+                (200, body),
+                (200, r#"{"ID":"m1","Status":"cancelled"}"#),
+            ]);
+            assert!(close_job(&base_url, "m1", false).is_ok(), "{status}");
+            next(&rx);
+            let cancel = next(&rx);
+            assert!(
+                cancel.starts_with("POST /jobs/cancel"),
+                "{status}: {cancel}"
+            );
+            assert!(cancel.contains("\"id\":\"m1\""));
+        }
+    }
+
+    #[test]
+    fn closing_a_job_that_is_already_over_or_unknown_there_does_nothing() {
+        for status in ["done", "failed", "cancelled"] {
+            let body: &'static str =
+                Box::leak(format!(r#"{{"ID":"m1","Status":"{status}"}}"#).into_boxed_str());
+            let (base_url, rx) = fake_server(200, body);
+            assert!(close_job(&base_url, "m1", true).is_ok(), "{status}");
+            next(&rx);
+            assert!(
+                rx.recv_timeout(Duration::from_millis(150)).is_err(),
+                "{status}: no write expected"
+            );
+        }
+        let (base_url, _rx) = fake_server(404, r#"{"error":"unknown job \"m1\""}"#);
+        assert!(close_job(&base_url, "m1", true).is_ok());
+    }
+
+    #[test]
+    fn a_conflict_while_closing_is_an_error_so_the_close_stays_pending() {
+        let (base_url, _rx) = fake_sequence(vec![
+            (
+                200,
+                r#"{"ID":"m1","Status":"assigned","AssignedRobot":"arm-3"}"#,
+            ),
+            (409, r#"{"error":"robot mismatch"}"#),
+        ]);
+        assert!(matches!(
+            close_job(&base_url, "m1", true),
+            Err(ClientError::BadResponse(_))
+        ));
+    }
+
+    #[test]
+    fn an_older_dispatcher_without_the_job_route_is_not_taken_for_an_unknown_job() {
+        let (base_url, _rx) = fake_server(404, "404 page not found\n");
+        assert!(
+            matches!(
+                close_job(&base_url, "m1", true),
+                Err(ClientError::BadResponse(_))
+            ),
+            "a plain 404 means the route is missing, not that the job never existed"
+        );
+    }
+
+    #[test]
+    fn close_job_reports_unreachable_when_nothing_is_listening() {
+        let result = close_job("http://127.0.0.1:1", "m1", true);
         assert!(matches!(result, Err(ClientError::Unreachable(_))));
     }
 
     #[test]
-    fn complete_job_succeeds_on_a_real_200() {
-        let (base_url, rx) = fake_server(200, r#"{"ID":"m1","Status":"done"}"#);
-        let result = complete_job(&base_url, "m1", true);
-        assert!(result.is_ok());
-        let request = rx.recv_timeout(std::time::Duration::from_secs(2)).unwrap();
-        assert!(request.starts_with("POST /jobs/complete"));
-        assert!(request.contains("\"success\":true"));
-    }
-
-    // a 400
-    // from /jobs/complete used to be blindly treated as "already
-    // closed" - these four prove it is now disambiguated against
-    // Job-Dispatcher's own real GET /jobs status instead of guessed at.
-
-    #[test]
-    fn complete_job_treats_a_400_as_benign_when_the_job_does_not_exist_remotely() {
-        let (base_url, rx) = fake_server_two_requests(400, r#"{"error":"unknown job"}"#, 200, "[]");
-        let result = complete_job(&base_url, "m1", true);
-        assert!(
-            result.is_ok(),
-            "a job job-dispatcher has never heard of has nothing real to close"
-        );
-
-        let first = rx.recv_timeout(std::time::Duration::from_secs(2)).unwrap();
-        assert!(first.starts_with("POST /jobs/complete"));
-        let second = rx.recv_timeout(std::time::Duration::from_secs(2)).unwrap();
-        assert!(
-            second.starts_with("GET /jobs"),
-            "expected a real remote-state lookup, got: {second}"
-        );
-    }
-
-    #[test]
-    fn complete_job_treats_a_400_as_benign_when_the_job_is_already_terminal_remotely() {
-        let (base_url, _rx) = fake_server_two_requests(
-            400,
-            r#"{"error":"job is not assigned"}"#,
-            200,
-            r#"[{"ID":"m1","Status":"done"}]"#,
-        );
-        let result = complete_job(&base_url, "m1", true);
-        assert!(
-            result.is_ok(),
-            "a job already done/failed remotely has nothing real to close"
-        );
-    }
-
-    #[test]
-    fn complete_job_refuses_to_treat_a_400_as_success_when_the_job_is_still_assigned_remotely() {
-        let (base_url, _rx) = fake_server_two_requests(
-            400,
-            r#"{"error":"something unexpected"}"#,
-            200,
-            r#"[{"ID":"m1","Status":"assigned"}]"#,
-        );
-        let result = complete_job(&base_url, "m1", true);
-        assert!(
-            result.is_err(),
-            "a job job-dispatcher still reports as 'assigned' is a REAL orphaned reservation, not a benign 400"
-        );
-    }
-
-    // a "pending"/"blocked"/"unreachable" job is NOT terminal - it
-    // is still sitting live in Job-Dispatcher's own queue and can still
-    // be assigned to a real robot on a future dispatch pass. Cancelling
-    // or failing the mission here must not be silently treated as
-    // "already closed" the way a genuinely done/failed job is.
-    #[test]
-    fn complete_job_refuses_to_treat_a_400_as_success_when_the_job_is_still_pending_remotely() {
-        let (base_url, _rx) = fake_server_two_requests(
-            400,
-            r#"{"error":"job is not assigned"}"#,
-            200,
-            r#"[{"ID":"m1","Status":"pending"}]"#,
-        );
-        let result = complete_job(&base_url, "m1", false);
-        assert!(
-            result.is_err(),
-            "a pending job is still live remotely and can still be dispatched - not a benign 400"
-        );
-    }
-
-    #[test]
-    fn complete_job_refuses_to_treat_a_400_as_success_when_the_job_is_still_blocked_remotely() {
-        let (base_url, _rx) = fake_server_two_requests(
-            400,
-            r#"{"error":"job is not assigned"}"#,
-            200,
-            r#"[{"ID":"m1","Status":"blocked"}]"#,
-        );
-        let result = complete_job(&base_url, "m1", false);
-        assert!(
-            result.is_err(),
-            "a blocked job is still live remotely (waiting on a dependency) - not a benign 400"
-        );
-    }
-
-    #[test]
-    fn complete_job_fails_closed_when_the_remote_state_cannot_even_be_verified() {
-        // `fake_server` (single-request) closes its listener right after
-        // the first request - the follow-up GET /jobs this triggers has
-        // nothing left to connect to, a real unreachable failure.
-        let (base_url, _rx) = fake_server(400, r#"{"error":"unexpected"}"#);
-        let result = complete_job(&base_url, "m1", true);
-        assert!(
-            result.is_err(),
-            "an unverifiable remote state must never be silently treated as a confirmed close"
-        );
-    }
-
-    /// A tiny, real fake Job-Dispatcher answering TWO sequential requests
-    /// (unlike `fake_server`'s own single-request shape) - `requeue_job()`
-    /// makes a real `/jobs/complete` call followed by a real
-    /// `/jobs/submit` call, and this test needs to observe both.
-    fn fake_server_two_requests(
-        first_status: u16,
-        first_body: &'static str,
-        second_status: u16,
-        second_body: &'static str,
-    ) -> (String, std::sync::mpsc::Receiver<String>) {
+    fn a_dispatcher_that_never_answers_does_not_hang_the_caller() {
+        // accepts the connection and then says nothing for longer than the timeout
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
-        let (tx, rx) = std::sync::mpsc::channel();
-
         thread::spawn(move || {
-            for (status, body) in [(first_status, first_body), (second_status, second_body)] {
-                if let Ok((mut stream, _)) = listener.accept() {
-                    let request = read_full_request(&mut stream);
-                    let response = format!(
-                        "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                        body.len()
-                    );
-                    let _ = stream.write_all(response.as_bytes());
-                    let _ = tx.send(request);
-                }
-            }
+            let held = listener.accept();
+            thread::sleep(Duration::from_secs(CALL_TIMEOUT.as_secs() + 5));
+            drop(held);
         });
-
-        (format!("http://127.0.0.1:{port}"), rx)
-    }
-
-    #[test]
-    fn requeue_job_completes_as_failed_then_resubmits_with_the_same_dedup_key() {
-        let (base_url, rx) = fake_server_two_requests(
-            200,
-            r#"{"ID":"m1","Status":"failed"}"#,
-            200,
-            r#"{"ID":"m1","Status":"pending","result":"retried"}"#,
+        let started = std::time::Instant::now();
+        let result = run_dispatch(&format!("http://127.0.0.1:{port}"));
+        assert!(matches!(result, Err(ClientError::Unreachable(_))));
+        assert!(
+            started.elapsed() < CALL_TIMEOUT + Duration::from_secs(3),
+            "the call must give up at the timeout"
         );
-
-        let result = requeue_job(&base_url, "m1");
-        assert!(result.is_ok());
-
-        let complete_request = rx.recv_timeout(std::time::Duration::from_secs(2)).unwrap();
-        assert!(complete_request.starts_with("POST /jobs/complete"));
-        assert!(complete_request.contains("\"id\":\"m1\""));
-        assert!(complete_request.contains("\"success\":false"));
-
-        let submit_request = rx.recv_timeout(std::time::Duration::from_secs(2)).unwrap();
-        assert!(submit_request.starts_with("POST /jobs/submit"));
-        assert!(submit_request.contains("\"id\":\"m1\""));
-        assert!(submit_request.contains("\"dedupKey\":\"m1\""));
     }
 
     #[test]
-    fn requeue_job_treats_a_job_not_in_the_assigned_state_as_a_benign_no_op() {
-        // Real, expected outcome when this mission's job was never
-        // actually dispatched on Job-Dispatcher's side (or already
-        // finished on its own) - not a failure of THIS call.
-        let (base_url, _rx) = fake_server(400, r#"{"error":"job is not in the assigned state"}"#);
-        let result = requeue_job(&base_url, "m1");
-        assert!(result.is_ok());
+    fn requeue_job_asks_for_a_requeue_naming_the_lost_robot() {
+        let (base_url, rx) = fake_server(200, r#"{"ID":"m1","Status":"pending"}"#);
+        assert!(requeue_job(&base_url, "m1", "arm-3", &JobSpec::default()).is_ok());
+        let request = next(&rx);
+        assert!(request.starts_with("POST /jobs/requeue"));
+        assert!(request.contains("\"id\":\"m1\""));
+        assert!(request.contains("\"robotId\":\"arm-3\""));
+    }
+
+    #[test]
+    fn requeue_job_submits_again_when_the_dispatcher_lost_the_job() {
+        let (base_url, rx) = fake_sequence(vec![
+            (404, r#"{"error":"unknown job \"m1\""}"#),
+            (201, r#"{"ID":"m1","Status":"pending","result":"created"}"#),
+        ]);
+        assert!(requeue_job(&base_url, "m1", "arm-3", &JobSpec::default()).is_ok());
+        assert!(next(&rx).starts_with("POST /jobs/requeue"));
+        assert!(next(&rx).starts_with("POST /jobs/submit"));
+    }
+
+    #[test]
+    fn requeue_job_reports_a_conflict_instead_of_hiding_it() {
+        let (base_url, _rx) = fake_server(409, r#"{"error":"robot mismatch"}"#);
+        assert!(requeue_job(&base_url, "m1", "arm-3", &JobSpec::default()).is_err());
     }
 
     #[test]
     fn requeue_job_reports_unreachable_when_nothing_is_listening() {
-        let result = requeue_job("http://127.0.0.1:1", "m1");
+        let result = requeue_job("http://127.0.0.1:1", "m1", "arm-3", &JobSpec::default());
         assert!(matches!(result, Err(ClientError::Unreachable(_))));
     }
 
@@ -623,9 +641,7 @@ mod tests {
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].job_id, "m1");
         assert_eq!(result[0].robot_id, "arm-3");
-
-        let request = rx.recv_timeout(std::time::Duration::from_secs(2)).unwrap();
-        assert!(request.starts_with("POST /dispatch"));
+        assert!(next(&rx).starts_with("POST /dispatch"));
     }
 
     #[test]
@@ -633,5 +649,11 @@ mod tests {
         let (base_url, _rx) = fake_server(200, "[]");
         let result = run_dispatch(&base_url).unwrap();
         assert!(result.is_empty());
+    }
+
+    #[test]
+    fn path_segments_are_percent_encoded() {
+        assert_eq!(path_segment("m-1.a_b"), "m-1.a_b");
+        assert_eq!(path_segment("a b/c"), "a%20b%2Fc");
     }
 }

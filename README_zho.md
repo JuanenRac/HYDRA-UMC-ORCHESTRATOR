@@ -10,14 +10,14 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/Licencia-GPL%203.0-blue.svg" alt="GPL 3.0">
-  <img src="https://img.shields.io/badge/Language-Rust%20%2F%20Go-orange.svg" alt="Rust/Go">
+  <img src="https://img.shields.io/badge/Language-Rust-orange.svg" alt="Rust">
   <img src="https://img.shields.io/badge/Architecture-Distributed%20Edge-blue.svg" alt="Distributed">
-  <img src="https://img.shields.io/badge/Sync-PTP%20%2F%20gRPC-yellow.svg" alt="Sync">
+  <img src="https://img.shields.io/badge/Sync-JSON%2FHTTP-yellow.svg" alt="Sync">
 </p>
 
 ---
 
-**诚实核查——今天真正能跑起来的部分：** 任务状态机（`src/mission.rs`：`Mission`/`MissionRegistry`，每一次 `Pending -> Dispatched -> InProgress -> Completed`/`Cancelled`/`Failed` 转换、幂等取消、节点故障恢复）、它自己的磁盘持久化（`MissionRegistry::load`/`persist`，`data/missions.json`）、持久化的远程关闭待办outbox（`src/outbox.rs`）、指向 HYDRA-UMC-JOB-DISPATCHER 的真实 HTTP 客户端（`src/job_dispatcher.rs`），以及把这一切暴露出来的简单 JSON/HTTP 服务器（`src/server.rs`，`tiny_http`，没有异步运行时）都是真实且经过测试的（93 个测试，`cargo test`）。`mission-demo` CLI 子命令针对同一个 `MissionRegistry` 运行一个真实的端到端场景——不是模拟（mock）。仍然只是设想、尚未实现的部分：下面第 3 节中的"计划中的内部层"（API 层、PTP 同步调度、作为常驻服务的舰队健康聚合）描述的是设计意图，不是已经存在的代码；本仓库目前没有到真实运行中的 JOB-DISPATCHER 或 NODE-HEALING 进程的 gRPC 连接，没有与 PATH-PLANNER-3D/SWARM-SYNC 的集成，也从未有过真实的多节点舰队跑在这个二进制文件上——`docker-compose.yml` 会一起构建并启动这 4 个兄弟服务，但这从未在真实机器人硬件上验证过。已交付的具体内容见 `CHANGELOG.md`，尚未完成的部分见下面的 ROADMAP。
+**诚实核查——今天真正能跑起来的部分：** 任务状态机（`src/mission.rs`：`Mission`/`MissionRegistry`，每一次 `Pending -> Dispatched -> InProgress -> Completed`/`Cancelled`/`Failed` 转换、幂等取消、节点故障恢复）、它自己的磁盘持久化（`MissionRegistry::load`/`persist`，`data/missions.json`）、持久化的远程关闭待办outbox（`src/outbox.rs`）、指向 HYDRA-UMC-JOB-DISPATCHER 的真实 HTTP 客户端（`src/job_dispatcher.rs`），以及把这一切暴露出来的简单 JSON/HTTP 服务器（`src/server.rs`，`tiny_http`，没有异步运行时）都是真实且经过测试的（111 个测试，`cargo test`）。`mission-demo` CLI 子命令针对同一个 `MissionRegistry` 运行一个真实的端到端场景——不是模拟（mock）。仍然只是设想、尚未实现的部分：下面第 3 节中的"计划中的内部层"（API 层、PTP 同步调度、作为常驻服务的舰队健康聚合）描述的是设计意图，不是已经存在的代码；本仓库目前没有到真实运行中的 JOB-DISPATCHER 或 NODE-HEALING 进程的 gRPC 连接，没有与 PATH-PLANNER-3D/SWARM-SYNC 的集成，也从未有过真实的多节点舰队跑在这个二进制文件上——`docker-compose.yml` 会一起构建并启动这 3 个兄弟服务，但这从未在真实机器人硬件上验证过。已交付的具体内容见 `CHANGELOG.md`，尚未完成的部分见下面的 ROADMAP。
 
 ---
 
@@ -30,10 +30,10 @@ HydraNode（运动学大脑、视觉节点和认知节点）作为一个统一�
 物理碰撞，并确保多机器人协作任务中的毫米级精度。
 
 ### 关键特性：
-* 🕸️ **集群协调：** 跨多个控制器编排最多 32+ 台独立机械臂。
+* 🕸️ **集群协调：** 跨多个控制器编排最多 32+ 台独立机械臂。 *（计划中）*
 * ⚖️ **负载均衡：** 自动将任务分配给最空闲或最适合的机器人。
-* 🛡️ **集中式安全：** 全局 E-STOP 管理与全车队健康监控。
-* 📡 **统一 API：** 为应用程序和 Studio 与整个工厂交互提供单一入口点。
+* 🛡️ **集中式安全：** 全局 E-STOP 管理与全车队健康监控。 *（计划中）*
+* 📡 **统一 API：** 为应用程序和 Studio 与整个工厂交互提供单一入口点。 *（计划中）*
 * 🧩 **真实 v0 —— 任务状态机：** `mission.rs` 通过 `Pending -> Dispatched -> InProgress -> Completed`（外加 `Cancelled`/`Failed` 两个终止状态）跟踪每个任务，具备幂等取消和节点被报告为不可达/无效时的真实恢复——见下方 `mission-demo`。纯内存逻辑——运行或测试都不需要与 JOB-DISPATCHER/NODE-HEALING 的实时 gRPC 对端。
 * 🧱 **默认安全，迟到的报告无法覆盖交接结果（v0）：** API 默认只监听 `127.0.0.1:8114`，使用其他地址需要 bearer 令牌（`--token` / `ORCHESTRATOR_TOKEN`；设置后除 `GET /health` 外的所有路由都要求它）或显式的 `--allow-anonymous`；超过 64 KB 的请求体会被以 `413` 拒绝。每次派发都会让任务的 `attempt` 加一；携带过期 `attempt`（或已不再持有该任务的节点名称）的 `start`/`complete`/`fail` 会被以 `409` 拒绝，且不会改动任务，因此被宣告不可用、之后从网络分区中恢复的节点无法覆盖任务被交接到的节点（`--require-attempt` 可将该字段设为必填）。任务注册表和发件箱在替换旧文件之前会被强制写入磁盘；随附的 systemd 单元现在为进程提供可写的状态目录（此前 `ProtectSystem=strict` 使默认的 `data` 目录只读，重启后什么都保留不下来）；`docker-compose.yml` 现在启动真正的服务（`serve` 命令、健康检查、必填令牌、固定镜像，只发布编排器，且只绑定宿主机回环地址）。*（已实现）*
 
@@ -44,13 +44,15 @@ HydraNode（运动学大脑、视觉节点和认知节点）作为一个统一�
 ```mermaid
 flowchart TB
     API["External API (Studios / Apps)"] --> ORCH["HYDRA-ORCHESTRATOR"]
-    ORCH --> JOB["JOB-DISPATCHER (Mission Queue)"]
-    JOB --> PATH["PATH-PLANNER-3D (Collision Check)"]
-    PATH --> SYNC["SWARM-SYNC (PTP Synchronization)"]
-    SYNC --> NODE1["HydraNode 1 (H745)"]
-    SYNC --> NODE2["HydraNode 2 (H745)"]
-    ORCH --> HEAL["NODE-HEALING (Failover)"]
+    ORCH <--> JOB["JOB-DISPATCHER (Mission Queue)"]
+    JOB -.-> PATH["PATH-PLANNER-3D (Collision Check)"]
+    PATH -.-> SYNC["SWARM-SYNC (PTP Synchronization)"]
+    SYNC -.-> NODE1["HydraNode 1 (H745)"]
+    SYNC -.-> NODE2["HydraNode 2 (H745)"]
+    HEAL["NODE-HEALING (Failover)"] --> ORCH
 ```
+
+> 实线箭头今天已存在（HTTP API、JOB-DISPATCHER，以及调用 `POST /nodes/:node/recover` 的 NODE-HEALING）。虚线箭头仅为计划，尚未实现：没有任何代码调用 PATH-PLANNER-3D 或 SWARM-SYNC。
 
 ---
 
@@ -62,7 +64,7 @@ flowchart TB
 
 **计划中的内部分层**，将在已经存在的真实状态机基础上逐步构建：
 * **API 层** —— 接收来自 Studio/应用程序的高层任务请求，并将其转化为车队级操作。
-* **任务队列集成** —— 现在已经是真实的，而不只是计划：通过与 `server.rs` 自身使用的同一个真实 HTTP/JSON 传输（`src/job_dispatcher.rs` 自身的 `submit_job`/`complete_job`/`requeue_job`/`run_dispatch`，早已接入每一个真实的任务生命周期处理程序）将已接受的任务移交给 JOB-DISPATCHER，并使用 `mission.rs` 中已经存在的真实 `Mission`/`MissionRegistry` 状态机在整个车队中跟踪其生命周期，即使在真实的进程重启后依然持久保存（`--data-dir`，默认 `data/missions.json`）。这一层从未使用过 gRPC，也从未计划使用——`proto/hydra_common.proto` 自身共享的 `HealthService` 契约是另一回事（HYDRA-UMC-NODE-HEALING 自身真实的车队健康探测），并非本仓库向 JOB-DISPATCHER 移交任务的机制。
+* **任务队列集成** —— 现在已经是真实的，而不只是计划：通过与 `server.rs` 自身使用的同一个真实 HTTP/JSON 传输（`src/job_dispatcher.rs` 自身的 `submit_job`/`close_job`/`requeue_job`/`run_dispatch`，早已接入每一个真实的任务生命周期处理程序）将已接受的任务移交给 JOB-DISPATCHER，并使用 `mission.rs` 中已经存在的真实 `Mission`/`MissionRegistry` 状态机在整个车队中跟踪其生命周期，即使在真实的进程重启后依然持久保存（`--data-dir`，默认 `data/missions.json`；中途重新加载的任务会变为 `Unknown` 并重新排回 `Pending`，绝不会被默默视为已完成）。这一层从未使用过 gRPC，也从未计划使用——`proto/hydra_common.proto` 自身共享的 `HealthService` 契约是另一回事（HYDRA-UMC-NODE-HEALING 自身真实的车队健康探测），并非本仓库向 JOB-DISPATCHER 移交任务的机制。
 * **PTP 同步调度** —— 与 SWARM-SYNC 协调时序，使执行同一任务的多台机器人根据 PATH-PLANNER-3D 的检查结果保持无碰撞状态。
 * **车队健康聚合** —— 将 NODE-HEALING 提供的各节点信号整合为统一的全车队视图，并在每个信号到达时调用（已经真实的）`MissionRegistry::recover_node_unavailable()`；这也是全局 E-STOP 到达每个节点所经过的路径。
 
@@ -111,7 +113,7 @@ HYDRA-UMC-ORCHESTRATOR/
 ├── build.sh/.bat     # 递增版本号，然后执行 `cargo build --release`
 ├── build-test.sh/.bat # 不递增版本号的构建检查
 ├── run.sh/.bat       # 运行编译后的二进制文件
-├── docker-compose.yml # 将本仓库与其 4 个实际子项目集成
+├── docker-compose.yml # 将本仓库与其 3 个实际子项目集成
 ├── nodes.compose.json # NODE-HEALING 在 compose 栈中使用的节点注册表
 ├── .env.example # compose 栈要求的令牌（复制为 .env）
 └── README.md
@@ -167,15 +169,14 @@ run.bat mission-demo
 ```
 
 ```bash
-cargo test   # 93 个测试：mission.rs 的每一次状态转换、每一次非法转换的
+cargo test   # 111 个测试：mission.rs 的每一次状态转换、每一次非法转换的
              # 拒绝、幂等取消、节点故障后的恢复，加上 outbox.rs 的
              # 抗崩溃持久化、job_dispatcher.rs 的真实 HTTP 客户端，
              # 以及 server.rs 的 HTTP 处理器
 ```
 
 作为生态系统的集成父项目，本仓库还提供了一个真实的 `docker-compose.yml`，
-可将本项目与其 4 个子项目（SWARM-SYNC、PATH-PLANNER-3D、JOB-DISPATCHER、
-NODE-HEALING，作为同级文件夹检出）一同构建和运行：
+可将本项目与其 3 个子项目（SWARM-SYNC、JOB-DISPATCHER、NODE-HEALING，作为同级文件夹检出；PATH-PLANNER-3D 是命令行工具，位于 `tools` 配置文件之后）一同构建和运行：
 
 ```bash
 docker compose up --build

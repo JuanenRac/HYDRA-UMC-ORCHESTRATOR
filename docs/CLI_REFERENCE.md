@@ -25,7 +25,7 @@ identity/version/role and exits `0`:
 
 ```
 $ hydra-umc-orchestrator
-HYDRA-UMC-ORCHESTRATOR v0.0.3
+HYDRA-UMC-ORCHESTRATOR v0.1.6
 Distributed swarm manager: coordinates SWARM-SYNC, PATH-PLANNER-3D, JOB-DISPATCHER and NODE-HEALING as a single unified robot fleet.
 ```
 
@@ -92,17 +92,17 @@ Real routes (`src/server.rs`'s own dispatch table):
 
 | Method | Path | Does |
 |---|---|---|
-| `POST` | `/missions` | Add a mission (`{"id": "..."}`) |
-| `GET` | `/missions` | List every mission |
+| `POST` | `/missions` | Add a mission: `{"id": "..."}` (1 to 128 of `A-Z a-z 0-9 . _ -`), optionally `priority`, `requiredTool`, `location` and `dependsOn`, which travel to JOB-DISPATCHER so its tool-aware and multi-stage routing is used. Posting a mission that already exists and is still open submits it again (harmless, and a way to retry a submission that did not get through); one that already ended is `409` and is not sent to JOB-DISPATCHER |
+| `GET` | `/missions` | List every mission; `?state=Pending` narrows by state, `?limit=N&offset=N` pages |
 | `GET` | `/missions/:id` | Get one mission |
 | `POST` | `/missions/:id/dispatch` | Assign the mission to a node (`{"node": "..."}`); the mission's `attempt` goes up by one |
-| `POST` | `/missions/:id/auto-dispatch` | Run a real JOB-DISPATCHER dispatch pass (`run_dispatch`) and reconcile every assignment it returns, not only this mission's own |
+| `POST` | `/missions/:id/auto-dispatch` | Submit the mission again if it is still pending (idempotent), run a real JOB-DISPATCHER dispatch pass (`run_dispatch`) and reconcile every assignment it returns, not only this mission's own. Work JOB-DISPATCHER hands out for a mission that is already closed here is handed back, so its robot is not left reserved |
 | `POST` | `/missions/:id/start` | Mark `InProgress`; optional `{"attempt": n, "node": "..."}` fences the report (see below) |
 | `POST` | `/missions/:id/complete` | Mark `Completed`, confirming the real terminal outcome to JOB-DISPATCHER; same optional fencing fields |
-| `POST` | `/missions/:id/cancel` | Idempotent cancel, confirming to JOB-DISPATCHER on a fresh (non-repeat) cancellation |
+| `POST` | `/missions/:id/cancel` | Idempotent cancel, confirming to JOB-DISPATCHER on a fresh (non-repeat) cancellation: a job nobody was given is withdrawn there (`/jobs/cancel`), one a robot holds is closed as failed (`/jobs/complete`) |
 | `POST` | `/missions/:id/fail` | `{"reason": "...", "attempt": n, "node": "..."}` (the last two optional), confirming to JOB-DISPATCHER the same way `cancel` does |
-| `POST` | `/nodes/:node/recover` | HYDRA-UMC-NODE-HEALING's own real caller — requeues every mission dispatched to `node` (see that project's own `OrchestratorReactor`) |
-| `GET` | `/stats` | `{"missionCount": ..., "jobDispatcherUrl": ...}` |
+| `POST` | `/nodes/:node/recover` | HYDRA-UMC-NODE-HEALING's own real caller — requeues every mission dispatched to `node` (see that project's own `OrchestratorReactor`) and asks JOB-DISPATCHER (`/jobs/requeue`) to take those jobs off that robot and hold it unavailable until it reports in again. `%XX` escapes in `:node` are decoded. The node name must be the robot id JOB-DISPATCHER assigned |
+| `GET` | `/stats` | `{"missionCount": ..., "missionsByState": {...}, "pendingRemoteCloses": n, "jobDispatcherUrl": ...}` |
 | `GET` | `/health` | `{"status": "ok", "name": "HYDRA-UMC-ORCHESTRATOR", "version": ...}`; the only route that never asks for the token, so a watchdog can probe it |
 
 #### Access and fencing
@@ -116,10 +116,16 @@ Real routes (`src/server.rs`'s own dispatch table):
   is sent on every call to JOB-DISPATCHER, which asks for one the moment it
   listens on a network address.
 * **Body size.** A request body over 64 KB is refused with `413` before it is
-  read into memory.
-* **Fencing.** `attempt` counts the dispatches of a mission and is never
-  reused. A node declared unavailable may still be running the mission it
-  lost; its late `start`/`complete`/`fail` carries the old attempt (or its own
+  read into memory (a body that announces more than that is refused without
+  reading any of it).
+* **Concurrency and timeouts.** Requests are served by eight worker threads,
+  so a slow client or a slow JOB-DISPATCHER holds one worker and `GET /health`
+  keeps answering. Every call to JOB-DISPATCHER gives up after 3 s to connect
+  and 10 s in all.
+* **Fencing.** `attempt` goes up on every dispatch and every time the mission
+  is taken away from a node and requeued, and is never reused. A node declared
+  unavailable may still be running the mission it lost; its late
+  `start`/`complete`/`fail` carries the old attempt (or its own
   name, no longer the holder) and is answered `409` with
   `{"fence": {"kind": "stale_attempt", "reported": 1, "current": 2}}` (or
   `wrong_node`) without touching the mission. A request without these fields
@@ -131,12 +137,15 @@ Real routes (`src/server.rs`'s own dispatch table):
   file, forced to disk and then renamed over the real file, so a power cut
   cannot leave a truncated registry behind.
 
-Any JOB-DISPATCHER confirmation call above that fails (network error, or a
-job-dispatcher-side inconsistency `job_dispatcher.rs`'s own `complete_job()`
-detects) never blocks or reverts the local mission transition - it is
-recorded in a real, durable outbox (`outbox.rs`) and retried until it
-succeeds, so a transient JOB-DISPATCHER outage can never leave a mission
-permanently unreconciled.
+A mission's closing is confirmed to JOB-DISPATCHER after the local transition
+and never blocks or reverts it. The intent is recorded first, in the mission
+registry (`remote_close_confirmed: false`) and in a durable outbox
+(`outbox.rs`), before JOB-DISPATCHER is asked, so a process that dies in
+between restarts with the close still pending. A close that fails is retried
+after 30 s, 1 min, 2 min ... up to 30 min, and `/stats` shows how many wait.
+A close that JOB-DISPATCHER keeps refusing stays in the outbox until it is
+accepted (the job is gone or already over there, which counts as done): the
+orchestrator never drops it silently.
 
 A fatal startup failure (the data directory or mission registry can't be
 read/created, or the port is already bound) prints `[orchestrator] fatal: ...`
@@ -149,7 +158,7 @@ is no usage error path for an unrecognized subcommand:
 
 ```
 $ hydra-umc-orchestrator bogus
-HYDRA-UMC-ORCHESTRATOR v0.0.3
+HYDRA-UMC-ORCHESTRATOR v0.1.6
 Distributed swarm manager: coordinates SWARM-SYNC, PATH-PLANNER-3D, JOB-DISPATCHER and NODE-HEALING as a single unified robot fleet.
 ```
 

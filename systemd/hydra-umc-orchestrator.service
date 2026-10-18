@@ -5,8 +5,8 @@
 # =============================================================================
 # Loopback-only, same as every other internal-only API on this CM5 - and
 # for a real reason beyond consistency: this is the real fleet mission
-# bookkeeping (dispatch/start/complete/cancel/fail/recover), purely
-# in-memory, and no real E-STOP-sending code anywhere in this repository
+# bookkeeping (dispatch/start/complete/cancel/fail/recover), kept on disk,
+# and no real E-STOP-sending code anywhere in this repository
 # - this does not grant any new physical authority over the LAN, it
 # makes the exact same state machine mission-demo already exercised
 # reachable over a real API instead of only a fixed demo script. The mission

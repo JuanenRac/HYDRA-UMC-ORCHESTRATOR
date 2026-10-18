@@ -10,9 +10,9 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/Licencia-GPL%203.0-blue.svg" alt="GPL 3.0">
-  <img src="https://img.shields.io/badge/Language-Rust%20%2F%20Go-orange.svg" alt="Rust/Go">
+  <img src="https://img.shields.io/badge/Language-Rust-orange.svg" alt="Rust">
   <img src="https://img.shields.io/badge/Architecture-Distributed%20Edge-blue.svg" alt="Distributed">
-  <img src="https://img.shields.io/badge/Sync-PTP%20%2F%20gRPC-yellow.svg" alt="Sync">
+  <img src="https://img.shields.io/badge/Sync-JSON%2FHTTP-yellow.svg" alt="Sync">
 </p>
 
 ---
@@ -32,10 +32,10 @@
 するためのロボット間のリアルタイム同期を処理します。
 
 ### 主な機能：
-* 🕸️ **スウォーム調整：** 複数のコントローラーにまたがる最大 32 台以上の独立したロボットアームをオーケストレートします。
+* 🕸️ **スウォーム調整：** 複数のコントローラーにまたがる最大 32 台以上の独立したロボットアームをオーケストレートします。 *（計画中）*
 * ⚖️ **負荷分散：** 最も空いている、または最適な装備を持つロボットに自動的にミッションを割り当てます。
-* 🛡️ **集中安全管理：** グローバル E-STOP 管理とフリート全体の健全性監視。
-* 📡 **統一 API：** アプリと Studio が工場全体とやり取りするための単一のエントリポイントを提供します。
+* 🛡️ **集中安全管理：** グローバル E-STOP 管理とフリート全体の健全性監視。 *（計画中）*
+* 📡 **統一 API：** アプリと Studio が工場全体とやり取りするための単一のエントリポイントを提供します。 *（計画中）*
 * 🧩 **実装済み v0 —— ミッション状態機械：** `mission.rs` が各ミッションを `Pending -> Dispatched -> InProgress -> Completed`（および終端状態の `Cancelled`/`Failed`）を通じて追跡し、冪等なキャンセルと、ノードが到達不能/無効と報告された場合の実際のリカバリーを備えています——下記の `mission-demo` を参照してください。純粋なインメモリロジックであり、実行やテストに JOB-DISPATCHER/NODE-HEALING とのライブ gRPC ピアは不要です。
 * 🧱 **デフォルトで安全。遅れて届いた報告は引き継ぎを上書きできません（v0）：** API は指定がなければ `127.0.0.1:8114` で待ち受け、別のアドレスにはベアラートークン（`--token` / `ORCHESTRATOR_TOKEN`。設定すると `GET /health` 以外のすべてのルートが要求します）か、明示的な `--allow-anonymous` が必要です。64 KB を超えるリクエストボディは `413` で拒否されます。ディスパッチのたびにミッションの `attempt` が増え、古い `attempt`（またはもうそのミッションを保持していないノードの名前）を持つ `start`/`complete`/`fail` は、ミッションに触れずに `409` で拒否されます。利用不可と宣言されたノードがネットワーク分断から戻ってきても、ミッションの引き継ぎ先ノードを上書きできません（`--require-attempt` でこのフィールドを必須にできます）。ミッションレジストリとアウトボックスは、前のファイルを置き換える前にディスクへ強制書き込みされ、同梱の systemd ユニットはプロセスに書き込み可能な状態ディレクトリを与えます（以前は `ProtectSystem=strict` により既定の `data` ディレクトリが読み取り専用になり、再起動で何も残りませんでした）。また `docker-compose.yml` は実際にサービスを起動します（`serve` コマンド、ヘルスチェック、必須トークン、固定イメージ、公開されるのはオーケストレーターのみでホストのループバックだけ）。*（実装済み）*
 
@@ -46,13 +46,15 @@
 ```mermaid
 flowchart TB
     API["External API (Studios / Apps)"] --> ORCH["HYDRA-ORCHESTRATOR"]
-    ORCH --> JOB["JOB-DISPATCHER (Mission Queue)"]
-    JOB --> PATH["PATH-PLANNER-3D (Collision Check)"]
-    PATH --> SYNC["SWARM-SYNC (PTP Synchronization)"]
-    SYNC --> NODE1["HydraNode 1 (H745)"]
-    SYNC --> NODE2["HydraNode 2 (H745)"]
-    ORCH --> HEAL["NODE-HEALING (Failover)"]
+    ORCH <--> JOB["JOB-DISPATCHER (Mission Queue)"]
+    JOB -.-> PATH["PATH-PLANNER-3D (Collision Check)"]
+    PATH -.-> SYNC["SWARM-SYNC (PTP Synchronization)"]
+    SYNC -.-> NODE1["HydraNode 1 (H745)"]
+    SYNC -.-> NODE2["HydraNode 2 (H745)"]
+    HEAL["NODE-HEALING (Failover)"] --> ORCH
 ```
+
+> 実線の矢印は現在存在します（HTTP API、JOB-DISPATCHER、`POST /nodes/:node/recover` を呼び出す NODE-HEALING）。点線の矢印は計画中で、未実装です。PATH-PLANNER-3D や SWARM-SYNC を呼び出すコードはありません。
 
 ---
 
@@ -67,7 +69,7 @@ flowchart TB
 すでに存在する実際の状態機械の上に段階的に構築される**計画中の内部
 レイヤー**：
 * **API 層** — Studio/アプリから高レベルのミッションリクエストを受け取り、フリートレベルのアクションに変換します。
-* **ミッションキュー統合** — 計画中ではなく、今すでに実際に動作しています: `server.rs` 自身が使うのと同じ実際の HTTP/JSON トランスポート(`src/job_dispatcher.rs` 自身の `submit_job`/`complete_job`/`requeue_job`/`run_dispatch`、各ミッションライフサイクルの実際のハンドラーにすでに配線済み)を通じて、受理されたミッションを JOB-DISPATCHER に引き渡し、`mission.rs` にすでに存在する実際の `Mission`/`MissionRegistry` 状態機械を使って、実際のプロセス再起動をまたいで永続化されたまま(`--data-dir`、デフォルトは `data/missions.json`)フリート全体にわたってそのライフサイクルを追跡します。このレイヤーは gRPC を一度も使ったことがなく、使う計画もありませんでした - `proto/hydra_common.proto` 自身の共有 `HealthService` 契約は別の話です(HYDRA-UMC-NODE-HEALING 自身の実際のフリート健全性プローブ)、この本リポジトリの JOB-DISPATCHER への引き渡しとは別物です。
+* **ミッションキュー統合** — 計画中ではなく、今すでに実際に動作しています: `server.rs` 自身が使うのと同じ実際の HTTP/JSON トランスポート(`src/job_dispatcher.rs` 自身の `submit_job`/`close_job`/`requeue_job`/`run_dispatch`、各ミッションライフサイクルの実際のハンドラーにすでに配線済み)を通じて、受理されたミッションを JOB-DISPATCHER に引き渡し、`mission.rs` にすでに存在する実際の `Mission`/`MissionRegistry` 状態機械を使って、実際のプロセス再起動をまたいで永続化されたまま(`--data-dir`、デフォルトは `data/missions.json`。実行中に再読み込みされたミッションは `Unknown` になり `Pending` に再キューされ、黙って完了とみなされることはありません)フリート全体にわたってそのライフサイクルを追跡します。このレイヤーは gRPC を一度も使ったことがなく、使う計画もありませんでした - `proto/hydra_common.proto` 自身の共有 `HealthService` 契約は別の話です(HYDRA-UMC-NODE-HEALING 自身の実際のフリート健全性プローブ)、この本リポジトリの JOB-DISPATCHER への引き渡しとは別物です。
 * **PTP 同期ディスパッチ** — SWARM-SYNC とタイミングを協調させ、同一ミッションを実行する複数のロボットが PATH-PLANNER-3D のチェックに従って衝突のない状態を維持します。
 * **フリート健全性の集約** — NODE-HEALING の各ノードからの信号を単一のフリート全体のビューに統合し、各信号が到着するたびに（すでに実際に動作する）`MissionRegistry::recover_node_unavailable()` を呼び出します。これはまた、グローバル E-STOP がすべてのノードに一度に到達するために通る経路でもあります。
 
@@ -120,7 +122,7 @@ HYDRA-UMC-ORCHESTRATOR/
 ├── build.sh/.bat     # バージョンを増加させ、その後 `cargo build --release` を実行
 ├── build-test.sh/.bat # バージョンを増やさないビルドチェック
 ├── run.sh/.bat       # コンパイル済みバイナリを実行
-├── docker-compose.yml # 本リポジトリを実際の 4 つの子プロジェクトと統合
+├── docker-compose.yml # 本リポジトリを実際の 3 つの子プロジェクトと統合
 ├── nodes.compose.json # compose スタック内で NODE-HEALING が使うノードレジストリ
 ├── .env.example # compose スタックが要求するトークン（.env にコピー）
 └── README.md
@@ -179,7 +181,7 @@ run.bat mission-demo
 ```
 
 ```bash
-cargo test   # 93 件のテスト：mission.rs の全状態遷移・不正な遷移の拒否・
+cargo test   # 111 件のテスト：mission.rs の全状態遷移・不正な遷移の拒否・
              # 冪等なキャンセル・ノード障害後のリカバリーに加え、
              # outbox.rs のクラッシュに強い永続化、job_dispatcher.rs の
              # 実際のHTTPクライアント、server.rs のHTTPハンドラー
@@ -187,8 +189,7 @@ cargo test   # 93 件のテスト：mission.rs の全状態遷移・不正な遷
 
 エコシステムの統合親プロジェクトとして、本リポジトリは実際の
 `docker-compose.yml` も提供しており、これにより本プロジェクトをその
-4 つの子プロジェクト（SWARM-SYNC、PATH-PLANNER-3D、JOB-DISPATCHER、
-NODE-HEALING、兄弟フォルダとしてチェックアウト）とともにビルド・実行
+3 つの子プロジェクト（SWARM-SYNC、JOB-DISPATCHER、NODE-HEALING、兄弟フォルダとしてチェックアウト。PATH-PLANNER-3D はコマンドラインツールで、`tools` プロファイルの後ろにあります）とともにビルド・実行
 できます：
 
 ```bash

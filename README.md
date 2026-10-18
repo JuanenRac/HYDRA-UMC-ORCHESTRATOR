@@ -10,14 +10,14 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/License-GPL%203.0-blue.svg" alt="GPL 3.0">
-  <img src="https://img.shields.io/badge/Language-Rust%20%2F%20Go-orange.svg" alt="Rust/Go">
+  <img src="https://img.shields.io/badge/Language-Rust-orange.svg" alt="Rust">
   <img src="https://img.shields.io/badge/Architecture-Distributed%20Edge-blue.svg" alt="Distributed">
-  <img src="https://img.shields.io/badge/Sync-PTP%20%2F%20gRPC-yellow.svg" alt="Sync">
+  <img src="https://img.shields.io/badge/Sync-JSON%2FHTTP-yellow.svg" alt="Sync">
 </p>
 
 ---
 
-**Honesty check - what actually runs today:** the mission state machine (`src/mission.rs`: `Mission`/`MissionRegistry`, every `Pending -> Dispatched -> InProgress -> Completed`/`Cancelled`/`Failed` transition, idempotent cancel, node-failure recovery), its own disk persistence (`MissionRegistry::load`/`persist`, `data/missions.json`), the durable pending-remote-close outbox (`src/outbox.rs`), the real HTTP client to HYDRA-UMC-JOB-DISPATCHER (`src/job_dispatcher.rs`), and the plain JSON/HTTP server exposing all of it (`src/server.rs`, `tiny_http`, no async runtime) are real and tested (93 tests, `cargo test`). The `mission-demo` CLI subcommand runs a real end-to-end scenario against that same `MissionRegistry` - not a mock. What is still aspirational: the "Planned internal layers" in section 3 below (API layer, PTP-synced dispatch, fleet health aggregation as a standing service) describe design intent, not code that exists yet; there is no gRPC wiring from this repo to a live JOB-DISPATCHER or NODE-HEALING process, no PATH-PLANNER-3D/SWARM-SYNC integration, and no live multi-node fleet has ever run against this binary - `docker-compose.yml` builds and starts the 4 sibling services together, but that has not been exercised against real robot hardware. See `CHANGELOG.md` for exactly what has shipped so far, and the ROADMAP below for what remains open.
+**Honesty check - what actually runs today:** the mission state machine (`src/mission.rs`: `Mission`/`MissionRegistry`, every `Pending -> Dispatched -> InProgress -> Completed`/`Cancelled`/`Failed` transition, idempotent cancel, node-failure recovery), its own disk persistence (`MissionRegistry::load`/`persist`, `data/missions.json`), the durable pending-remote-close outbox (`src/outbox.rs`), the real HTTP client to HYDRA-UMC-JOB-DISPATCHER (`src/job_dispatcher.rs`), and the plain JSON/HTTP server exposing all of it (`src/server.rs`, `tiny_http`, no async runtime) are real and tested (111 tests, `cargo test`). The `mission-demo` CLI subcommand runs a real end-to-end scenario against that same `MissionRegistry` - not a mock. What is still aspirational: the "Planned internal layers" in section 3 below (API layer, PTP-synced dispatch, fleet health aggregation as a standing service) describe design intent, not code that exists yet; there is no gRPC wiring from this repo to a live JOB-DISPATCHER or NODE-HEALING process, no PATH-PLANNER-3D/SWARM-SYNC integration, and no live multi-node fleet has ever run against this binary - `docker-compose.yml` builds and starts the 3 sibling services together, but that has not been exercised against real robot hardware. See `CHANGELOG.md` for exactly what has shipped so far, and the ROADMAP below for what remains open.
 
 ---
 
@@ -28,10 +28,10 @@
 It handles global mission planning, load balancing across the fleet, and real-time synchronization between robots to prevent physical collisions and ensure millimetric precision in multi-robot collaborative tasks.
 
 ### Key Features:
-* 🕸️ **Swarm Coordination:** Orchestrates up to 32+ independent robot arms across multiple controllers.
+* 🕸️ **Swarm Coordination:** Orchestrates up to 32+ independent robot arms across multiple controllers. *(planned)*
 * ⚖️ **Load Balancing:** Automatically assigns missions to the most available or best-equipped robot.
-* 🛡️ **Centralized Safety:** Global E-STOP management and fleet-wide health monitoring.
-* 📡 **Unified API:** Provides a single entry point for APPs and Studios to interact with the entire factory.
+* 🛡️ **Centralized Safety:** Global E-STOP management and fleet-wide health monitoring. *(planned)*
+* 📡 **Unified API:** Provides a single entry point for APPs and Studios to interact with the entire factory. *(planned)*
 * 🧩 **Real v0 - Mission State Machine:** `mission.rs` tracks every mission through `Pending -> Dispatched -> InProgress -> Completed` (plus `Cancelled`/`Failed` terminal states), with idempotent cancellation and real recovery when a node is reported unreachable/invalid - see `mission-demo` below. Pure in-memory logic - no live JOB-DISPATCHER/NODE-HEALING gRPC peer needed to run or test it.
 * 🧱 **Safe by default, and a late report cannot overwrite a handover (v0):** the API listens on `127.0.0.1:8114` unless told otherwise; another address needs a bearer token (`--token` / `ORCHESTRATOR_TOKEN`; every route but `GET /health` then demands it) or an explicit `--allow-anonymous`, and request bodies over 64 KB are refused with `413`. Every dispatch bumps the mission's `attempt`; a `start`/`complete`/`fail` that carries a stale `attempt` (or the name of a node that no longer holds the mission) is refused with `409` without touching the mission, so a node that was declared unavailable and comes back from a network partition cannot overwrite the node the mission was handed to (`--require-attempt` makes the field mandatory). The mission registry and the outbox are forced to disk before they replace the previous file, the shipped systemd unit now gives the process a writable state directory (before, `ProtectSystem=strict` made the default `data` directory read-only and nothing survived a restart), and `docker-compose.yml` now starts real services (`serve` commands, health checks, required tokens, pinned images, only the orchestrator published and only on the host loopback). *(implemented)*
 
@@ -42,13 +42,15 @@ It handles global mission planning, load balancing across the fleet, and real-ti
 ```mermaid
 flowchart TB
     API["External API (Studios / Apps)"] --> ORCH["HYDRA-ORCHESTRATOR"]
-    ORCH --> JOB["JOB-DISPATCHER (Mission Queue)"]
-    JOB --> PATH["PATH-PLANNER-3D (Collision Check)"]
-    PATH --> SYNC["SWARM-SYNC (PTP Synchronization)"]
-    SYNC --> NODE1["HydraNode 1 (H745)"]
-    SYNC --> NODE2["HydraNode 2 (H745)"]
-    ORCH --> HEAL["NODE-HEALING (Failover)"]
+    ORCH <--> JOB["JOB-DISPATCHER (Mission Queue)"]
+    JOB -.-> PATH["PATH-PLANNER-3D (Collision Check)"]
+    PATH -.-> SYNC["SWARM-SYNC (PTP Synchronization)"]
+    SYNC -.-> NODE1["HydraNode 1 (H745)"]
+    SYNC -.-> NODE2["HydraNode 2 (H745)"]
+    HEAL["NODE-HEALING (Failover)"] --> ORCH
 ```
+
+> Solid arrows exist today (the HTTP API, JOB-DISPATCHER, and NODE-HEALING calling `POST /nodes/:node/recover`). Dotted arrows are planned, not implemented: no code calls PATH-PLANNER-3D or SWARM-SYNC.
 
 ---
 
@@ -66,7 +68,7 @@ real state machine that already exists:
 * **Mission queue integration** — real now, not planned: hands accepted
   missions off to JOB-DISPATCHER over the same real HTTP/JSON transport
   `server.rs` itself uses (`src/job_dispatcher.rs`'s own `submit_job`/
-  `complete_job`/`requeue_job`/`run_dispatch`, wired into every real
+  `close_job`/`requeue_job`/`run_dispatch`, wired into every real
   mission-lifecycle handler), and tracks their lifecycle across the
   fleet using the real `Mission`/`MissionRegistry` state machine in
   `mission.rs`, durable across a real process restart (`--data-dir`,
@@ -140,7 +142,7 @@ HYDRA-UMC-ORCHESTRATOR/
 ├── build.sh/.bat     # Bumps version, then `cargo build --release`
 ├── build-test.sh/.bat # Non-versioning build check (no CHANGELOG/version bump)
 ├── run.sh/.bat       # Runs the compiled binary
-├── docker-compose.yml # Integrates this repo with its 4 real children
+├── docker-compose.yml # Integrates this repo with its 3 real children
 ├── nodes.compose.json # Node registry NODE-HEALING uses inside the compose stack
 ├── .env.example # Tokens the compose stack requires (copy to .env)
 └── README.md
@@ -196,15 +198,15 @@ odometer rule, see `bump_version.py`) and then run `cargo build --release`.
 ```
 
 ```bash
-cargo test   # 93 tests: mission.rs's transitions/invalid-transition
+cargo test   # 111 tests: mission.rs's transitions/invalid-transition
              # rejections/idempotent cancel/node-failure recovery, plus
              # outbox.rs's crash-safe persistence, job_dispatcher.rs's
              # real HTTP client, and server.rs's HTTP handlers
 ```
 
 As the ecosystem's integration parent, this repo also ships a real
-`docker-compose.yml` that builds and runs itself together with its 4
-children (SWARM-SYNC, PATH-PLANNER-3D, JOB-DISPATCHER, NODE-HEALING),
+`docker-compose.yml` that builds and runs itself together with its 3
+children (SWARM-SYNC, JOB-DISPATCHER, NODE-HEALING; PATH-PLANNER-3D, a command-line tool, stays behind the `tools` profile),
 checked out as sibling folders:
 
 ```bash

@@ -10,14 +10,14 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/Licenza-GPL%203.0-blue.svg" alt="GPL 3.0">
-  <img src="https://img.shields.io/badge/Linguaggio-Rust%20%2F%20Go-orange.svg" alt="Rust/Go">
+  <img src="https://img.shields.io/badge/Linguaggio-Rust-orange.svg" alt="Rust">
   <img src="https://img.shields.io/badge/Architettura-Distributed%20Edge-blue.svg" alt="Distributed">
-  <img src="https://img.shields.io/badge/Sincronizzazione-PTP%20%2F%20gRPC-yellow.svg" alt="Sync">
+  <img src="https://img.shields.io/badge/Sincronizzazione-JSON%2FHTTP-yellow.svg" alt="Sync">
 </p>
 
 ---
 
-**Verifica di onestà - cosa funziona davvero oggi:** la macchina a stati delle missioni (`src/mission.rs`: `Mission`/`MissionRegistry`, ogni transizione `Pending -> Dispatched -> InProgress -> Completed`/`Cancelled`/`Failed`, cancellazione idempotente, recupero da guasto del nodo), la sua persistenza su disco (`MissionRegistry::load`/`persist`, `data/missions.json`), l'outbox duraturo delle chiusure remote in sospeso (`src/outbox.rs`), il client HTTP reale verso HYDRA-UMC-JOB-DISPATCHER (`src/job_dispatcher.rs`) e il server JSON/HTTP semplice che espone tutto questo (`src/server.rs`, `tiny_http`, senza runtime async) sono reali e testati (93 test, `cargo test`). Il sottocomando CLI `mission-demo` esegue uno scenario reale end-to-end contro quello stesso `MissionRegistry` - non un mock. Ciò che resta aspirazionale: i "livelli interni pianificati" della sezione 3 più sotto (livello API, dispatch sincronizzato via PTP, aggregazione della salute della flotta come servizio permanente) descrivono un'intenzione progettuale, non codice già esistente; non c'è alcun cablaggio gRPC da questo repo verso un JOB-DISPATCHER o NODE-HEALING reale in esecuzione, nessuna integrazione con PATH-PLANNER-3D/SWARM-SYNC, e nessuna flotta multi-nodo reale ha mai girato contro questo binario - `docker-compose.yml` compila e avvia i 4 servizi gemelli insieme, ma ciò non è mai stato verificato su hardware robotico reale. Vedi `CHANGELOG.md` per ciò che è stato consegnato finora esattamente, e la ROADMAP più sotto per ciò che resta aperto.
+**Verifica di onestà - cosa funziona davvero oggi:** la macchina a stati delle missioni (`src/mission.rs`: `Mission`/`MissionRegistry`, ogni transizione `Pending -> Dispatched -> InProgress -> Completed`/`Cancelled`/`Failed`, cancellazione idempotente, recupero da guasto del nodo), la sua persistenza su disco (`MissionRegistry::load`/`persist`, `data/missions.json`), l'outbox duraturo delle chiusure remote in sospeso (`src/outbox.rs`), il client HTTP reale verso HYDRA-UMC-JOB-DISPATCHER (`src/job_dispatcher.rs`) e il server JSON/HTTP semplice che espone tutto questo (`src/server.rs`, `tiny_http`, senza runtime async) sono reali e testati (111 test, `cargo test`). Il sottocomando CLI `mission-demo` esegue uno scenario reale end-to-end contro quello stesso `MissionRegistry` - non un mock. Ciò che resta aspirazionale: i "livelli interni pianificati" della sezione 3 più sotto (livello API, dispatch sincronizzato via PTP, aggregazione della salute della flotta come servizio permanente) descrivono un'intenzione progettuale, non codice già esistente; non c'è alcun cablaggio gRPC da questo repo verso un JOB-DISPATCHER o NODE-HEALING reale in esecuzione, nessuna integrazione con PATH-PLANNER-3D/SWARM-SYNC, e nessuna flotta multi-nodo reale ha mai girato contro questo binario - `docker-compose.yml` compila e avvia i 3 servizi gemelli insieme, ma ciò non è mai stato verificato su hardware robotico reale. Vedi `CHANGELOG.md` per ciò che è stato consegnato finora esattamente, e la ROADMAP più sotto per ciò che resta aperto.
 
 ---
 
@@ -28,10 +28,10 @@
 Gestisce la pianificazione globale della missione, il bilanciamento del carico tra la flotta e la sincronizzazione in tempo reale tra i robot per prevenire collisioni fisiche e garantire una precisione millimetrica nelle attività collaborative multi-robot.
 
 ### Caratteristiche principali:
-* 🕸️ **Coordinamento dello sciame:** Orchestrano oltre 32 bracci robotici indipendenti attraverso più controller.
+* 🕸️ **Coordinamento dello sciame:** Orchestrano oltre 32 bracci robotici indipendenti attraverso più controller. *(pianificato)*
 * ⚖️ **Bilanciamento del carico:** Assegna automaticamente le missioni al robot più disponibile o meglio equipaggiato.
-* 🛡️ **Sicurezza centralizzata:** Gestione globale dell'E-STOP e monitoraggio dello stato di salute dell'intera flotta.
-* 📡 **API unificata:** Fornisce un unico punto di ingresso per APP e Studio per interagire con l'intera fabbrica.
+* 🛡️ **Sicurezza centralizzata:** Gestione globale dell'E-STOP e monitoraggio dello stato di salute dell'intera flotta. *(pianificato)*
+* 📡 **API unificata:** Fornisce un unico punto di ingresso per APP e Studio per interagire con l'intera fabbrica. *(pianificato)*
 * 🧩 **Reale v0 - Macchina a stati della missione:** `mission.rs` segue ogni missione attraverso `Pending -> Dispatched -> InProgress -> Completed` (più gli stati terminali `Cancelled`/`Failed`), con cancellazione idempotente e vero recupero quando un nodo viene segnalato irraggiungibile/non valido - vedi `mission-demo` più sotto. Logica pura in memoria - non serve nessun peer gRPC live con JOB-DISPATCHER/NODE-HEALING per eseguirla o testarla.
 * 🧱 **Sicuro per impostazione predefinita, e un rapporto in ritardo non può sovrascrivere un passaggio di consegne (v0):** l'API ascolta su `127.0.0.1:8114` salvo diversa indicazione; un altro indirizzo richiede un token bearer (`--token` / `ORCHESTRATOR_TOKEN`; allora tutte le route tranne `GET /health` lo richiedono) o un `--allow-anonymous` esplicito, e i corpi di richiesta oltre 64 KB sono rifiutati con `413`. Ogni dispatch incrementa l'`attempt` della missione; uno `start`/`complete`/`fail` con un `attempt` scaduto (o con il nome di un nodo che non detiene più la missione) viene rifiutato con `409` senza toccare la missione, così un nodo dichiarato non disponibile che torna da una partizione di rete non può sovrascrivere il nodo a cui la missione è stata passata (`--require-attempt` rende il campo obbligatorio). Il registro delle missioni e la outbox vengono forzati su disco prima di sostituire il file precedente, l'unità systemd fornita ora dà al processo una directory di stato scrivibile (prima `ProtectSystem=strict` rendeva la directory `data` predefinita di sola lettura e nulla sopravviveva a un riavvio), e `docker-compose.yml` ora avvia servizi veri (comandi `serve`, controlli di salute, token obbligatori, immagini fissate, solo l'orchestratore pubblicato e solo sul loopback dell'host). *(implementato)*
 
@@ -42,13 +42,15 @@ Gestisce la pianificazione globale della missione, il bilanciamento del carico t
 ```mermaid
 flowchart TB
     API["API esterne (Studio / App)"] --> ORCH["HYDRA-ORCHESTRATOR"]
-    ORCH --> JOB["JOB-DISPATCHER (Coda missioni)"]
-    JOB --> PATH["PATH-PLANNER-3D (Controllo collisioni)"]
-    PATH --> SYNC["SWARM-SYNC (Sincronizzazione PTP)"]
-    SYNC --> NODE1["HydraNode 1 (H745)"]
-    SYNC --> NODE2["HydraNode 2 (H745)"]
-    ORCH --> HEAL["NODE-HEALING (Failover)"]
+    ORCH <--> JOB["JOB-DISPATCHER (Coda missioni)"]
+    JOB -.-> PATH["PATH-PLANNER-3D (Controllo collisioni)"]
+    PATH -.-> SYNC["SWARM-SYNC (Sincronizzazione PTP)"]
+    SYNC -.-> NODE1["HydraNode 1 (H745)"]
+    SYNC -.-> NODE2["HydraNode 2 (H745)"]
+    HEAL["NODE-HEALING (Failover)"] --> ORCH
 ```
+
+> Le frecce continue esistono oggi (l'API HTTP, JOB-DISPATCHER e NODE-HEALING che chiama `POST /nodes/:node/recover`). Le frecce tratteggiate sono pianificate, non implementate: nessun codice chiama PATH-PLANNER-3D o SWARM-SYNC.
 
 ---
 
@@ -66,12 +68,12 @@ macchina a stati reale che già esiste:
 * **Integrazione della coda missioni** — reale già ora, non solo
   pianificata: consegna le missioni accettate a JOB-DISPATCHER attraverso
   lo stesso trasporto reale HTTP/JSON che usa `server.rs` stesso
-  (`src/job_dispatcher.rs`, i propri `submit_job`/`complete_job`/
+  (`src/job_dispatcher.rs`, i propri `submit_job`/`close_job`/
   `requeue_job`/`run_dispatch`, già collegati in ogni handler reale del
   ciclo di vita di una missione), e ne traccia il ciclo di vita nell'intera
   flotta usando la macchina a stati reale `Mission`/`MissionRegistry` che
   già esiste in `mission.rs`, duratura attraverso un vero riavvio del
-  processo (`--data-dir`, `data/missions.json` di default). Questo livello
+  processo (`--data-dir`, `data/missions.json` di default - una missione ricaricata a metà volo diventa `Unknown` ed è rimessa in `Pending`, mai data per completata in silenzio). Questo livello
   non ha mai usato gRPC e non era mai stato pianificato che lo facesse -
   il contratto condiviso `HealthService` di `proto/hydra_common.proto` è
   una questione separata (la vera sonda di salute della flotta di
@@ -139,7 +141,7 @@ HYDRA-UMC-ORCHESTRATOR/
 ├── build.sh/.bat     # Aggiorna la versione, poi `cargo build --release`
 ├── build-test.sh/.bat # Controllo build senza versionamento
 ├── run.sh/.bat       # Esegue il binario compilato
-├── docker-compose.yml # Integra questo repo con i suoi 4 figli reali
+├── docker-compose.yml # Integra questo repo con i suoi 3 figli reali
 ├── nodes.compose.json # Registro dei nodi che NODE-HEALING usa nello stack compose
 ├── .env.example # Token richiesti dallo stack compose (copiare in .env)
 └── README.md
@@ -197,7 +199,7 @@ risultante.
 ```
 
 ```bash
-cargo test   # 93 test: le transizioni/i rifiuti di transizione non
+cargo test   # 111 test: le transizioni/i rifiuti di transizione non
              # valida/la cancellazione idempotente/il recupero dopo
              # guasto nodo di mission.rs, più la persistenza a prova di
              # crash di outbox.rs, il client HTTP reale di
@@ -205,8 +207,8 @@ cargo test   # 93 test: le transizioni/i rifiuti di transizione non
 ```
 
 Come repo padre di integrazione dell'ecosistema, include anche un vero
-`docker-compose.yml` che avvia questo servizio insieme ai suoi 4 figli
-(SWARM-SYNC, PATH-PLANNER-3D, JOB-DISPATCHER, NODE-HEALING), attesi come
+`docker-compose.yml` che avvia questo servizio insieme ai suoi 3 figli
+(SWARM-SYNC, JOB-DISPATCHER, NODE-HEALING; PATH-PLANNER-3D, uno strumento a riga di comando, resta dietro il profilo `tools`), attesi come
 cartelle gemelle:
 
 ```bash

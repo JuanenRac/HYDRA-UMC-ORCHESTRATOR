@@ -7,51 +7,47 @@
 //! same convention as `HYDRA-UMC-TWIN`'s/`HYDRA-UMC-SWARM-SYNC`'s/
 //! `HYDRA-UMC-HIL-BRIDGE`'s own `server.rs`.
 //!
-//! Real gap this closes: `mission.rs`'s own `MissionRegistry` (dispatch/
-//! start/complete/cancel/fail/recover, and the node-failure recovery
-//! sweep) was only ever exercised through `mission-demo`'s hardcoded,
-//! fixed scenario - never reachable with a real caller-supplied mission
-//! id or node name. There is still no real gRPC wiring to
-//! `HYDRA-UMC-JOB-DISPATCHER`/`HYDRA-UMC-NODE-HEALING` beyond the plain
-//! HTTP integration already in this file (see `main.rs`'s own module
-//! doc), and there is no real E-STOP-sending code anywhere in this
-//! repository to expose - this server does not grant any new physical
-//! authority, it makes the exact same state machine `mission-demo`
-//! already exercises reachable over a real API instead of only a fixed
-//! demo script.
+//! The `MissionRegistry` is real, shared, mutable state that must persist
+//! across requests - `Arc<Mutex<..>>`, one lock acquired per request and
+//! released before any call to Job-Dispatcher or before the response is
+//! written, and durable across a real process restart (`mission.rs`'s own
+//! `MissionRegistry::load()`/`persist()`, wired in by `main.rs`): every
+//! handler below that mutates a mission calls `reg.persist()` before
+//! responding, the same explicit convention `outbox.rs`'s callers use.
 //!
-//! Unlike this ecosystem's other Rust services' `server.rs` (all
-//! stateless computations), the `MissionRegistry` is real, shared,
-//! mutable state that must persist across requests - `Arc<Mutex<..>>`,
-//! one lock acquired per request, released before the response is
-//! written. as of
-//! this delivery the registry itself is also durable across a real
-//! process restart (`mission.rs`'s own `MissionRegistry::load()`/
-//! `persist()`, wired in by `main.rs`) - every handler below that
-//! mutates a mission calls `reg.persist()` before responding, the same
-//! explicit convention `outbox.rs`'s own callers already use for the
-//! pending remote-close outbox.
+//! Requests are served by a small pool of worker threads that share the
+//! listener, so a slow client or a slow Job-Dispatcher call holds one
+//! worker, not the whole API (`GET /health` keeps answering).
+//!
+//! There is no real E-STOP-sending code anywhere in this repository to
+//! expose - this server does not grant any new physical authority, it
+//! makes the mission state machine reachable over a real API.
 
+use std::collections::HashMap;
 use std::io::Read;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::Deserialize;
 use serde_json::json;
 use tiny_http::{Header, Method, Response, Server};
 
 use crate::job_dispatcher;
-use crate::mission::{CancelOutcome, FenceError, MissionRegistry, TransitionError};
+use crate::mission::{
+    is_valid_mission_id, CancelOutcome, FenceError, JobSpec, MissionRegistry, TransitionError,
+};
 use crate::outbox::RemoteCloseOutbox;
 
-// how often
-// the background pass below retries confirming a mission's terminal
-// outcome to Job-Dispatcher - see reconcile_pending_remote_closes()'s
-// own doc comment. Frequent enough that a transient Job-Dispatcher
-// outage self-heals within a real operator's patience, infrequent
-// enough to never look like a hot polling loop.
+// how often the background pass below looks for a mission whose terminal
+// outcome still has to be confirmed to Job-Dispatcher - see
+// reconcile_pending_remote_closes()'s own doc comment. A close that keeps
+// failing is retried less and less often (REMOTE_CLOSE_MAX_BACKOFF).
 const REMOTE_CLOSE_RETRY_INTERVAL: Duration = Duration::from_secs(30);
+const REMOTE_CLOSE_MAX_BACKOFF: Duration = Duration::from_secs(30 * 60);
+
+/// How many threads serve requests at the same time.
+const WORKER_THREADS: usize = 8;
 
 type SharedRegistry = Arc<Mutex<MissionRegistry>>;
 // shared the same way SharedRegistry is - both the request
@@ -66,8 +62,7 @@ type SharedOutbox = Arc<RemoteCloseOutbox>;
 /// Orchestrator was started without `--job-dispatcher-url` - the
 /// integration is a real, but optional, best-effort add-on, not a hard
 /// dependency this server refuses to start without), and the real,
-/// durable pending-remote-close outbox (, see outbox.rs's own
-/// module doc).
+/// durable pending-remote-close outbox (see outbox.rs's own module doc).
 pub struct AppState {
     pub registry: SharedRegistry,
     pub job_dispatcher_url: Option<String>,
@@ -166,6 +161,17 @@ struct BodyError {
 }
 
 fn read_body(request: &mut tiny_http::Request) -> Result<String, BodyError> {
+    // a body that announces more than the limit is refused before a single
+    // byte is read, so a client cannot park a worker on a huge, slow upload
+    if request
+        .body_length()
+        .is_some_and(|len| len as u64 > MAX_BODY_BYTES)
+    {
+        return Err(BodyError {
+            status: 413,
+            message: format!("request body is larger than {MAX_BODY_BYTES} bytes"),
+        });
+    }
     let mut raw = String::new();
     match Read::take(request.as_reader(), MAX_BODY_BYTES + 1).read_to_string(&mut raw) {
         Ok(_) if raw.len() as u64 > MAX_BODY_BYTES => Err(BodyError {
@@ -193,11 +199,36 @@ macro_rules! body_or_reply {
     };
 }
 
+/// Decodes `%XX` escapes in one path segment (`a%20b` -> `a b`). A malformed
+/// escape is kept as it is.
+fn percent_decode(segment: &str) -> String {
+    let bytes = segment.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let hex = std::str::from_utf8(&bytes[i + 1..i + 3]).ok();
+            if let Some(value) = hex.and_then(|h| u8::from_str_radix(h, 16).ok()) {
+                out.push(value);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
 /// Splits `/missions/m1/dispatch` into `["missions", "m1", "dispatch"]`,
 /// dropping empty segments (a leading `/` would otherwise produce a
-/// leading empty string).
-fn segments(path: &str) -> Vec<&str> {
-    path.split('/').filter(|s| !s.is_empty()).collect()
+/// leading empty string) and decoding `%XX` escapes, so a node name with a
+/// space or a slash in it still names the node it was meant to.
+fn segments(path: &str) -> Vec<String> {
+    path.split('/')
+        .filter(|s| !s.is_empty())
+        .map(percent_decode)
+        .collect()
 }
 
 pub fn bind(addr: &str) -> std::io::Result<Server> {
@@ -211,13 +242,13 @@ pub fn run(
     registry: MissionRegistry,
     options: ServerOptions,
 ) {
-    let state = AppState {
+    let state = Arc::new(AppState {
         registry: Arc::new(Mutex::new(registry)),
         job_dispatcher_url,
         close_outbox: Arc::new(close_outbox),
         token: options.token.filter(|t| !t.is_empty()),
         require_attempt: options.require_attempt,
-    };
+    });
 
     // only spawned when Job-Dispatcher integration is actually
     // configured at all (matching every other real call site in this
@@ -225,27 +256,39 @@ pub fn run(
     if let Some(base_url) = state.job_dispatcher_url.clone() {
         let registry = Arc::clone(&state.registry);
         let outbox = Arc::clone(&state.close_outbox);
-        // a real attempt right now, before this incarnation
-        // waits a full REMOTE_CLOSE_RETRY_INTERVAL - the whole point of
-        // persisting the outbox is a restart recovering FAST, not just
-        // eventually. Even now that MissionRegistry itself also survives
-        // a restart (C07), the outbox stays the real worklist here: a
-        // mission reloaded as `Unknown` still needs its own separate
-        // resolution (`recover_unknown_missions()`, called once by
-        // main.rs before this incarnation ever serves a request) before
-        // it says anything meaningful about a pending remote close.
-        reconcile_pending_remote_closes(&registry, &outbox, &base_url);
-        thread::spawn(move || loop {
-            thread::sleep(REMOTE_CLOSE_RETRY_INTERVAL);
-            reconcile_pending_remote_closes(&registry, &outbox, &base_url);
+        // A terminal mission whose close was never confirmed (the process
+        // died between recording the outcome and the outbox entry) is
+        // picked up from the registry itself.
+        adopt_unconfirmed_closes(&registry, &outbox);
+        thread::spawn(move || {
+            // A real attempt right now, before waiting a full interval: the
+            // whole point of persisting the outbox is a restart recovering
+            // fast, not just eventually.
+            let mut schedule = RetrySchedule::default();
+            loop {
+                reconcile_due(&registry, &outbox, &base_url, &mut schedule, Instant::now());
+                thread::sleep(REMOTE_CLOSE_RETRY_INTERVAL);
+            }
         });
     }
 
+    let server = Arc::new(server);
+    for _ in 1..WORKER_THREADS {
+        let server = Arc::clone(&server);
+        let state = Arc::clone(&state);
+        thread::spawn(move || serve(&server, &state));
+    }
+    serve(&server, &state);
+}
+
+/// One worker: takes requests off the shared listener until it closes.
+fn serve(server: &Server, state: &AppState) {
     for mut request in server.incoming_requests() {
         let url = request.url().to_string();
         let path = url.split('?').next().unwrap_or("").to_string();
         let method = request.method().clone();
-        let parts = segments(&path);
+        let decoded = segments(&path);
+        let parts: Vec<&str> = decoded.iter().map(String::as_str).collect();
 
         // liveness stays open so a watchdog can probe it without a credential
         let is_health = matches!((&method, parts.as_slice()), (Method::Get, ["health"]));
@@ -268,47 +311,62 @@ pub fn run(
                     "version": env!("CARGO_PKG_VERSION"),
                 }),
             ),
-            (Method::Get, ["missions"]) => handle_list(request, &state),
-            (Method::Get, ["missions", id]) => handle_get(request, &state, id),
+            (Method::Get, ["missions"]) => handle_list(request, state, &url),
+            (Method::Get, ["missions", id]) => handle_get(request, state, id),
             (Method::Post, ["missions"]) => {
                 let raw = body_or_reply!(request);
-                handle_add(request, &state, &raw);
+                handle_add(request, state, &raw);
             }
             (Method::Post, ["missions", id, "dispatch"]) => {
                 let raw = body_or_reply!(request);
-                handle_dispatch(request, &state, id, &raw);
+                handle_dispatch(request, state, id, &raw);
             }
             (Method::Post, ["missions", id, "auto-dispatch"]) => {
-                handle_auto_dispatch(request, &state, id)
+                handle_auto_dispatch(request, state, id)
             }
             (Method::Post, ["missions", id, "start"]) => {
                 let raw = body_or_reply!(request);
-                handle_start(request, &state, id, &raw);
+                handle_start(request, state, id, &raw);
             }
             (Method::Post, ["missions", id, "complete"]) => {
                 let raw = body_or_reply!(request);
-                handle_complete(request, &state, id, &raw);
+                handle_complete(request, state, id, &raw);
             }
-            (Method::Post, ["missions", id, "cancel"]) => handle_cancel(request, &state, id),
+            (Method::Post, ["missions", id, "cancel"]) => handle_cancel(request, state, id),
             (Method::Post, ["missions", id, "fail"]) => {
                 let raw = body_or_reply!(request);
-                handle_fail(request, &state, id, &raw);
+                handle_fail(request, state, id, &raw);
             }
-            (Method::Post, ["nodes", node, "recover"]) => handle_recover(request, &state, node),
-            (Method::Get, ["stats"]) => {
-                let reg = state.registry.lock().unwrap();
-                write_json(
-                    request,
-                    200,
-                    &json!({
-                        "missionCount": reg.all().count(),
-                        "jobDispatcherUrl": state.job_dispatcher_url,
-                    }),
-                );
-            }
+            (Method::Post, ["nodes", node, "recover"]) => handle_recover(request, state, node),
+            (Method::Get, ["stats"]) => handle_stats(request, state),
             _ => write_json(request, 404, &json!({"error": "not found"})),
         }
     }
+}
+
+/// Counts per state, how many closes still wait for Job-Dispatcher, and
+/// where Job-Dispatcher is.
+fn handle_stats(request: tiny_http::Request, state: &AppState) {
+    let (count, mut by_state) = {
+        let reg = state.registry.lock().unwrap();
+        let mut by_state: std::collections::BTreeMap<&'static str, usize> =
+            std::collections::BTreeMap::new();
+        for mission in reg.all() {
+            *by_state.entry(mission.state_label()).or_default() += 1;
+        }
+        (reg.all().count(), by_state)
+    };
+    by_state.entry("Pending").or_default();
+    write_json(
+        request,
+        200,
+        &json!({
+            "missionCount": count,
+            "missionsByState": by_state,
+            "pendingRemoteCloses": state.close_outbox.pending().len(),
+            "jobDispatcherUrl": state.job_dispatcher_url,
+        }),
+    );
 }
 
 /// The optional fencing fields of a start/complete/fail request.
@@ -337,6 +395,14 @@ fn fence_status(error: &FenceError) -> u16 {
 #[derive(Deserialize)]
 struct AddRequest {
     id: String,
+    #[serde(default)]
+    priority: i32,
+    #[serde(default, rename = "requiredTool")]
+    required_tool: String,
+    #[serde(default)]
+    location: String,
+    #[serde(default, rename = "dependsOn")]
+    depends_on: Vec<String>,
 }
 
 fn handle_add(request: tiny_http::Request, state: &AppState, raw: &str) {
@@ -351,23 +417,55 @@ fn handle_add(request: tiny_http::Request, state: &AppState, raw: &str) {
             return;
         }
     };
+    if !is_valid_mission_id(&req.id) {
+        write_json(
+            request,
+            400,
+            &json!({"error": "mission id must be 1 to 128 characters of A-Z a-z 0-9 . _ -"}),
+        );
+        return;
+    }
+    let spec = JobSpec {
+        priority: req.priority,
+        required_tool: req.required_tool,
+        location: req.location,
+        depends_on: req.depends_on,
+    };
 
-    let mission_snapshot = {
+    let (mission_snapshot, spec) = {
         let mut reg = state.registry.lock().unwrap();
-        let mission = reg.add(req.id);
+        // A repeated POST of a mission that already ended must not be sent
+        // to Job-Dispatcher again: a resubmission of a failed job there
+        // resets it to pending, and it would run work this orchestrator
+        // already closed.
+        if let Some(existing) = reg.get(&req.id) {
+            if existing.is_terminal() {
+                let body = json!({
+                    "error": format!("mission {:?} already exists and is finished", req.id),
+                    "mission": existing,
+                });
+                drop(reg);
+                write_json(request, 409, &body);
+                return;
+            }
+        }
+        let mission = reg.add_with_spec(req.id, spec);
         let snapshot = serde_json::to_value(&*mission).unwrap();
+        let spec = mission.spec.clone();
         reg.persist();
-        snapshot
+        (snapshot, spec)
     };
     // Real, deliberate second half of the "full chain": every mission
     // this Orchestrator now knows about is also submitted as a real job
     // to Job-Dispatcher's own queue, so its real tool-aware/fairness
     // routing has something to route - best-effort (a Job-Dispatcher
     // that's down doesn't stop a mission from existing here, this
-    // registry is the source of truth for mission STATE regardless).
+    // registry is the source of truth for mission STATE regardless). The
+    // submission is idempotent, so posting the mission again retries it.
     let job_submission = submit_to_job_dispatcher_if_configured(
         state,
         mission_snapshot["id"].as_str().unwrap_or_default(),
+        &spec,
     );
 
     write_json(
@@ -381,19 +479,47 @@ fn handle_add(request: tiny_http::Request, state: &AppState, raw: &str) {
 /// response - never silently swallowed, so a caller can tell "queued
 /// for real routing" apart from "Job-Dispatcher wasn't configured/was
 /// unreachable" without needing to read this server's own logs.
-fn submit_to_job_dispatcher_if_configured(state: &AppState, mission_id: &str) -> serde_json::Value {
+fn submit_to_job_dispatcher_if_configured(
+    state: &AppState,
+    mission_id: &str,
+    spec: &JobSpec,
+) -> serde_json::Value {
     let Some(base_url) = &state.job_dispatcher_url else {
         return json!({"submitted": false, "reason": "no --job-dispatcher-url configured"});
     };
-    match job_dispatcher::submit_job(base_url, mission_id) {
+    match job_dispatcher::submit_job(base_url, mission_id, spec) {
         Ok(()) => json!({"submitted": true}),
         Err(e) => json!({"submitted": false, "reason": e.to_string()}),
     }
 }
 
-fn handle_list(request: tiny_http::Request, state: &AppState) {
+/// `GET /missions`, optionally narrowed with `?state=Pending` (a state
+/// name, case-insensitive) and paged with `?limit=N&offset=N`.
+fn handle_list(request: tiny_http::Request, state: &AppState, url: &str) {
+    let query = url.split_once('?').map(|(_, q)| q).unwrap_or("");
+    let mut wanted_state: Option<String> = None;
+    let mut limit = usize::MAX;
+    let mut offset = 0usize;
+    for pair in query.split('&').filter(|p| !p.is_empty()) {
+        let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+        match key {
+            "state" => wanted_state = Some(percent_decode(value).to_ascii_lowercase()),
+            "limit" => limit = value.parse().unwrap_or(usize::MAX),
+            "offset" => offset = value.parse().unwrap_or(0),
+            _ => {}
+        }
+    }
     let reg = state.registry.lock().unwrap();
-    let missions: Vec<_> = reg.all().collect();
+    let missions: Vec<_> = reg
+        .all()
+        .filter(|m| {
+            wanted_state
+                .as_deref()
+                .is_none_or(|s| m.state_label().to_ascii_lowercase() == s)
+        })
+        .skip(offset)
+        .take(limit)
+        .collect();
     write_json(request, 200, &json!({"missions": missions}));
 }
 
@@ -470,13 +596,32 @@ fn handle_auto_dispatch(request: tiny_http::Request, state: &AppState, id: &str)
         return;
     };
 
-    {
+    let pending_spec = {
         let reg = state.registry.lock().unwrap();
-        if reg.get(id).is_none() {
+        match reg.get(id) {
+            None => {
+                write_json(
+                    request,
+                    404,
+                    &json!({"error": format!("no mission {id:?}")}),
+                );
+                return;
+            }
+            Some(m) if matches!(m.state, crate::mission::MissionState::Pending) => {
+                Some(m.spec.clone())
+            }
+            Some(_) => None,
+        }
+    };
+    // A pending mission whose first submission never got through (the
+    // dispatcher was down when it was added) has no job there to route.
+    // The submission is idempotent, so doing it again is harmless.
+    if let Some(spec) = pending_spec {
+        if let Err(e) = job_dispatcher::submit_job(base_url, id, &spec) {
             write_json(
                 request,
-                404,
-                &json!({"error": format!("no mission {id:?}")}),
+                502,
+                &json!({"error": format!("job-dispatcher does not have the job and it could not be submitted: {e}")}),
             );
             return;
         }
@@ -503,13 +648,21 @@ fn handle_auto_dispatch(request: tiny_http::Request, state: &AppState, id: &str)
     // here would show that OTHER mission as still "Queued" locally while
     // its robot is genuinely already busy on Job-Dispatcher's side.
     let mut result_for_caller: Option<Result<serde_json::Value, TransitionError>> = None;
+    // Assignments of work this orchestrator already closed (a mission
+    // cancelled while its job still sat in the queue, say) must not keep a
+    // robot reserved: they are handed back below.
+    let mut to_release: Vec<(String, bool)> = Vec::new();
     {
         let mut reg = state.registry.lock().unwrap();
         for assignment in &assignments {
             let Some(mission) = reg.get_mut(&assignment.job_id) else {
                 continue; // not one of THIS orchestrator's own missions - nothing local to reconcile
             };
+            let was_terminal = mission.is_terminal();
             let dispatch_result = mission.dispatch(assignment.robot_id.clone());
+            if was_terminal {
+                to_release.push((assignment.job_id.clone(), false));
+            }
             if assignment.job_id == id {
                 result_for_caller =
                     Some(dispatch_result.map(|()| serde_json::to_value(&*mission).unwrap()));
@@ -524,6 +677,14 @@ fn handle_auto_dispatch(request: tiny_http::Request, state: &AppState, id: &str)
             }
         }
         reg.persist();
+    }
+    for (job_id, success) in to_release {
+        if let Err(e) = job_dispatcher::close_job(base_url, &job_id, success) {
+            eprintln!(
+                "[orchestrator] could not hand back job {job_id} that job-dispatcher assigned although the mission is closed: {e}"
+            );
+            state.close_outbox.mark_pending(&job_id, success);
+        }
     }
 
     match result_for_caller {
@@ -594,52 +755,125 @@ fn handle_start(request: tiny_http::Request, state: &AppState, id: &str, raw: &s
     }
 }
 
-/// (P1):
-/// handle_complete()/handle_cancel() below commit a mission's terminal
-/// state locally first, then make a best-effort attempt to confirm it
-/// to Job-Dispatcher - this project's own real integration. Before this fix,
-/// a failed confirmation (a transient network error, Job-Dispatcher
-/// briefly unreachable) was only ever logged: the mission looked
-/// identical to one that WAS confirmed, so Job-Dispatcher could keep
-/// believing the job - and its robot's reservation - was still active
-/// indefinitely, with no real path back to consistency short of a human
-/// noticing. `Mission::remote_close_confirmed` now distinguishes the
-/// two, and this function - run periodically from a real background
-/// thread spawned in `run()` - retries the SAME real confirmation call
-/// for every mission still pending one, until it actually succeeds.
-/// `job_dispatcher::complete_job()` is itself idempotent (its own doc
-/// comment: a 400 there means "nothing real to close, already done or
-/// never assigned" and is treated as success) - retrying a call that
-/// already succeeded on Job-Dispatcher's own side the first time,
-/// because only THIS side's confirmation of that success got lost, is
-/// always safe.
+/// A mission's terminal outcome is committed locally first, and the
+/// intent to confirm it to Job-Dispatcher is committed WITH it (the
+/// registry is saved with `remote_close_confirmed = false` in the same
+/// write, and the outbox gets its entry right after): a process that dies
+/// between the outcome and the answer of Job-Dispatcher restarts with the
+/// close still pending instead of forgetting it. Only once Job-Dispatcher
+/// has taken the close do both records say it is confirmed.
 ///
-/// the
-/// "honest limit" this function's own docstring used to state out loud
-/// (a real process restart losing the pending list along with every
-/// other mission `MissionRegistry` ever knew about) is now closed. The
-/// real worklist below comes from `outbox` (see outbox.rs's own module
-/// doc), a small durable JSON file independent of `MissionRegistry`'s
-/// own ephemeral state, not from `registry.pending_remote_closes()`, so
-/// a fresh incarnation of this process (an empty `MissionRegistry`, same
-/// as any other restart) still retries every mission the outbox
-/// remembers, using the exact `success` value captured at the moment the
-/// FIRST confirmation attempt failed. `registry` is still consulted,
-/// best-effort, only to keep a still-tracked mission's own
-/// `remote_close_confirmed` API field honest for a caller who never
-/// restarted this process - the outbox alone is what makes retrying
-/// correct even when the registry has forgotten the mission entirely.
+/// `job_dispatcher::close_job()` is idempotent - retrying a close that
+/// already went through, because only THIS side's confirmation got lost, is
+/// always safe.
+fn confirm_close_remotely(state: &AppState, id: &str, success: bool) {
+    let Some(base_url) = &state.job_dispatcher_url else {
+        return;
+    };
+    state.close_outbox.mark_pending(id, success);
+    match job_dispatcher::close_job(base_url, id, success) {
+        Ok(()) => mark_close_confirmed(&state.registry, &state.close_outbox, id),
+        Err(e) => eprintln!(
+            "[orchestrator] could not confirm the closing of mission {id} to job-dispatcher yet (it will be retried): {e}"
+        ),
+    }
+}
+
+fn mark_close_confirmed(registry: &SharedRegistry, outbox: &RemoteCloseOutbox, id: &str) {
+    outbox.mark_confirmed(id);
+    let mut reg = registry.lock().unwrap();
+    if let Some(mission) = reg.get_mut(id) {
+        mission.mark_remote_close_confirmed();
+    }
+    reg.persist();
+}
+
+/// Puts into the outbox every terminal mission the registry says is still
+/// unconfirmed but the outbox does not know (a crash between the two writes).
+fn adopt_unconfirmed_closes(registry: &SharedRegistry, outbox: &RemoteCloseOutbox) {
+    let known: std::collections::HashSet<String> =
+        outbox.pending().into_iter().map(|p| p.mission_id).collect();
+    let reg = registry.lock().unwrap();
+    for mission in reg.all() {
+        if mission.is_terminal() && !mission.remote_close_confirmed && !known.contains(&mission.id)
+        {
+            outbox.mark_pending(
+                &mission.id,
+                matches!(
+                    mission.state,
+                    crate::mission::MissionState::Completed { .. }
+                ),
+            );
+        }
+    }
+}
+
+/// When each unconfirmed close may be tried again: a close that keeps
+/// failing is retried after 30 s, 1 min, 2 min ... up to 30 min, instead of
+/// every 30 s for ever.
+#[derive(Default)]
+struct RetrySchedule {
+    entries: HashMap<String, (u32, Instant)>,
+}
+
+impl RetrySchedule {
+    fn is_due(&self, id: &str, now: Instant) -> bool {
+        self.entries.get(id).is_none_or(|(_, next)| now >= *next)
+    }
+
+    fn failed(&mut self, id: &str, now: Instant) {
+        let attempts = self.entries.get(id).map_or(0, |(n, _)| *n) + 1;
+        let wait = REMOTE_CLOSE_RETRY_INTERVAL
+            .saturating_mul(1u32 << attempts.min(7))
+            .min(REMOTE_CLOSE_MAX_BACKOFF);
+        self.entries.insert(id.to_string(), (attempts, now + wait));
+    }
+
+    fn succeeded(&mut self, id: &str) {
+        self.entries.remove(id);
+    }
+}
+
+/// Tries every close still waiting for Job-Dispatcher, now.
+///
+/// The real worklist comes from `outbox` (see outbox.rs's own module doc), a
+/// small durable JSON file independent of `MissionRegistry`'s own state, so
+/// a fresh incarnation of this process still retries every mission the
+/// outbox remembers, using the exact `success` value recorded when the close
+/// was first attempted. `registry` is consulted only to keep a still-tracked
+/// mission's own `remote_close_confirmed` field honest.
+#[cfg(test)]
 fn reconcile_pending_remote_closes(
     registry: &SharedRegistry,
     outbox: &RemoteCloseOutbox,
     base_url: &str,
 ) {
+    reconcile_due(
+        registry,
+        outbox,
+        base_url,
+        &mut RetrySchedule::default(),
+        Instant::now(),
+    );
+}
+
+fn reconcile_due(
+    registry: &SharedRegistry,
+    outbox: &RemoteCloseOutbox,
+    base_url: &str,
+    schedule: &mut RetrySchedule,
+    now: Instant,
+) {
     for entry in outbox.pending() {
-        if job_dispatcher::complete_job(base_url, &entry.mission_id, entry.success).is_ok() {
-            outbox.mark_confirmed(&entry.mission_id);
-            if let Some(mission) = registry.lock().unwrap().get_mut(&entry.mission_id) {
-                mission.mark_remote_close_confirmed();
+        if !schedule.is_due(&entry.mission_id, now) {
+            continue;
+        }
+        match job_dispatcher::close_job(base_url, &entry.mission_id, entry.success) {
+            Ok(()) => {
+                schedule.succeeded(&entry.mission_id);
+                mark_close_confirmed(registry, outbox, &entry.mission_id);
             }
+            Err(_) => schedule.failed(&entry.mission_id, now),
         }
     }
 }
@@ -673,6 +907,9 @@ fn handle_complete(request: tiny_http::Request, state: &AppState, id: &str, raw:
             return;
         }
         let outcome = mission.complete();
+        if outcome.is_ok() && state.job_dispatcher_url.is_some() {
+            mission.mark_remote_close_pending();
+        }
         if outcome.is_ok() {
             reg.persist();
         }
@@ -680,32 +917,14 @@ fn handle_complete(request: tiny_http::Request, state: &AppState, id: &str, raw:
     };
     match result {
         Ok(()) => {
-            // tells Job-Dispatcher this job reached its real
-            // terminal outcome, so it frees the robot's reservation
-            // instead of continuing to believe it's still assigned to a
-            // mission this Orchestrator already closed out locally.
-            // Best-effort and dropped the lock first, same reasoning as
-            // handle_recover's own existing job_dispatcher call.
-            if let Some(base_url) = &state.job_dispatcher_url {
-                if let Err(e) = job_dispatcher::complete_job(base_url, id, true) {
-                    eprintln!(
-                        "[orchestrator] could not confirm completion of mission {id} to job-dispatcher: {e}"
-                    );
-                    // mark this pending rather than let it look
-                    // confirmed - the background pass above retries it.
-                    if let Some(mission) = state.registry.lock().unwrap().get_mut(id) {
-                        mission.mark_remote_close_pending();
-                    }
-                    // ALSO persisted, durably, independent of
-                    // MissionRegistry - see outbox.rs's own module doc
-                    // for why this is what actually survives a restart.
-                    state.close_outbox.mark_pending(id, true);
-                }
-            }
-            // Re-serialized AFTER the job_dispatcher call and any
-            // resulting bookkeeping above, so the response's own
-            // remoteCloseConfirmed field is accurate, not a stale
-            // snapshot from before that call was even attempted.
+            // tells Job-Dispatcher this job reached its real terminal
+            // outcome, so it frees the robot's reservation instead of
+            // continuing to believe it's still assigned to a mission this
+            // Orchestrator already closed out locally. The lock is dropped
+            // first: a slow Job-Dispatcher never stalls the registry.
+            confirm_close_remotely(state, id, true);
+            // Re-serialized AFTER the call, so the response's own
+            // remote_close_confirmed field is accurate.
             let mission_json =
                 serde_json::to_value(state.registry.lock().unwrap().get(id).unwrap()).unwrap();
             write_json(request, 200, &mission_json);
@@ -730,6 +949,9 @@ fn handle_cancel(request: tiny_http::Request, state: &AppState, id: &str) {
             return;
         };
         let outcome = mission.cancel();
+        if outcome == Ok(CancelOutcome::Cancelled) && state.job_dispatcher_url.is_some() {
+            mission.mark_remote_close_pending();
+        }
         if outcome.is_ok() {
             reg.persist();
         }
@@ -737,25 +959,12 @@ fn handle_cancel(request: tiny_http::Request, state: &AppState, id: &str) {
     };
     match result {
         Ok(outcome) => {
-            // same real confirmation as handle_complete, but
-            // only for a FRESH cancellation (CancelOutcome::Cancelled) -
-            // a no-op re-cancel of an already-cancelled mission has
-            // nothing new to confirm to Job-Dispatcher.
+            // same real confirmation as handle_complete, but only for a
+            // FRESH cancellation (CancelOutcome::Cancelled) - a no-op
+            // re-cancel of an already-cancelled mission has nothing new to
+            // confirm to Job-Dispatcher.
             if outcome == CancelOutcome::Cancelled {
-                if let Some(base_url) = &state.job_dispatcher_url {
-                    if let Err(e) = job_dispatcher::complete_job(base_url, id, false) {
-                        eprintln!(
-                            "[orchestrator] could not confirm cancellation of mission {id} to job-dispatcher: {e}"
-                        );
-                        // same real bookkeeping as handle_complete above.
-                        if let Some(mission) = state.registry.lock().unwrap().get_mut(id) {
-                            mission.mark_remote_close_pending();
-                        }
-                        // same real, durable outbox entry as
-                        // handle_complete above.
-                        state.close_outbox.mark_pending(id, false);
-                    }
-                }
+                confirm_close_remotely(state, id, false);
             }
             let mission_json =
                 serde_json::to_value(state.registry.lock().unwrap().get(id).unwrap()).unwrap();
@@ -814,6 +1023,9 @@ fn handle_fail(request: tiny_http::Request, state: &AppState, id: &str, raw: &st
             return;
         }
         let outcome = mission.fail(req.reason);
+        if outcome.is_ok() && state.job_dispatcher_url.is_some() {
+            mission.mark_remote_close_pending();
+        }
         if outcome.is_ok() {
             reg.persist();
         }
@@ -821,28 +1033,11 @@ fn handle_fail(request: tiny_http::Request, state: &AppState, id: &str, raw: &st
     };
     match outcome {
         Ok(()) => {
-            // this used to update only the local mission registry -
-            // Job-Dispatcher could keep believing a job (and its robot's
-            // reservation) was still active for a mission this Orchestrator
-            // had already closed out locally as Failed, the exact same real
-            // gap already closed for handle_cancel just above.
             // fail() only ever returns Ok(()) for a FRESH transition (it
             // refuses outright - Err - once the mission is already
             // terminal), so unlike handle_cancel there is no
             // already-failed case to skip here.
-            if let Some(base_url) = &state.job_dispatcher_url {
-                if let Err(e) = job_dispatcher::complete_job(base_url, id, false) {
-                    eprintln!(
-                        "[orchestrator] could not confirm failure of mission {id} to job-dispatcher: {e}"
-                    );
-                    // same real reconciliation bookkeeping
-                    // as handle_cancel/handle_complete above.
-                    if let Some(mission) = state.registry.lock().unwrap().get_mut(id) {
-                        mission.mark_remote_close_pending();
-                    }
-                    state.close_outbox.mark_pending(id, false);
-                }
-            }
+            confirm_close_remotely(state, id, false);
             write_json(
                 request,
                 200,
@@ -858,29 +1053,38 @@ fn handle_fail(request: tiny_http::Request, state: &AppState, id: &str, raw: &st
 }
 
 fn handle_recover(request: tiny_http::Request, state: &AppState, node: &str) {
-    let requeued = {
+    let requeued: Vec<(String, JobSpec)> = {
         let mut reg = state.registry.lock().unwrap();
-        reg.recover_node_unavailable(node)
+        let ids = reg.recover_node_unavailable(node);
+        ids.into_iter()
+            .map(|id| {
+                let spec = reg.get(&id).map(|m| m.spec.clone()).unwrap_or_default();
+                (id, spec)
+            })
+            .collect()
     };
-    // Real gap found while auditing the code: this used to only update
-    // the local in-memory mission registry -
-    // Job-Dispatcher could keep believing a job was still assigned to
-    // the now-unreachable node. Best-effort, same reasoning as every
-    // other job_dispatcher.rs call: the registry above is already the
-    // real source of truth for mission state regardless of whether Job-
-    // Dispatcher is configured/reachable - dropped the lock before this
-    // loop so a slow/unreachable Job-Dispatcher can never stall another
-    // request that just needs the registry.
+    // Job-Dispatcher is told too, after the lock is dropped, so it does not
+    // keep the job assigned to the node that just went away (and holds
+    // that node's robot unavailable until it reports in again). Best-effort,
+    // same reasoning as every other job_dispatcher.rs call: the registry
+    // above is already the real source of truth for mission state.
+    let mut not_notified: Vec<String> = Vec::new();
     if let Some(base_url) = &state.job_dispatcher_url {
-        for mission_id in &requeued {
-            if let Err(e) = job_dispatcher::requeue_job(base_url, mission_id) {
+        for (mission_id, spec) in &requeued {
+            if let Err(e) = job_dispatcher::requeue_job(base_url, mission_id, node, spec) {
                 eprintln!(
                     "[orchestrator] could not notify job-dispatcher to requeue mission {mission_id}: {e}"
                 );
+                not_notified.push(mission_id.clone());
             }
         }
     }
-    write_json(request, 200, &json!({"requeuedMissions": requeued}));
+    let requeued: Vec<String> = requeued.into_iter().map(|(id, _)| id).collect();
+    write_json(
+        request,
+        200,
+        &json!({"requeuedMissions": requeued, "jobDispatcherNotNotified": not_notified}),
+    );
 }
 
 #[cfg(test)]
@@ -935,6 +1139,8 @@ mod tests {
         // file would have them corrupt each other's persisted state.
         let outbox_path =
             std::env::temp_dir().join(format!("orchestrator-server-test-outbox-{port}.json"));
+        // a port can come round again in a later run: never inherit its files
+        let _ = std::fs::remove_file(&outbox_path);
         let close_outbox = RemoteCloseOutbox::load(outbox_path)
             .expect("a fresh test outbox path must always load cleanly");
         // Same per-port-unique real path convention as the outbox above,
@@ -942,6 +1148,7 @@ mod tests {
         // missions.json.
         let missions_path =
             std::env::temp_dir().join(format!("orchestrator-server-test-missions-{port}.json"));
+        let _ = std::fs::remove_file(&missions_path);
         let registry = MissionRegistry::load(missions_path)
             .expect("a fresh test registry path must always load cleanly");
         thread::spawn(move || run(server, job_dispatcher_url, close_outbox, registry, options));
@@ -1033,6 +1240,60 @@ mod tests {
             }
         });
         (format!("http://127.0.0.1:{port}"), rx)
+    }
+
+    /// A fake Job-Dispatcher that answers each request according to what was
+    /// asked (`handler` gets the whole request text and returns the status and
+    /// body), and reports every request it received, in order.
+    fn fake_job_dispatcher_routing(
+        handler: impl Fn(&str) -> (u16, &'static str) + Send + 'static,
+    ) -> (String, std::sync::mpsc::Receiver<String>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (tx, rx) = std::sync::mpsc::channel();
+        thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                let raw = String::from_utf8_lossy(&read_full_request(&mut stream)).to_string();
+                let (status, body) = handler(&raw);
+                let _ = tx.send(raw);
+                let response = format!(
+                    "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(response.as_bytes());
+            }
+        });
+        (format!("http://127.0.0.1:{port}"), rx)
+    }
+
+    /// What a Job-Dispatcher answers while it holds the job `m1` in `status`
+    /// (assigned to `arm-3` when a robot has it).
+    fn jd_holding(status: &'static str) -> impl Fn(&str) -> (u16, &'static str) + Send + 'static {
+        move |req: &str| {
+            if req.starts_with("GET /jobs/m1 ") {
+                match status {
+                    "assigned" => (
+                        200,
+                        r#"{"ID":"m1","Status":"assigned","AssignedRobot":"arm-3"}"#,
+                    ),
+                    _ => (200, r#"{"ID":"m1","Status":"pending","AssignedRobot":""}"#),
+                }
+            } else if req.starts_with("POST /jobs/submit") {
+                (201, r#"{"ID":"m1","Status":"pending","result":"created"}"#)
+            } else {
+                (200, r#"{"ID":"m1"}"#)
+            }
+        }
+    }
+
+    /// Everything the fake received so far, once it has been quiet for a moment.
+    fn drain(rx: &std::sync::mpsc::Receiver<String>) -> Vec<String> {
+        let mut seen = Vec::new();
+        while let Ok(r) = rx.recv_timeout(std::time::Duration::from_millis(250)) {
+            seen.push(r);
+        }
+        seen
     }
 
     fn request(port: u16, method: &str, path: &str, body: &str) -> (u16, String) {
@@ -1147,7 +1408,7 @@ mod tests {
 
         let (status, body) = post(port, "/nodes/node-a/recover", "");
         assert_eq!(status, 200);
-        assert!(body.contains("m1"));
+        assert!(body.contains("m1"), "{body}");
         assert!(!body.contains("m2"));
 
         let (_, m1_body) = get(port, "/missions/m1");
@@ -1179,20 +1440,25 @@ mod tests {
 
     #[test]
     fn recover_notifies_job_dispatcher_to_requeue_when_configured() {
-        // Real, reachable fake this time - proves handle_recover's own
-        // job-dispatcher call path runs cleanly end to end when
-        // configured and reachable, not just that recover degrades
-        // gracefully when it isn't (the test above).
+        // Real, reachable fake this time - proves handle_recover asks for the
+        // requeue naming the node that went away.
         let _guard = net_test_lock();
-        let jd_url =
-            fake_job_dispatcher(200, r#"{"ID":"m1","Status":"pending","result":"retried"}"#);
+        let (jd_url, rx) = fake_job_dispatcher_routing(jd_holding("assigned"));
         let port = start_test_server_with_job_dispatcher(Some(jd_url));
         post(port, "/missions", r#"{"id":"m1"}"#);
         post(port, "/missions/m1/dispatch", r#"{"node":"node-a"}"#);
+        drain(&rx);
 
         let (status, body) = post(port, "/nodes/node-a/recover", "");
         assert_eq!(status, 200);
         assert!(body.contains("m1"));
+        let calls = drain(&rx);
+        let requeue = calls
+            .iter()
+            .find(|c| c.starts_with("POST /jobs/requeue"))
+            .unwrap_or_else(|| panic!("expected a requeue request, got {calls:?}"));
+        assert!(requeue.contains("\"id\":\"m1\""));
+        assert!(requeue.contains("\"robotId\":\"node-a\""));
     }
 
     #[test]
@@ -1336,70 +1602,105 @@ mod tests {
     #[test]
     fn complete_confirms_the_real_terminal_outcome_to_job_dispatcher() {
         let _guard = net_test_lock();
-        let (jd_url, rx) = fake_job_dispatcher_capturing(
-            200,
-            r#"{"ID":"m1","Status":"pending","result":"created"}"#,
-        );
+        let (jd_url, rx) = fake_job_dispatcher_routing(jd_holding("assigned"));
         let port = start_test_server_with_job_dispatcher(Some(jd_url));
         post(port, "/missions", r#"{"id":"m1"}"#);
-        while rx.try_recv().is_ok() {} // drain the /jobs/submit call from add
-        post(port, "/missions/m1/dispatch", r#"{"node":"node-a"}"#);
+        drain(&rx); // the /jobs/submit call from add
+        post(port, "/missions/m1/dispatch", r#"{"node":"arm-3"}"#);
         post(port, "/missions/m1/start", "");
 
-        let (status, _) = post(port, "/missions/m1/complete", "");
+        let (status, body) = post(port, "/missions/m1/complete", "");
         assert_eq!(status, 200);
+        assert!(body.contains("\"remote_close_confirmed\":true"), "{body}");
 
-        let request = rx
-            .recv_timeout(std::time::Duration::from_secs(2))
-            .expect("expected a real /jobs/complete call to job-dispatcher");
-        assert!(request.starts_with("POST /jobs/complete"));
-        assert!(request.contains("\"id\":\"m1\""));
-        assert!(request.contains("\"success\":true"));
+        let calls = drain(&rx);
+        assert!(calls[0].starts_with("GET /jobs/m1 "), "{calls:?}");
+        let complete = &calls[1];
+        assert!(complete.starts_with("POST /jobs/complete"), "{calls:?}");
+        assert!(complete.contains("\"id\":\"m1\""));
+        assert!(complete.contains("\"success\":true"));
+        assert!(
+            complete.contains("\"robotId\":\"arm-3\""),
+            "the close must name the robot job-dispatcher says holds the job: {complete}"
+        );
     }
 
     #[test]
     fn cancel_confirms_the_real_terminal_outcome_to_job_dispatcher() {
         let _guard = net_test_lock();
-        let (jd_url, rx) = fake_job_dispatcher_capturing(
-            200,
-            r#"{"ID":"m1","Status":"pending","result":"created"}"#,
-        );
+        let (jd_url, rx) = fake_job_dispatcher_routing(jd_holding("pending"));
         let port = start_test_server_with_job_dispatcher(Some(jd_url));
         post(port, "/missions", r#"{"id":"m1"}"#);
-        while rx.try_recv().is_ok() {} // drain the /jobs/submit call from add
+        drain(&rx); // the /jobs/submit call from add
 
         let (status, _) = post(port, "/missions/m1/cancel", "");
         assert_eq!(status, 200);
 
-        let request = rx
-            .recv_timeout(std::time::Duration::from_secs(2))
-            .expect("expected a real /jobs/complete call to job-dispatcher for the cancellation");
-        assert!(request.starts_with("POST /jobs/complete"));
-        assert!(request.contains("\"id\":\"m1\""));
-        assert!(request.contains("\"success\":false"));
+        let calls = drain(&rx);
+        assert!(calls[0].starts_with("GET /jobs/m1 "), "{calls:?}");
+        assert!(
+            calls[1].starts_with("POST /jobs/cancel"),
+            "a mission cancelled while its job is still queued must withdraw the job: {calls:?}"
+        );
+        assert!(calls[1].contains("\"id\":\"m1\""));
+    }
+
+    #[test]
+    fn a_close_is_recorded_before_job_dispatcher_is_asked() {
+        // The outbox entry and the unconfirmed flag exist even when the
+        // answer never comes (here: nothing is listening), so a restart
+        // finds the close still pending.
+        let _guard = net_test_lock();
+        let port = start_test_server_with_job_dispatcher(Some("http://127.0.0.1:1".to_string()));
+        post(port, "/missions", r#"{"id":"m1"}"#);
+        post(port, "/missions/m1/cancel", "");
+        let outbox_path =
+            std::env::temp_dir().join(format!("orchestrator-server-test-outbox-{port}.json"));
+        let outbox = RemoteCloseOutbox::load(outbox_path).unwrap();
+        assert_eq!(outbox.pending().len(), 1);
+        let missions_path =
+            std::env::temp_dir().join(format!("orchestrator-server-test-missions-{port}.json"));
+        let on_disk = MissionRegistry::load(missions_path).unwrap();
+        assert!(!on_disk.get("m1").unwrap().remote_close_confirmed);
+    }
+
+    #[test]
+    fn a_terminal_mission_left_unconfirmed_by_a_crash_is_adopted_into_the_outbox() {
+        let mut registry = MissionRegistry::new();
+        {
+            let m = registry.add("m1");
+            m.cancel().unwrap();
+            m.mark_remote_close_pending();
+            registry.add("m2").cancel().unwrap(); // confirmed, must not be adopted
+        }
+        let registry: SharedRegistry = Arc::new(Mutex::new(registry));
+        let outbox = test_outbox("adopt");
+        adopt_unconfirmed_closes(&registry, &outbox);
+        let pending = outbox.pending();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].mission_id, "m1");
+        assert!(!pending[0].success);
     }
 
     #[test]
     fn cancel_does_not_re_notify_job_dispatcher_on_an_idempotent_re_cancel() {
         let _guard = net_test_lock();
-        let (jd_url, rx) = fake_job_dispatcher_capturing(
-            200,
-            r#"{"ID":"m1","Status":"pending","result":"created"}"#,
-        );
+        let (jd_url, rx) = fake_job_dispatcher_routing(jd_holding("pending"));
         let port = start_test_server_with_job_dispatcher(Some(jd_url));
         post(port, "/missions", r#"{"id":"m1"}"#);
-        while rx.try_recv().is_ok() {} // drain the /jobs/submit call from add
+        drain(&rx); // the /jobs/submit call from add
 
         post(port, "/missions/m1/cancel", "");
-        rx.recv_timeout(std::time::Duration::from_secs(2))
-            .expect("the first, real cancellation must notify job-dispatcher");
+        assert!(
+            !drain(&rx).is_empty(),
+            "the first, real cancellation must notify job-dispatcher"
+        );
 
         let (status, body) = post(port, "/missions/m1/cancel", "");
         assert_eq!(status, 200);
         assert!(body.contains("AlreadyCancelled"));
         assert!(
-            rx.recv_timeout(std::time::Duration::from_millis(200))
-                .is_err(),
+            drain(&rx).is_empty(),
             "a no-op re-cancel of an already-cancelled mission must not notify job-dispatcher again"
         );
     }
@@ -1478,14 +1779,14 @@ mod tests {
         let outbox = test_outbox("confirms-previously-failed");
         outbox.mark_pending("m1", true); // the real, durable record handle_complete would also have written
 
-        let (jd_url, rx) =
-            fake_job_dispatcher_capturing(200, r#"{"ID":"m1","Status":"completed"}"#);
+        let (jd_url, rx) = fake_job_dispatcher_routing(jd_holding("assigned"));
         reconcile_pending_remote_closes(&registry, &outbox, &jd_url);
 
-        let request = rx
-            .recv_timeout(std::time::Duration::from_secs(2))
+        let calls = drain(&rx);
+        let request = calls
+            .iter()
+            .find(|c| c.starts_with("POST /jobs/complete"))
             .expect("expected a real retried /jobs/complete call");
-        assert!(request.starts_with("POST /jobs/complete"));
         assert!(request.contains("\"id\":\"m1\""));
         assert!(request.contains("\"success\":true"));
 
@@ -1557,14 +1858,14 @@ mod tests {
         let outbox = test_outbox("recovers-after-restart");
         outbox.mark_pending("m1", true); // simulates outbox.load() at startup finding a real leftover entry
 
-        let (jd_url, rx) =
-            fake_job_dispatcher_capturing(200, r#"{"ID":"m1","Status":"completed"}"#);
+        let (jd_url, rx) = fake_job_dispatcher_routing(jd_holding("assigned"));
         reconcile_pending_remote_closes(&registry, &outbox, &jd_url);
 
-        let request = rx
-            .recv_timeout(std::time::Duration::from_secs(2))
+        let calls = drain(&rx);
+        let request = calls
+            .iter()
+            .find(|c| c.starts_with("POST /jobs/complete"))
             .expect("expected a real retried /jobs/complete call even with no matching mission in the registry");
-        assert!(request.starts_with("POST /jobs/complete"));
         assert!(request.contains("\"id\":\"m1\""));
         assert!(request.contains("\"success\":true"));
 
@@ -1687,7 +1988,7 @@ mod tests {
         post(port, "/nodes/node-a/recover", "");
         let (status, body) = post(port, "/missions/m1/dispatch", r#"{"node":"node-b"}"#);
         assert_eq!(status, 200, "{body}");
-        assert!(body.contains("\"attempt\":2"));
+        assert!(body.contains("\"attempt\":3"), "{body}");
 
         // node-a comes back from the partition and reports what it believes
         for path in ["/missions/m1/start", "/missions/m1/complete"] {
@@ -1705,13 +2006,13 @@ mod tests {
             post(
                 port,
                 "/missions/m1/start",
-                r#"{"attempt":2,"node":"node-b"}"#
+                r#"{"attempt":3,"node":"node-b"}"#
             )
             .0,
             200
         );
         assert_eq!(
-            post(port, "/missions/m1/complete", r#"{"attempt":2}"#).0,
+            post(port, "/missions/m1/complete", r#"{"attempt":3}"#).0,
             200
         );
     }
@@ -1758,5 +2059,328 @@ mod tests {
             post(port, "/missions/m1/start", r#"{"attempt":"one"}"#).0,
             400
         );
+    }
+    #[test]
+    fn a_node_name_with_escapes_is_decoded_before_it_is_matched() {
+        let _guard = net_test_lock();
+        let port = start_test_server();
+        post(port, "/missions", r#"{"id":"m1"}"#);
+        post(port, "/missions/m1/dispatch", r#"{"node":"cell a/1"}"#);
+        let (status, body) = post(port, "/nodes/cell%20a%2F1/recover", "");
+        assert_eq!(status, 200);
+        assert!(body.contains("m1"), "{body}");
+    }
+
+    #[test]
+    fn mission_ids_are_validated_and_a_finished_mission_is_not_reopened() {
+        let _guard = net_test_lock();
+        let (jd_url, rx) = fake_job_dispatcher_routing(jd_holding("pending"));
+        let port = start_test_server_with_job_dispatcher(Some(jd_url));
+        for bad in [r#"{"id":""}"#, r#"{"id":"a/b"}"#, r#"{"id":"a b"}"#] {
+            assert_eq!(post(port, "/missions", bad).0, 400, "{bad}");
+        }
+        assert!(
+            drain(&rx).is_empty(),
+            "an invalid id must never reach job-dispatcher"
+        );
+
+        post(port, "/missions", r#"{"id":"m1"}"#);
+        post(port, "/missions/m1/cancel", "");
+        drain(&rx);
+        let (status, body) = post(port, "/missions", r#"{"id":"m1"}"#);
+        assert_eq!(status, 409, "{body}");
+        assert!(
+            drain(&rx).is_empty(),
+            "a finished mission must not be submitted again: job-dispatcher would run it"
+        );
+        let (_, m) = get(port, "/missions/m1");
+        assert!(m.contains("Cancelled"));
+    }
+
+    #[test]
+    fn the_routing_hints_of_a_mission_reach_job_dispatcher() {
+        let _guard = net_test_lock();
+        let (jd_url, rx) = fake_job_dispatcher_routing(jd_holding("pending"));
+        let port = start_test_server_with_job_dispatcher(Some(jd_url));
+        let (status, body) = post(
+            port,
+            "/missions",
+            r#"{"id":"m1","priority":9,"requiredTool":"Laser","location":"cell-2","dependsOn":["prep"]}"#,
+        );
+        assert_eq!(status, 200);
+        assert!(body.contains("Laser"), "{body}");
+        let calls = drain(&rx);
+        let submit = calls
+            .iter()
+            .find(|c| c.starts_with("POST /jobs/submit"))
+            .unwrap();
+        assert!(submit.contains("\"priority\":9"));
+        assert!(submit.contains("\"requiredTool\":\"Laser\""));
+        assert!(submit.contains("\"location\":\"cell-2\""));
+        assert!(submit.contains("\"dependsOn\":[\"prep\"]"));
+    }
+
+    #[test]
+    fn auto_dispatch_submits_a_pending_mission_whose_first_submission_was_lost() {
+        let _guard = net_test_lock();
+        let (jd_url, rx) = fake_job_dispatcher_routing(|req| {
+            if req.starts_with("POST /dispatch") {
+                (200, r#"[{"JobID":"m1","RobotID":"arm-3"}]"#)
+            } else {
+                (201, r#"{"ID":"m1","Status":"pending"}"#)
+            }
+        });
+        let port = start_test_server_with_job_dispatcher(Some(jd_url));
+        post(port, "/missions", r#"{"id":"m1"}"#);
+        drain(&rx);
+        let (status, body) = post(port, "/missions/m1/auto-dispatch", "");
+        assert_eq!(status, 200, "{body}");
+        let calls = drain(&rx);
+        assert!(calls[0].starts_with("POST /jobs/submit"), "{calls:?}");
+        assert!(calls[1].starts_with("POST /dispatch"), "{calls:?}");
+    }
+
+    #[test]
+    fn work_assigned_for_a_mission_that_is_already_closed_is_handed_back() {
+        let _guard = net_test_lock();
+        // job-dispatcher still had m1 queued when it was cancelled here, and
+        // a dispatch pass for another mission hands it to arm-3
+        let (jd_url, rx) = fake_job_dispatcher_routing(|req| {
+            if req.starts_with("POST /dispatch") {
+                (
+                    200,
+                    r#"[{"JobID":"m1","RobotID":"arm-3"},{"JobID":"m2","RobotID":"arm-4"}]"#,
+                )
+            } else if req.starts_with("GET /jobs/m1 ") {
+                (
+                    200,
+                    r#"{"ID":"m1","Status":"assigned","AssignedRobot":"arm-3"}"#,
+                )
+            } else {
+                (200, r#"{"ID":"x","Status":"pending"}"#)
+            }
+        });
+        let port = start_test_server_with_job_dispatcher(Some(jd_url));
+        post(port, "/missions", r#"{"id":"m1"}"#);
+        post(port, "/missions", r#"{"id":"m2"}"#);
+        post(port, "/missions/m1/cancel", "");
+        drain(&rx);
+
+        let (status, _) = post(port, "/missions/m2/auto-dispatch", "");
+        assert_eq!(status, 200);
+        let calls = drain(&rx);
+        let release = calls
+            .iter()
+            .find(|c| c.starts_with("POST /jobs/complete"))
+            .unwrap_or_else(|| panic!("the robot must be freed: {calls:?}"));
+        assert!(release.contains("\"id\":\"m1\""));
+        assert!(release.contains("\"success\":false"));
+        assert!(release.contains("\"robotId\":\"arm-3\""));
+        let (_, m1) = get(port, "/missions/m1");
+        assert!(
+            m1.contains("Cancelled"),
+            "the mission stays cancelled: {m1}"
+        );
+    }
+
+    #[test]
+    fn missions_can_be_listed_by_state_and_counted() {
+        let _guard = net_test_lock();
+        let port = start_test_server();
+        post(port, "/missions", r#"{"id":"a"}"#);
+        post(port, "/missions", r#"{"id":"b"}"#);
+        post(port, "/missions/b/cancel", "");
+        let (_, pending) = get(port, "/missions?state=pending");
+        assert!(
+            pending.contains("\"a\"") && !pending.contains("\"b\""),
+            "{pending}"
+        );
+        let (_, cancelled) = get(port, "/missions?state=Cancelled");
+        assert!(cancelled.contains("\"b\"") && !cancelled.contains("\"a\""));
+        let (_, page) = get(port, "/missions?limit=1&offset=1");
+        assert!(page.contains("\"b\"") && !page.contains("\"a\""), "{page}");
+        let (_, stats) = get(port, "/stats");
+        assert!(stats.contains("\"missionCount\":2"), "{stats}");
+        assert!(stats.contains("\"Cancelled\":1"), "{stats}");
+        assert!(stats.contains("\"pendingRemoteCloses\":0"), "{stats}");
+    }
+
+    #[test]
+    fn a_slow_upload_does_not_stop_the_other_requests() {
+        let _guard = net_test_lock();
+        let port = start_test_server();
+        // announces 60000 bytes, sends one, and keeps the connection open
+        let mut slow = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        slow.write_all(
+            b"POST /missions HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\nContent-Length: 60000\r\n\r\n{",
+        )
+        .unwrap();
+        thread::sleep(std::time::Duration::from_millis(200));
+        let started = std::time::Instant::now();
+        assert_eq!(get(port, "/health").0, 200);
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
+        drop(slow);
+    }
+
+    #[test]
+    fn a_body_that_announces_more_than_the_limit_is_refused_without_reading_it() {
+        let _guard = net_test_lock();
+        let port = start_test_server();
+        let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        stream
+            .set_read_timeout(Some(std::time::Duration::from_secs(3)))
+            .unwrap();
+        stream
+            .write_all(
+                b"POST /missions HTTP/1.1\r\nHost: x\r\nContent-Length: 5000000\r\nConnection: close\r\n\r\n",
+            )
+            .unwrap();
+        let mut raw = String::new();
+        let _ = stream.read_to_string(&mut raw);
+        assert!(raw.starts_with("HTTP/1.1 413"), "{raw}");
+    }
+
+    #[test]
+    fn a_job_dispatcher_that_never_answers_does_not_freeze_the_api() {
+        let _guard = net_test_lock();
+        // accepts connections and never replies
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let jd_port = listener.local_addr().unwrap().port();
+        thread::spawn(move || {
+            let mut held = Vec::new();
+            for stream in listener.incoming().flatten() {
+                held.push(stream);
+            }
+        });
+        let port =
+            start_test_server_with_job_dispatcher(Some(format!("http://127.0.0.1:{jd_port}")));
+        let blocked = thread::spawn(move || post(port, "/missions", r#"{"id":"m1"}"#));
+        thread::sleep(std::time::Duration::from_millis(300));
+        let started = std::time::Instant::now();
+        assert_eq!(get(port, "/health").0, 200);
+        assert!(started.elapsed() < std::time::Duration::from_secs(1));
+        let (status, body) = blocked.join().unwrap();
+        assert_eq!(
+            status, 200,
+            "the mission exists whatever job-dispatcher does"
+        );
+        assert!(body.contains("\"submitted\":false"), "{body}");
+    }
+
+    #[test]
+    fn a_close_that_keeps_failing_is_retried_less_and_less_often() {
+        let mut schedule = RetrySchedule::default();
+        let t0 = Instant::now();
+        assert!(schedule.is_due("m1", t0));
+        schedule.failed("m1", t0);
+        assert!(!schedule.is_due("m1", t0 + Duration::from_secs(10)));
+        assert!(schedule.is_due("m1", t0 + Duration::from_secs(61)));
+        // many failures: capped
+        for _ in 0..20 {
+            schedule.failed("m1", t0);
+        }
+        assert!(!schedule.is_due("m1", t0 + REMOTE_CLOSE_MAX_BACKOFF - Duration::from_secs(1)));
+        assert!(schedule.is_due("m1", t0 + REMOTE_CLOSE_MAX_BACKOFF));
+        schedule.succeeded("m1");
+        assert!(schedule.is_due("m1", t0));
+    }
+
+    /// Contract test against the real Job-Dispatcher binary. Skipped unless
+    /// `HYDRA_UMC_JOB_DISPATCHER_BIN` names a built `hydra-umc-job-dispatcher`;
+    /// with it, the whole chain runs: add -> auto-dispatch -> start ->
+    /// complete / cancel / recover, checked on the dispatcher's own state.
+    #[test]
+    fn the_chain_works_against_the_real_job_dispatcher() {
+        let Ok(bin) = std::env::var("HYDRA_UMC_JOB_DISPATCHER_BIN") else {
+            eprintln!("skipped: HYDRA_UMC_JOB_DISPATCHER_BIN is not set");
+            return;
+        };
+        let _guard = net_test_lock();
+        let jd_port = {
+            let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            l.local_addr().unwrap().port()
+        };
+        struct Kill(std::process::Child);
+        impl Drop for Kill {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+            }
+        }
+        let _jd = Kill(
+            std::process::Command::new(bin)
+                .args([
+                    "-addr",
+                    &format!("127.0.0.1:{jd_port}"),
+                    "-robot-timeout",
+                    "0",
+                ])
+                .stdout(std::process::Stdio::null())
+                .spawn()
+                .expect("the dispatcher binary must start"),
+        );
+        let jd = format!("http://127.0.0.1:{jd_port}");
+        for _ in 0..50 {
+            if TcpStream::connect(("127.0.0.1", jd_port)).is_ok() {
+                break;
+            }
+            thread::sleep(std::time::Duration::from_millis(100));
+        }
+        let jd_post = |path: &str, body: &str| {
+            let (status, text) = request(jd_port, "POST", path, body);
+            assert!(status < 300, "{path}: {status} {text}");
+        };
+        jd_post("/robots", r#"{"id":"arm-1","available":true}"#);
+        jd_post("/robots", r#"{"id":"arm-2","available":true}"#);
+
+        let port = start_test_server_with_job_dispatcher(Some(jd.clone()));
+        let job_status = |id: &str| get_url(jd_port, &format!("/jobs/{id}"));
+        // 1. the whole happy path frees the robot
+        post(port, "/missions", r#"{"id":"m1"}"#);
+        post(port, "/missions/m1/auto-dispatch", "");
+        post(port, "/missions/m1/start", "");
+        let (_, done) = post(port, "/missions/m1/complete", "");
+        assert!(done.contains("\"remote_close_confirmed\":true"), "{done}");
+        assert!(
+            job_status("m1").contains("\"done\""),
+            "{}",
+            job_status("m1")
+        );
+        let robots = get_url(jd_port, "/robots");
+        assert!(!robots.contains("\"Available\":false"), "{robots}");
+
+        // 2. cancelling a queued mission withdraws its job
+        post(port, "/missions", r#"{"id":"m2"}"#);
+        post(port, "/missions/m2/cancel", "");
+        assert!(
+            job_status("m2").contains("cancelled"),
+            "{}",
+            job_status("m2")
+        );
+
+        // 3. a node declared down gets its job back in the queue, and the robot is held
+        post(port, "/missions", r#"{"id":"m3"}"#);
+        post(port, "/missions/m3/auto-dispatch", "");
+        let (_, m3) = get(port, "/missions/m3");
+        let node = if m3.contains("arm-1") {
+            "arm-1"
+        } else {
+            "arm-2"
+        };
+        let (status, body) = post(port, &format!("/nodes/{node}/recover"), "");
+        assert_eq!(status, 200, "{body}");
+        assert!(
+            job_status("m3").contains("\"pending\""),
+            "{}",
+            job_status("m3")
+        );
+        let (_, assigned) = post(port, "/missions/m3/auto-dispatch", "");
+        assert!(
+            assigned.contains("\"assigned\":true") && !assigned.contains(node),
+            "the job must go to the other robot: {assigned}"
+        );
+    }
+
+    fn get_url(port: u16, path: &str) -> String {
+        request(port, "GET", path, "").1
     }
 }

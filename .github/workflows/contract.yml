@@ -1,0 +1,45 @@
+# =============================================================================
+# HYDRA-UMC-ORCHESTRATOR - contract test against the real JOB-DISPATCHER
+# Copyright (C) 2026 JuanenRac (Electro Hobby 3D) <electrohobby3d@gmail.com>
+# GPL-3.0 - see LICENSE
+# =============================================================================
+name: JOB-DISPATCHER contract
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    name: Chain against the real JOB-DISPATCHER
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+      - name: Check out JOB-DISPATCHER
+        uses: actions/checkout@v5
+        with:
+          repository: JuanenRac/HYDRA-UMC-JOB-DISPATCHER
+          path: job-dispatcher
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Check the compose file
+        run: python tools/verify_compose.py
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - name: Build JOB-DISPATCHER
+        run: cd job-dispatcher && go build -o ../job-dispatcher-bin .
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Run the chain against it
+        env:
+          HYDRA_UMC_JOB_DISPATCHER_BIN: ${{ github.workspace }}/job-dispatcher-bin
+        run: cargo test the_chain_works_against_the_real_job_dispatcher -- --nocapture
