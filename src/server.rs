@@ -2235,8 +2235,11 @@ mod tests {
                 b"POST /missions HTTP/1.1\r\nHost: x\r\nContent-Length: 5000000\r\nConnection: close\r\n\r\n",
             )
             .unwrap();
-        let mut raw = String::new();
-        let _ = stream.read_to_string(&mut raw);
+        // the node answers at once but keeps the connection open while it
+        // waits for the body it refused: one read is enough
+        let mut buf = [0u8; 512];
+        let n = stream.read(&mut buf).unwrap_or(0);
+        let raw = String::from_utf8_lossy(&buf[..n]).to_string();
         assert!(raw.starts_with("HTTP/1.1 413"), "{raw}");
     }
 
