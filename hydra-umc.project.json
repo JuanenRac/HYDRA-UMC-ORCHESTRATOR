@@ -2,7 +2,7 @@
   "schema_version": "1.0",
   "ecosystem": "HYDRA-UMC",
   "name": "HYDRA-UMC-ORCHESTRATOR",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "role": "service",
   "stack": "rust",
   "technologies": [
@@ -12,11 +12,11 @@
     "JSON/HTTP"
   ],
   "deployment_target": "cm5",
-  "maturity": "established",
+  "maturity": "functional",
   "family": "Orchestration & Swarm",
   "parent": null,
   "build": "cargo build --release.",
-  "notes": "Established v0: a real mission state machine (src/mission.rs: Pending, Dispatched, InProgress, Completed, Cancelled, Failed, Unknown after an unclean restart; idempotent cancel; node-failure recovery; an attempt number that fences late reports and moves forward on every dispatch and every requeue) kept on disk, served over plain JSON/HTTP (tiny_http, a pool of worker threads) with an optional bearer token. src/job_dispatcher.rs is a real HTTP client for HYDRA-UMC-JOB-DISPATCHER (submit with routing hints, dispatch pass, close by cancelling queued work or completing assigned work, requeue after a lost node) with connect and total timeouts. A mission's terminal outcome is recorded as unconfirmed in the registry and in a durable outbox (src/outbox.rs) before the dispatcher is asked, and retried with backoff. HYDRA-UMC-NODE-HEALING calls POST /nodes/:node/recover. The shared gRPC contract in proto/ is not used by this binary. Contract test against the real dispatcher binary (HYDRA_UMC_JOB_DISPATCHER_BIN). 111 tests.",
+  "notes": "Functional v0: a real mission state machine (src/mission.rs: Pending, Dispatched, InProgress, Completed, Cancelled, Failed, Unknown after an unclean restart; idempotent cancel; node-failure recovery; an attempt number that fences late reports and moves forward on every dispatch and every requeue) kept on disk, served over plain JSON/HTTP (tiny_http, a pool of worker threads) with an optional bearer token. src/job_dispatcher.rs is a real HTTP client for HYDRA-UMC-JOB-DISPATCHER (submit with routing hints, dispatch pass, close by cancelling queued work or completing assigned work, requeue after a lost node) with connect and total timeouts. A mission's terminal outcome is recorded as unconfirmed in the registry and in a durable outbox (src/outbox.rs) before the dispatcher is asked, and retried with backoff. HYDRA-UMC-NODE-HEALING calls POST /nodes/:node/recover. The shared gRPC contract in proto/ is not used by this binary. Contract test against the real dispatcher binary (HYDRA_UMC_JOB_DISPATCHER_BIN). 111 tests.",
   "native_version": {
     "file": "Cargo.toml",
     "pattern": "^version\\s*=\\s*\"(\\d+)\\.(\\d+)\\.(\\d+)\""
