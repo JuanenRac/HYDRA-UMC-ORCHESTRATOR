@@ -21,6 +21,17 @@
 
 ---
 
+## 📋 ひと目で
+
+| | |
+|---|---|
+| バージョン | `0.1.7` |
+| 成熟度 | 確立 |
+| テスト | 111 (`cargo test`) |
+| 技術 | Rust / tiny_http / ureq / JSON/HTTP |
+| 対象 | HYDRA-UMC セルの Raspberry Pi CM5 |
+| 実機での確認 | まだです：このバージョンについて実機での動作記録はありません |
+
 ## 1. 🛠️ 技術概要
 
 **HYDRA-UMC-ORCHESTRATOR** は、HYDRA-UMC エコシステムの高レベル調整層

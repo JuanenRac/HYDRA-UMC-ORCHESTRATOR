@@ -21,6 +21,17 @@
 
 ---
 
+## 📋 Num relance
+
+| | |
+|---|---|
+| Versão | `0.1.7` |
+| Maturidade | Estabelecido |
+| Testes | 111 (`cargo test`) |
+| Tecnologia | Rust / tiny_http / ureq / JSON/HTTP |
+| Destino | O Raspberry Pi CM5 de uma célula HYDRA-UMC |
+| Em hardware real | Ainda não: não há registo de execução em hardware real para esta versão |
+
 ## 1. 🛠️ VISÃO TÉCNICA GERAL
 
 O **HYDRA-UMC-ORCHESTRATOR** é a camada de coordenação de alto nível do ecossistema HYDRA-UMC. Gere vários HydraNodes (cérebros cinemáticos, nós de visão e nós cognitivos) como um único enxame unificado.
