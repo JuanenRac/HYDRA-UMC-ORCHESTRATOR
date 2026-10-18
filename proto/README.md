@@ -16,9 +16,9 @@ copy, not a rewrite.
 
 ## Files
 
-- **`hydra_common.proto`** — the one contract every node implements
-  without exception: `NodeIdentity`, `HealthReport`, and `HealthService`.
-  This is what lets [HYDRA-UMC-NODE-HEALING](https://github.com/JuanenRac/HYDRA-UMC-NODE-HEALING)
+- **`hydra_common.proto`** — the one contract every node is meant to implement:
+  `NodeIdentity`, `HealthReport`, and `HealthService`. No node serves it over
+  gRPC yet (NODE-HEALING probes each node's HTTP health route today). It is what lets [HYDRA-UMC-NODE-HEALING](https://github.com/JuanenRac/HYDRA-UMC-NODE-HEALING)
   probe any node in the ecosystem the same way, instead of each family
   inventing its own ad-hoc health check.
 

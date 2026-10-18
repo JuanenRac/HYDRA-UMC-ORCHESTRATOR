@@ -87,8 +87,10 @@ message HealthReport {
 
 message Empty {}
 
-// The one service every node is expected to implement, no exceptions.
-// HYDRA-UMC-NODE-HEALING is the primary client, but any node may probe
+// The one service every node is meant to implement. No node serves it over
+// gRPC yet: HYDRA-UMC-NODE-HEALING probes each node's HTTP health route
+// (`healthUrl`) today, and this contract is the target for when a node
+// does. HYDRA-UMC-NODE-HEALING is the primary client, but any node may probe
 // any other node (e.g. HYDRA-UMC-ORCHESTRATOR checking on
 // HYDRA-UMC-JOB-DISPATCHER before assigning it work).
 service HealthService {
