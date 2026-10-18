@@ -1258,3 +1258,174 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 }
+
+#[cfg(test)]
+mod edge_tests {
+    use super::*;
+
+    fn temp_file(name: &str, content: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "orchestrator-edge-{}-{name}.json",
+            std::process::id()
+        ));
+        fs::write(&path, content).unwrap();
+        path
+    }
+
+    #[test]
+    fn mission_id_length_and_alphabet_boundaries() {
+        assert!(is_valid_mission_id(&"a".repeat(128)));
+        assert!(!is_valid_mission_id(&"a".repeat(129)));
+        for bad in [
+            "",
+            "a b",
+            "a/b",
+            "a\\b",
+            "..%2F",
+            "a?b",
+            "a#b",
+            "mision-\u{f1}",
+            "a\nb",
+            "a\0b",
+        ] {
+            assert!(!is_valid_mission_id(bad), "{bad:?} must be refused");
+        }
+        for good in [".", "..", "_", "-", "A.b_C-9"] {
+            assert!(is_valid_mission_id(good), "{good:?} must be accepted");
+        }
+    }
+
+    #[test]
+    fn a_corrupt_registry_file_is_refused_not_silently_replaced_by_an_empty_one() {
+        for (name, content) in [
+            ("garbage", "not json"),
+            ("truncated", "{\"missions\":[{\"id\":\"m1\""),
+            ("empty", ""),
+        ] {
+            let path = temp_file(name, content);
+            let err = MissionRegistry::load(path.clone())
+                .map(|_| ())
+                .expect_err("a corrupt file must not load");
+            assert_eq!(err.kind(), io::ErrorKind::InvalidData, "{name}");
+            // The bytes on disk are untouched, so an operator can still inspect them.
+            assert_eq!(fs::read_to_string(&path).unwrap(), content);
+            fs::remove_file(&path).ok();
+        }
+    }
+
+    #[test]
+    fn resolve_unknown_as_pending_only_touches_unknown_missions() {
+        let mut m = Mission::new("m1");
+        m.dispatch("node-a").unwrap();
+        let attempt = m.attempt;
+        m.resolve_unknown_as_pending();
+        assert_eq!(
+            m.state,
+            MissionState::Dispatched {
+                node: "node-a".into()
+            }
+        );
+        assert_eq!(
+            m.attempt, attempt,
+            "a mission that was never unknown keeps its attempt"
+        );
+
+        m.mark_unknown("node-a".into());
+        m.resolve_unknown_as_pending();
+        assert_eq!(m.state, MissionState::Pending);
+        assert_eq!(
+            m.attempt,
+            attempt + 1,
+            "the holder before the restart is fenced out"
+        );
+        m.resolve_unknown_as_pending();
+        assert_eq!(
+            m.attempt,
+            attempt + 1,
+            "resolving twice must not bump twice"
+        );
+    }
+
+    #[test]
+    fn the_stale_attempt_is_reported_before_the_wrong_node() {
+        let mut m = Mission::new("m1");
+        m.dispatch("node-a").unwrap();
+        assert_eq!(
+            m.check_fence(Some(99), Some("other"), true),
+            Err(FenceError::StaleAttempt {
+                reported: 99,
+                current: 1
+            })
+        );
+    }
+
+    #[test]
+    fn nobody_can_report_on_a_mission_that_is_over_or_unknown() {
+        let mut done = Mission::new("done");
+        done.dispatch("node-a").unwrap();
+        done.start().unwrap();
+        done.complete().unwrap();
+        assert_eq!(
+            done.check_fence(Some(1), Some("node-a"), true),
+            Err(FenceError::WrongNode {
+                reported: "node-a".into()
+            })
+        );
+        let mut unknown = Mission::new("unknown");
+        unknown.dispatch("node-a").unwrap();
+        unknown.mark_unknown("node-a".into());
+        assert_eq!(
+            unknown.check_fence(None, Some("node-a"), false),
+            Err(FenceError::WrongNode {
+                reported: "node-a".into()
+            })
+        );
+    }
+
+    #[test]
+    fn the_remote_close_flag_defaults_to_confirmed_and_survives_a_round_trip() {
+        let mut m = Mission::new("m1");
+        assert!(m.remote_close_confirmed);
+        m.mark_remote_close_pending();
+        let json = serde_json::to_string(&m).unwrap();
+        let back: Mission = serde_json::from_str(&json).unwrap();
+        assert!(!back.remote_close_confirmed);
+        m.mark_remote_close_confirmed();
+        assert!(m.remote_close_confirmed);
+
+        // A record written before the flag existed means "nothing to confirm".
+        let mut value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        value
+            .as_object_mut()
+            .unwrap()
+            .remove("remote_close_confirmed");
+        let old: Mission =
+            serde_json::from_value(value).expect("an old mission record still loads");
+        assert!(old.remote_close_confirmed);
+    }
+
+    #[test]
+    fn recovery_for_a_node_does_not_touch_a_pending_mission() {
+        let mut reg = MissionRegistry::new();
+        reg.add("p");
+        let affected = reg.recover_node_unavailable("node-a");
+        assert!(affected.is_empty());
+        assert_eq!(reg.get("p").unwrap().attempt, 0);
+        assert!(reg.get("missing").is_none());
+        assert!(reg.get_mut("missing").is_none());
+    }
+
+    #[test]
+    fn adding_the_same_id_twice_does_not_reset_a_running_mission() {
+        let mut reg = MissionRegistry::new();
+        reg.add("m1").dispatch("node-a").unwrap();
+        let again = reg.add("m1");
+        assert_eq!(
+            again.state,
+            MissionState::Dispatched {
+                node: "node-a".into()
+            }
+        );
+        assert_eq!(again.attempt, 1);
+    }
+}

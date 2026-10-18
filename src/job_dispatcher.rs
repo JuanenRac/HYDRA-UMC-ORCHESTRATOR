@@ -657,3 +657,37 @@ mod tests {
         assert_eq!(path_segment("a b/c"), "a%20b%2Fc");
     }
 }
+
+#[cfg(test)]
+mod edge_tests {
+    use super::*;
+
+    #[test]
+    fn only_the_dispatchers_own_json_error_counts_as_an_unknown_job() {
+        assert!(is_json_error(r#"{"error":"unknown job"}"#));
+        assert!(!is_json_error("404 page not found\n"));
+        assert!(!is_json_error(""));
+        assert!(!is_json_error("[]"));
+        assert!(!is_json_error(r#"{"message":"nope"}"#));
+    }
+
+    #[test]
+    fn path_segments_encode_every_reserved_and_non_ascii_byte() {
+        assert_eq!(path_segment(""), "");
+        assert_eq!(path_segment("a?b#c"), "a%3Fb%23c");
+        assert_eq!(path_segment("..%2F"), "..%252F");
+        assert_eq!(path_segment("\u{f1}"), "%C3%B1");
+        assert_eq!(path_segment("a~b"), "a~b");
+        assert_eq!(path_segment("a\nb"), "a%0Ab");
+    }
+
+    #[test]
+    fn client_errors_say_which_side_failed() {
+        assert!(ClientError::Unreachable("refused".into())
+            .to_string()
+            .contains("unreachable"));
+        assert!(ClientError::BadResponse("HTTP 500".into())
+            .to_string()
+            .contains("unexpected response"));
+    }
+}

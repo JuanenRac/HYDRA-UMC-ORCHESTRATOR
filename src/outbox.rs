@@ -275,3 +275,89 @@ mod tests {
         fs::remove_file(&path).ok();
     }
 }
+
+#[cfg(test)]
+mod edge_tests {
+    use super::*;
+
+    fn temp_file(name: &str, content: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "orchestrator-outbox-edge-{}-{name}.json",
+            std::process::id()
+        ));
+        fs::write(&path, content).unwrap();
+        path
+    }
+
+    #[test]
+    fn a_corrupt_outbox_is_refused_because_it_may_hold_a_real_pending_close() {
+        for (name, content) in [
+            ("garbage", "garbage"),
+            ("blank", ""),
+            ("wrong-shape", "[1,2,3]"),
+        ] {
+            let path = temp_file(name, content);
+            let err = RemoteCloseOutbox::load(path.clone())
+                .map(|_| ())
+                .expect_err("must not load");
+            assert_eq!(err.kind(), io::ErrorKind::InvalidData, "{name}");
+            assert_eq!(
+                fs::read_to_string(&path).unwrap(),
+                content,
+                "the file is left for inspection"
+            );
+            fs::remove_file(&path).ok();
+        }
+    }
+
+    #[test]
+    fn pending_is_sorted_and_keeps_the_success_flag_of_each_mission() {
+        let path = std::env::temp_dir().join(format!(
+            "orchestrator-outbox-edge-{}-order.json",
+            std::process::id()
+        ));
+        fs::remove_file(&path).ok();
+        let outbox = RemoteCloseOutbox::load(path.clone()).unwrap();
+        outbox.mark_pending("b", false);
+        outbox.mark_pending("a", true);
+        outbox.mark_pending("c", false);
+        let pending = outbox.pending();
+        let ids: Vec<&str> = pending.iter().map(|p| p.mission_id.as_str()).collect();
+        assert_eq!(ids, ["a", "b", "c"]);
+        assert!(pending[0].success && !pending[1].success && !pending[2].success);
+        // A reload sees exactly the same worklist.
+        let reloaded = RemoteCloseOutbox::load(path.clone()).unwrap();
+        assert_eq!(reloaded.pending().len(), 3);
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn confirming_the_last_entry_leaves_an_empty_persisted_outbox() {
+        let path = std::env::temp_dir().join(format!(
+            "orchestrator-outbox-edge-{}-emptied.json",
+            std::process::id()
+        ));
+        fs::remove_file(&path).ok();
+        let outbox = RemoteCloseOutbox::load(path.clone()).unwrap();
+        outbox.mark_pending("m1", true);
+        outbox.mark_confirmed("m1");
+        assert!(RemoteCloseOutbox::load(path.clone())
+            .unwrap()
+            .pending()
+            .is_empty());
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn a_pending_close_is_stored_even_when_the_parent_directories_do_not_exist() {
+        let dir = std::env::temp_dir().join(format!(
+            "orchestrator-outbox-edge-{}-nested",
+            std::process::id()
+        ));
+        let path = dir.join("a").join("b").join("outbox.json");
+        let outbox = RemoteCloseOutbox::load(path.clone()).unwrap();
+        outbox.mark_pending("m1", true);
+        assert!(path.exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+}
