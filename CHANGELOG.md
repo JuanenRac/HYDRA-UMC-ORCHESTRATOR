@@ -4,6 +4,7 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- The banner follows the animated style of the ecosystem banners, with the name, the kind and the technologies of the project.
 - Added `tools/hydra_project_tool.py`: the same `validate`, `test`, `version`, `status` and `bump` commands in every repository. The checks run with `HYDRA_UMC_CI=1` and fail if the version changes; only `bump` changes it.
 - CI now runs `tools/verify_compose.py` (every token and secret of the stack is required with `${VAR:?}`, including the swarm-sync shared secret; published ports stay on the loopback interface) and, when Docker Compose is available on the runner, `docker compose config`; a separate advisory job builds and starts the whole stack and probes `/health` of the orchestrator, then tears it down. The advisory job cannot turn the baseline red.
 - The README counters say 126 tests.
