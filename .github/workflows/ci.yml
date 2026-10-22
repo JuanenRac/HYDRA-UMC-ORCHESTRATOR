@@ -43,6 +43,25 @@ jobs:
         env:
           PYTHONPATH: clients/python/src
         run: python -m unittest discover -s clients/python/tests -v
+      - name: Check the compose file structure and its secret policy
+        if: ${{ hashFiles('tools/verify_compose.py') != '' }}
+        run: python tools/verify_compose.py
+      - name: Validate the compose file with Docker Compose when Docker is available
+        if: ${{ hashFiles('docker-compose.yml') != '' }}
+        env:
+          # placeholders so that the required variables resolve; nothing here is a real secret
+          ORCHESTRATOR_TOKEN: ci-placeholder-not-a-secret
+          JOB_DISPATCHER_TOKEN: ci-placeholder-not-a-secret
+          SWARM_SYNC_SHARED_SECRET: ci-placeholder-not-a-secret
+        run: |
+          if ! command -v docker >/dev/null 2>&1 || ! docker compose version >/dev/null 2>&1; then
+            echo "DOCKER_COMPOSE_CONFIG=SKIPPED Docker Compose is not available on this runner"
+            exit 0
+          fi
+          # the build contexts are sibling checkouts; `config` only needs the folders to exist
+          mkdir -p ../HYDRA-UMC-JOB-DISPATCHER ../HYDRA-UMC-NODE-HEALING ../HYDRA-UMC-SWARM-SYNC ../HYDRA-UMC-PATH-PLANNER-3D
+          docker compose config --quiet
+          echo "DOCKER_COMPOSE_CONFIG=PASS"
       - name: Set up Node.js
         if: ${{ hashFiles('package.json') != '' }}
         uses: actions/setup-node@v5
@@ -121,3 +140,45 @@ jobs:
         run: |
           chmod +x build_firmware.sh
           ./build_firmware.sh
+
+  stack:
+    name: Start the compose stack and probe /health (advisory)
+    # Builds four images from sibling checkouts, so it takes several minutes and depends on the runner's Docker; a
+    # failure here is reported in the run but does not turn the baseline red.
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 40
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+      - name: Skip when Docker Compose is not available
+        id: docker
+        run: |
+          if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then echo "available=true" >> "$GITHUB_OUTPUT"; else echo "available=false" >> "$GITHUB_OUTPUT"; echo "COMPOSE_UP=SKIPPED Docker Compose is not available on this runner"; fi
+      - name: Fetch the sibling repositories the stack builds from
+        if: ${{ steps.docker.outputs.available == 'true' }}
+        run: |
+          for repository in HYDRA-UMC-JOB-DISPATCHER HYDRA-UMC-NODE-HEALING HYDRA-UMC-SWARM-SYNC HYDRA-UMC-PATH-PLANNER-3D; do
+            git clone --quiet --depth 1 "https://github.com/JuanenRac/${repository}.git" "../${repository}"
+          done
+      - name: Start the stack
+        if: ${{ steps.docker.outputs.available == 'true' }}
+        run: |
+          {
+            echo "ORCHESTRATOR_TOKEN=$(openssl rand -hex 32)"
+            echo "JOB_DISPATCHER_TOKEN=$(openssl rand -hex 32)"
+            echo "SWARM_SYNC_SHARED_SECRET=$(openssl rand -hex 32)"
+          } > .env
+          docker compose up --build --detach --wait --wait-timeout 900
+      - name: Probe the published health endpoint
+        if: ${{ steps.docker.outputs.available == 'true' }}
+        run: |
+          curl --fail --silent --show-error --retry 5 --retry-delay 3 --retry-connrefused http://127.0.0.1:8114/health
+          echo
+          echo "COMPOSE_UP=PASS"
+      - name: Show the logs when it failed
+        if: ${{ failure() && steps.docker.outputs.available == 'true' }}
+        run: docker compose logs --no-color --tail 80
+      - name: Stop the stack
+        if: ${{ always() && steps.docker.outputs.available == 'true' }}
+        run: docker compose down --volumes --remove-orphans

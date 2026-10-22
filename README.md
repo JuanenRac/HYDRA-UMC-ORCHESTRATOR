@@ -17,7 +17,7 @@
 
 ---
 
-**Honesty check - what actually runs today:** the mission state machine (`src/mission.rs`: `Mission`/`MissionRegistry`, every `Pending -> Dispatched -> InProgress -> Completed`/`Cancelled`/`Failed` transition, idempotent cancel, node-failure recovery), its own disk persistence (`MissionRegistry::load`/`persist`, `data/missions.json`), the durable pending-remote-close outbox (`src/outbox.rs`), the real HTTP client to HYDRA-UMC-JOB-DISPATCHER (`src/job_dispatcher.rs`), and the plain JSON/HTTP server exposing all of it (`src/server.rs`, `tiny_http`, no async runtime) are real and tested (111 tests, `cargo test`). The `mission-demo` CLI subcommand runs a real end-to-end scenario against that same `MissionRegistry` - not a mock. What is still aspirational: the "Planned internal layers" in section 3 below (API layer, PTP-synced dispatch, fleet health aggregation as a standing service) describe design intent, not code that exists yet; there is no gRPC wiring from this repo to a live JOB-DISPATCHER or NODE-HEALING process, no PATH-PLANNER-3D/SWARM-SYNC integration, and no live multi-node fleet has ever run against this binary - `docker-compose.yml` builds and starts the 3 sibling services together, but that has not been exercised against real robot hardware. See `CHANGELOG.md` for exactly what has shipped so far, and the ROADMAP below for what remains open.
+**Honesty check - what actually runs today:** the mission state machine (`src/mission.rs`: `Mission`/`MissionRegistry`, every `Pending -> Dispatched -> InProgress -> Completed`/`Cancelled`/`Failed` transition, idempotent cancel, node-failure recovery), its own disk persistence (`MissionRegistry::load`/`persist`, `data/missions.json`), the durable pending-remote-close outbox (`src/outbox.rs`), the real HTTP client to HYDRA-UMC-JOB-DISPATCHER (`src/job_dispatcher.rs`), and the plain JSON/HTTP server exposing all of it (`src/server.rs`, `tiny_http`, no async runtime) are real and tested (126 tests, `cargo test`). The `mission-demo` CLI subcommand runs a real end-to-end scenario against that same `MissionRegistry` - not a mock. What is still aspirational: the "Planned internal layers" in section 3 below (API layer, PTP-synced dispatch, fleet health aggregation as a standing service) describe design intent, not code that exists yet; there is no gRPC wiring from this repo to a live JOB-DISPATCHER or NODE-HEALING process, no PATH-PLANNER-3D/SWARM-SYNC integration, and no live multi-node fleet has ever run against this binary - `docker-compose.yml` builds and starts the 3 sibling services together, but that has not been exercised against real robot hardware. See `CHANGELOG.md` for exactly what has shipped so far, and the ROADMAP below for what remains open.
 
 ---
 
@@ -29,7 +29,7 @@
 |---|---|
 | Version | `0.1.8` |
 | Maturity | Functional |
-| Tests | 111 (`cargo test`) |
+| Tests | 126 (`cargo test`) |
 | Stack | Rust / tiny_http / ureq / JSON/HTTP |
 | Target | The Raspberry Pi CM5 of a HYDRA-UMC cell |
 | On real hardware | Not yet: no run on real hardware is recorded for this version |
@@ -211,7 +211,7 @@ odometer rule, see `bump_version.py`) and then run `cargo build --release`.
 ```
 
 ```bash
-cargo test   # 111 tests: mission.rs's transitions/invalid-transition
+cargo test   # 126 tests: mission.rs's transitions/invalid-transition
              # rejections/idempotent cancel/node-failure recovery, plus
              # outbox.rs's crash-safe persistence, job_dispatcher.rs's
              # real HTTP client, and server.rs's HTTP handlers

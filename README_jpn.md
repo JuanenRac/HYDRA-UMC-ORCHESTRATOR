@@ -29,7 +29,7 @@
 |---|---|
 | バージョン | `0.1.8` |
 | 成熟度 | 機能する |
-| テスト | 111 (`cargo test`) |
+| テスト | 126 (`cargo test`) |
 | 技術 | Rust / tiny_http / ureq / JSON/HTTP |
 | 対象 | HYDRA-UMC セルの Raspberry Pi CM5 |
 | 実機での確認 | まだです：このバージョンについて実機での動作記録はありません |
@@ -190,7 +190,7 @@ run.bat mission-demo
 ```
 
 ```bash
-cargo test   # 111 件のテスト：mission.rs の全状態遷移・不正な遷移の拒否・
+cargo test   # 126 件のテスト：mission.rs の全状態遷移・不正な遷移の拒否・
              # 冪等なキャンセル・ノード障害後のリカバリーに加え、
              # outbox.rs のクラッシュに強い永続化、job_dispatcher.rs の
              # 実際のHTTPクライアント、server.rs のHTTPハンドラー
