@@ -1,4 +1,4 @@
-# Changelog: HYDRA-UMC-ORCHESTRATOR 🕸️
+# Changelog
 
 All notable changes to this project are documented here.
 
@@ -366,7 +366,6 @@ fix (against a real fake Job-Dispatcher, no mocked HTTP):
 - Fixed `build.sh`: called `bump_manifest_version.py` (no `--sync`) before `bump_version.py`, double-bumping the native version one step ahead of the manifest - reordered to match `build.bat`'s already-correct native-bump-then-sync sequence (same fix already applied to `HYDRA-UMC-HIL-BRIDGE` and `HYDRA-UMC-NODE-HEALING`).
 
 ## [0.0.2]
-### Added
 - New `proto/hydra_common.proto` - the shared gRPC schema for node-to-node
   traffic across the ecosystem's Vision AI Node, Cognitive AI Node,
   Orchestration & Swarm, and Digital Twin & Simulation families. Defines
@@ -401,12 +400,10 @@ fix (against a real fake Job-Dispatcher, no mocked HTTP):
   of the ecosystem grouped by category).
 - This `CHANGELOG.md`.
 
-### Changed
 - Roadmap section reworded from calendar quarters to phase labels
   (Phase 1-4), across all 5 README languages.
 
 ## [0.0.0]
-### Added
 - Initial Rust skeleton: `Cargo.toml`, `src/main.rs` (prints identity and
   role, exits 0).
 - GPL-3.0 copyright headers on source and build scripts.
