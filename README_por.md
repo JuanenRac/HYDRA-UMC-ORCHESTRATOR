@@ -152,9 +152,9 @@ HYDRA-UMC-ORCHESTRATOR/
 │   ├── ci_validate.py # Validação de manifesto/CHANGELOG/docs usada pelo CI
 │   └── verify_compose.py # Verificações estáticas do docker-compose.yml (comandos, imagens fixadas, portas em loopback, tokens obrigatórios)
 ├── Cargo.toml        # Manifesto do pacote Rust (nome, versão, dependências)
-├── bump_version.py   # Subida de versão nativa estilo odómetro, executada por build.sh/.bat
+├── bump_version.py   # Subida de versão ao estilo conta-quilómetros (executada só pelo comando `bump` explícito)
 ├── bump_manifest_version.py # Sincroniza a versão do hydra-umc.project.json com a nativa (--sync)
-├── build.sh/.bat     # Sobe a versão e depois `cargo build --release`
+├── build.sh/.bat     # Valida e compila (compilar nunca altera a versão)
 ├── build-test.sh/.bat # Verificação de compilação sem subir versão (sem CHANGELOG/versão)
 ├── run.sh/.bat       # Executa o binário compilado
 ├── docker-compose.yml # Integra este repositório com os seus 3 filhos reais
@@ -183,7 +183,7 @@ run.bat mission-demo
 ./run.sh mission-demo
 ```
 
-O `build.sh`/`build.bat` sobe a versão no `Cargo.toml` (regra de odómetro de todo o ecossistema, ver `bump_version.py`) e depois executa `cargo build --release`. O `run.sh`/`run.bat` executa diretamente o binário resultante.
+`build.sh`/`build.bat` nunca altera a versão (só `python tools/hydra_project_tool.py bump` a sobe) e depois executa `cargo build --release`. O `run.sh`/`run.bat` executa diretamente o binário resultante.
 
 O `mission-demo` executa um cenário real de ponta a ponta sobre o `MissionRegistry` do `mission.rs` e imprime cada transição real:
 

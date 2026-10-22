@@ -15,7 +15,11 @@ import subprocess
 from pathlib import Path
 
 
-from _doc_policy import check_public_private_boundary
+from _doc_policy import (
+    check_build_scripts_do_not_bump,
+    check_public_private_boundary,
+    check_scripts_do_not_activate_venv,
+)
 from _readme_parity import check_readme_section_parity
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -261,6 +265,12 @@ def main() -> int:
     doc_policy_error = check_public_private_boundary(ROOT)
     if doc_policy_error:
         fail(doc_policy_error)
+    build_bump_error = check_build_scripts_do_not_bump(ROOT)
+    if build_bump_error:
+        fail(build_bump_error)
+    venv_activate_error = check_scripts_do_not_activate_venv(ROOT)
+    if venv_activate_error:
+        fail(venv_activate_error)
     for readme_problem in check_readme_section_parity(ROOT):
         fail(readme_problem)
 

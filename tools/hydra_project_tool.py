@@ -18,8 +18,9 @@ for them and the manifest version is compared before and after, so a build
 that bumps by itself fails here instead of leaving a dirty tree.
 `bump` is explicit. It refuses a dirty working tree (use `--allow-dirty`
 to override), runs the repository's own bump script when it has one and then
-synchronises the manifest, exactly like the build scripts do. `bump --dry-run`
-only prints the version it would produce.
+synchronises the manifest; an Android project (`bump_version_code.py`) also
+raises its versionCode. The build scripts never do any of this: building does
+not change a version. `bump --dry-run` only prints the version it would produce.
 
 This file is vendored into every repository from HYDRA-UMC-SDK
 (`tools/canonical/hydra_project_tool.py`, kept identical by
@@ -31,6 +32,7 @@ import argparse
 import importlib.util
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -119,8 +121,14 @@ def bump(root: Path = ROOT, allow_dirty: bool = False, dry_run: bool = False) ->
         return 1
     env = {key: value for key, value in os.environ.items() if key != "HYDRA_UMC_CI"}
     own = next((p for p in (root / "bump_version.py", root / "tools" / "bump_version.py") if p.is_file()), None)
+    dart_bump = root / "tool" / "bump_version.dart"
     if own is not None:
         steps = [[sys.executable, str(own)]]
+        if wanted is not None:
+            steps.append([sys.executable, str(root / "bump_manifest_version.py"), "--sync"])
+    elif dart_bump.is_file():
+        # a Flutter app: its own Dart script moves pubspec.yaml (version and build number), then the manifest follows
+        steps = [[shutil.which("dart") or "dart", "run", "tool/bump_version.dart"]]
         if wanted is not None:
             steps.append([sys.executable, str(root / "bump_manifest_version.py"), "--sync"])
     else:
@@ -128,6 +136,8 @@ def bump(root: Path = ROOT, allow_dirty: bool = False, dry_run: bool = False) ->
             print("PROJECT_TOOL=FAIL this repository has neither bump_version.py nor bump_manifest_version.py", file=sys.stderr)
             return 1
         steps = [[sys.executable, str(root / "bump_manifest_version.py")]]
+    if (root / "bump_version_code.py").is_file():
+        steps.append([sys.executable, str(root / "bump_version_code.py")])
     for step in steps:
         if _run(step, root, env) != 0:
             print("PROJECT_TOOL=FAIL the bump step failed; check git status before retrying", file=sys.stderr)

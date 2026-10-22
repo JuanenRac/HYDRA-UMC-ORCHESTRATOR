@@ -150,9 +150,9 @@ HYDRA-UMC-ORCHESTRATOR/
 │   ├── ci_validate.py # Validation manifeste/CHANGELOG/docs utilisée par CI
 │   └── verify_compose.py # Contrôles statiques de docker-compose.yml (commandes, images épinglées, ports en loopback, jetons obligatoires)
 ├── Cargo.toml        # Manifeste du paquet Rust (nom, version, dépendances)
-├── bump_version.py   # Incrément de version native type compteur kilométrique
+├── bump_version.py   # Incrément de version type compteur kilométrique (exécuté seulement par la commande `bump` explicite)
 ├── bump_manifest_version.py # Synchronise la version de hydra-umc.project.json avec la version native (--sync)
-├── build.sh/.bat     # Incrémente la version puis `cargo build --release`
+├── build.sh/.bat     # Valide et compile (compiler ne change jamais la version)
 ├── build-test.sh/.bat # Vérification de build sans versionnage
 ├── run.sh/.bat       # Exécute le binaire compilé
 ├── docker-compose.yml # Intègre ce dépôt avec ses 3 enfants réels
@@ -185,8 +185,7 @@ run.bat mission-demo
 ./run.sh mission-demo
 ```
 
-`build.sh`/`build.bat` incrémentent la version dans `Cargo.toml` (règle du
-compteur kilométrique de l'écosystème, voir `bump_version.py`) puis exécutent
+`build.sh`/`build.bat` ne changent jamais la version (seule `python tools/hydra_project_tool.py bump` la fait monter) puis exécutent
 `cargo build --release`. `run.sh`/`run.bat` exécutent directement le binaire
 résultant.
 

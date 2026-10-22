@@ -119,9 +119,9 @@ HYDRA-UMC-ORCHESTRATOR/
 │   ├── ci_validate.py # CI 使用的清单/CHANGELOG/文档校验
 │   └── verify_compose.py # docker-compose.yml 的静态检查（命令、固定镜像、回环端口、必需令牌）
 ├── Cargo.toml        # Rust 包清单（名称、版本、依赖项）
-├── bump_version.py   # 原生版本的里程表式递增，由 build.sh/.bat 运行
+├── bump_version.py   # 里程表式版本递增（仅由显式 `bump` 命令运行）
 ├── bump_manifest_version.py # 将 hydra-umc.project.json 的版本与原生版本同步(--sync)
-├── build.sh/.bat     # 递增版本号，然后执行 `cargo build --release`
+├── build.sh/.bat     # 然后执行 `cargo build --release`
 ├── build-test.sh/.bat # 不递增版本号的构建检查
 ├── run.sh/.bat       # 运行编译后的二进制文件
 ├── docker-compose.yml # 将本仓库与其 3 个实际子项目集成
@@ -153,8 +153,7 @@ run.bat mission-demo
 ./run.sh mission-demo
 ```
 
-`build.sh`/`build.bat` 会递增 `Cargo.toml` 中的版本号（生态系统统一的
-里程表规则，见 `bump_version.py`），然后执行 `cargo build --release`。
+`build.sh`/`build.bat` 不会更改版本号（只有 `python tools/hydra_project_tool.py bump` 才会提升），然后执行 `cargo build --release`。
 `run.sh`/`run.bat` 直接执行生成的二进制文件。
 
 `mission-demo` 会针对 `mission.rs` 的 `MissionRegistry` 完整运行一个真实

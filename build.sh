@@ -19,7 +19,7 @@ printf '%s\n' "* Email     : electrohobby3d@gmail.com"
 printf '%s\n' "* Copyright : (C) 2026 JuanenRac"
 printf '%s\n' "* License   : GPL-3.0-or-later - see LICENSE"
 printf '%s\n' "* ------------------------------------------------------------------------- *"
-printf '%s\n' "* 1. Increment the project version and synchronise its manifest."
+printf '%s\n' "* 1. Read the project version (building never changes it; use the explicit bump command)."
 printf '%s\n' "* 2. Run this project's declared build, verification and packaging commands."
 printf '%s\n' "* 3. Report the result and keep an interactive terminal open."
 printf '%s\n' "*******************************************************************************"
@@ -39,32 +39,17 @@ hydra_umc_pause_on_exit() {
 trap 'hydra_umc_pause_on_exit' EXIT
 
 #
-# Bumps Cargo.toml (odometer rule) then builds a real release binary
+# Builds a real release binary
 # with cargo. Copies the resulting binary into build/.
 set -euo pipefail
 cd "$(dirname "$0")"
 
 echo "=== HYDRA-UMC-ORCHESTRATOR build ==="
-# Bump the real, native version FIRST, then sync the manifest to match
-# (--sync) - never the other way around, or bump_manifest_version.py's
-# own no-flag path bumps native+manifest together and this next line
-# bumps native a second time, leaving it one step ahead of the manifest
-# (same fix already applied to HYDRA-UMC-HIL-BRIDGE and
-# HYDRA-UMC-NODE-HEALING's build.sh).
 # HYDRA_UMC_SCRIPT_STANDARD_VERSION_STEP
-printf '%s\n' "[1/3] Incrementing project version and synchronising its manifest..."
-python3 bump_version.py || exit 1
-# HYDRA_UMC_SCRIPT_STANDARD_VERSION_CAPTURE_BEFORE
-HYDRA_UMC_VERSION_BEFORE="$(python3 -c 'import json, pathlib, sys; print(json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))["version"])' "$(dirname "$0")/hydra-umc.project.json")"
-python3 bump_manifest_version.py --sync || exit 1
-# HYDRA_UMC_SCRIPT_STANDARD_VERSION_CAPTURE_AFTER
-HYDRA_UMC_VERSION_AFTER="$(python3 -c 'import json, pathlib, sys; print(json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))["version"])' "$(dirname "$0")/hydra-umc.project.json")"
-printf '\n*******************************************************************************\n'
-printf '%s\n' '* VERSION INCREMENT COMPLETED'
-printf '%s\n' "* v${HYDRA_UMC_VERSION_BEFORE:-unknown} -> v${HYDRA_UMC_VERSION_AFTER:-unknown}"
-printf '%s\n' '* Project manifest has been synchronised by the project build flow.'
-printf '%s\n' '*******************************************************************************'
-printf '\n'
+printf '%s\n' "[1/3] Reading the project version (building never changes it)..."
+HYDRA_UMC_VERSION_BUILT="$(python3 -c 'import json, pathlib, sys; print(json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))["version"])' "$(dirname "$0")/hydra-umc.project.json")"
+printf '%s\n' "      Building v${HYDRA_UMC_VERSION_BUILT:-unknown} (building never changes the version)"
+echo
 
 cargo build --release
 
@@ -73,3 +58,4 @@ cp -f target/release/hydra-umc-orchestrator build/hydra-umc-orchestrator 2>/dev/
     cp -f target/release/hydra-umc-orchestrator.exe build/hydra-umc-orchestrator.exe
 
 echo "Build OK: build/hydra-umc-orchestrator"
+printf '%s\n' "Built v${HYDRA_UMC_VERSION_BUILT:-unknown}. Building never changes the version; to raise it run: python tools/hydra_project_tool.py bump"
