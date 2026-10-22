@@ -48,9 +48,27 @@ pub struct PendingClose {
     pub success: bool,
 }
 
+/// One entry as the file stores it: the close plus when it became pending (unix
+/// milliseconds; absent in a file written by an older version, which then counts
+/// from the moment it was loaded).
+#[derive(Serialize, Deserialize)]
+struct PersistedEntry {
+    mission_id: String,
+    success: bool,
+    #[serde(default)]
+    since_ms: u64,
+}
+
 #[derive(Serialize, Deserialize, Default)]
 struct PersistedOutbox {
-    pending: Vec<PendingClose>,
+    pending: Vec<PersistedEntry>,
+}
+
+/// What the outbox remembers about one pending close.
+#[derive(Debug, Clone, Copy)]
+struct Entry {
+    success: bool,
+    since_ms: u64,
 }
 
 /// The real, shared, durable outbox - one instance lives for this
@@ -59,7 +77,7 @@ struct PersistedOutbox {
 /// handlers and the background reconciliation thread touch it.
 pub struct RemoteCloseOutbox {
     path: PathBuf,
-    pending: Mutex<BTreeMap<String, bool>>,
+    pending: Mutex<BTreeMap<String, Entry>>,
 }
 
 impl RemoteCloseOutbox {
@@ -82,10 +100,24 @@ impl RemoteCloseOutbox {
         };
         let state: PersistedOutbox = serde_json::from_str(&raw)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        let loaded_at = crate::logging::now_ms();
         let pending = state
             .pending
             .into_iter()
-            .map(|p| (p.mission_id, p.success))
+            .map(|p| {
+                let since_ms = if p.since_ms == 0 {
+                    loaded_at
+                } else {
+                    p.since_ms
+                };
+                (
+                    p.mission_id,
+                    Entry {
+                        success: p.success,
+                        since_ms,
+                    },
+                )
+            })
             .collect();
         Ok(RemoteCloseOutbox {
             path,
@@ -93,13 +125,14 @@ impl RemoteCloseOutbox {
         })
     }
 
-    fn persist(&self, pending: &BTreeMap<String, bool>) -> io::Result<()> {
+    fn persist(&self, pending: &BTreeMap<String, Entry>) -> io::Result<()> {
         let state = PersistedOutbox {
             pending: pending
                 .iter()
-                .map(|(mission_id, success)| PendingClose {
+                .map(|(mission_id, entry)| PersistedEntry {
                     mission_id: mission_id.clone(),
-                    success: *success,
+                    success: entry.success,
+                    since_ms: entry.since_ms,
                 })
                 .collect(),
         };
@@ -130,9 +163,13 @@ impl RemoteCloseOutbox {
     /// `persistJobLocked`).
     pub fn mark_pending(&self, mission_id: &str, success: bool) {
         let mut pending = self.pending.lock().unwrap();
-        pending.insert(mission_id.to_string(), success);
+        // a close that was already pending keeps the moment it first became pending
+        let since_ms = pending
+            .get(mission_id)
+            .map_or_else(crate::logging::now_ms, |e| e.since_ms);
+        pending.insert(mission_id.to_string(), Entry { success, since_ms });
         if let Err(e) = self.persist(&pending) {
-            eprintln!("[orchestrator] could not persist pending remote-close outbox: {e}");
+            crate::log_line!("could not persist pending remote-close outbox: {e}");
         }
     }
 
@@ -142,7 +179,7 @@ impl RemoteCloseOutbox {
         let mut pending = self.pending.lock().unwrap();
         if pending.remove(mission_id).is_some() {
             if let Err(e) = self.persist(&pending) {
-                eprintln!("[orchestrator] could not persist pending remote-close outbox: {e}");
+                crate::log_line!("could not persist pending remote-close outbox: {e}");
             }
         }
     }
@@ -158,11 +195,22 @@ impl RemoteCloseOutbox {
             .lock()
             .unwrap()
             .iter()
-            .map(|(mission_id, success)| PendingClose {
+            .map(|(mission_id, entry)| PendingClose {
                 mission_id: mission_id.clone(),
-                success: *success,
+                success: entry.success,
             })
             .collect()
+    }
+
+    /// When the close that has waited longest became pending (unix milliseconds), or
+    /// None when nothing is pending.
+    pub fn oldest_pending_since_ms(&self) -> Option<u64> {
+        self.pending
+            .lock()
+            .unwrap()
+            .values()
+            .map(|e| e.since_ms)
+            .min()
     }
 }
 
@@ -359,5 +407,53 @@ mod edge_tests {
         outbox.mark_pending("m1", true);
         assert!(path.exists());
         let _ = fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod age_tests {
+    use super::*;
+
+    fn temp(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("orc-outbox-age-{}-{name}.json", std::process::id()))
+    }
+
+    #[test]
+    fn nothing_pending_has_no_age() {
+        let path = temp("none");
+        fs::remove_file(&path).ok();
+        let outbox = RemoteCloseOutbox::load(path).unwrap();
+        assert_eq!(outbox.oldest_pending_since_ms(), None);
+    }
+
+    #[test]
+    fn the_oldest_close_keeps_the_moment_it_first_became_pending() {
+        let path = temp("oldest");
+        fs::write(
+            &path,
+            r#"{"pending":[{"mission_id":"a","success":true,"since_ms":1000},{"mission_id":"b","success":false,"since_ms":5000}]}"#,
+        )
+        .unwrap();
+        let outbox = RemoteCloseOutbox::load(path.clone()).unwrap();
+        assert_eq!(outbox.oldest_pending_since_ms(), Some(1000));
+        outbox.mark_pending("a", false); // a later decision for the same mission
+        assert_eq!(outbox.oldest_pending_since_ms(), Some(1000));
+        outbox.mark_confirmed("a");
+        assert_eq!(outbox.oldest_pending_since_ms(), Some(5000));
+        let reloaded = RemoteCloseOutbox::load(path.clone()).unwrap();
+        assert_eq!(reloaded.oldest_pending_since_ms(), Some(5000));
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn a_file_from_before_the_timestamps_counts_from_the_load() {
+        let path = temp("legacy");
+        fs::write(&path, r#"{"pending":[{"mission_id":"a","success":true}]}"#).unwrap();
+        let before = crate::logging::now_ms();
+        let outbox = RemoteCloseOutbox::load(path.clone()).unwrap();
+        let since = outbox.oldest_pending_since_ms().unwrap();
+        assert!(since >= before, "{since} < {before}");
+        assert_eq!(outbox.pending().len(), 1);
+        fs::remove_file(&path).ok();
     }
 }

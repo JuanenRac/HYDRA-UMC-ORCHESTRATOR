@@ -71,7 +71,7 @@ Notable real behavior this demo exercises:
 ### `serve`
 
 The real HTTP API — a genuine `tiny_http` server, not a demo. Started with
-`hydra-umc-orchestrator serve [--addr HOST] [--port PORT] [--job-dispatcher-url URL] [--data-dir DIR] [--token TOKEN] [--allow-anonymous] [--require-attempt] [--job-dispatcher-token TOKEN]`
+`hydra-umc-orchestrator serve [--addr HOST] [--port PORT] [--job-dispatcher-url URL] [--data-dir DIR] [--token TOKEN] [--allow-anonymous] [--require-attempt] [--job-dispatcher-token TOKEN] [--log-format text|json] [--keep-finished N]`
 (`--addr` defaults to `127.0.0.1`, `--port` to `8114`, `--data-dir` to `./data`;
 `--job-dispatcher-url` is optional — omitted, missions stay local-only and
 `auto-dispatch` reports `503`). The access options are described under
@@ -102,7 +102,7 @@ Real routes (`src/server.rs`'s own dispatch table):
 | `POST` | `/missions/:id/cancel` | Idempotent cancel, confirming to JOB-DISPATCHER on a fresh (non-repeat) cancellation: a job nobody was given is withdrawn there (`/jobs/cancel`), one a robot holds is closed as failed (`/jobs/complete`) |
 | `POST` | `/missions/:id/fail` | `{"reason": "...", "attempt": n, "node": "..."}` (the last two optional), confirming to JOB-DISPATCHER the same way `cancel` does |
 | `POST` | `/nodes/:node/recover` | HYDRA-UMC-NODE-HEALING's own real caller — requeues every mission dispatched to `node` (see that project's own `OrchestratorReactor`) and asks JOB-DISPATCHER (`/jobs/requeue`) to take those jobs off that robot and hold it unavailable until it reports in again. `%XX` escapes in `:node` are decoded. The node name must be the robot id JOB-DISPATCHER assigned |
-| `GET` | `/stats` | `{"missionCount": ..., "missionsByState": {...}, "pendingRemoteCloses": n, "jobDispatcherUrl": ...}` |
+| `GET` | `/stats` | `{"missionCount": ..., "missionsByState": {...}, "pendingRemoteCloses": n, "oldestPendingCloseAgeSeconds": n or null, "jobDispatcherUrl": ..., "jobDispatcher": {"lastOkAtMs": ..., "lastError": ..., "lastErrorAtMs": ...}}` |
 | `GET` | `/health` | `{"status": "ok", "name": "HYDRA-UMC-ORCHESTRATOR", "version": ...}`; the only route that never asks for the token, so a watchdog can probe it |
 
 #### Access and fencing
@@ -136,6 +136,11 @@ Real routes (`src/server.rs`'s own dispatch table):
 * **Durability.** The mission registry and the outbox are written to a temp
   file, forced to disk and then renamed over the real file, so a power cut
   cannot leave a truncated registry behind.
+
+* **Log format.** `--log-format json` (or `ORCHESTRATOR_LOG_FORMAT=json`) writes every log line as one JSON object, `{"ts_ms": ..., "level": "info|warn|error", "msg": "..."}`, instead of `[orchestrator] message`; `text` is the default.
+* **Finished missions.** `missions.json` is rewritten whole on every change, so it grows with every mission ever created. `--keep-finished N` (default `0`: keep every mission) forgets, once every 30 s, the oldest finished missions beyond the `N` last ones, but only those whose close JOB-DISPATCHER confirmed; a mission still waiting for its close is never forgotten. The file carries a `schema_version`; a file written by a newer version is refused at start (the file is left untouched) instead of being read wrongly.
+* **Closing a job.** When a mission is closed the orchestrator reads the job (`GET /jobs/{id}`) and completes it naming the robot and, when JOB-DISPATCHER reports one, the `attempt` it just read, so a job that was reassigned between the read and the write answers `409` and the close is simply tried again.
+* **Health of the dispatcher link.** `/stats` shows `oldestPendingCloseAgeSeconds` (how long the close that has waited longest has been pending) and, under `jobDispatcher`, when a call to JOB-DISPATCHER last worked and the last error with its time.
 
 A mission's closing is confirmed to JOB-DISPATCHER after the local transition
 and never blocks or reverts it. The intent is recorded first, in the mission

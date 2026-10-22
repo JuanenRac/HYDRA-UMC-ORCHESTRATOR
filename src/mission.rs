@@ -238,6 +238,22 @@ pub struct Mission {
     // they are all default
     #[serde(default, skip_serializing_if = "JobSpec::is_default")]
     pub spec: JobSpec,
+    // unix milliseconds of the moment the mission reached a terminal state (0:
+    // not finished, or finished before this was recorded); only used to decide
+    // which finished missions are the oldest when they are compacted
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    pub finished_at_ms: u64,
+}
+
+fn is_zero_u64(value: &u64) -> bool {
+    *value == 0
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 fn default_true() -> bool {
@@ -252,6 +268,7 @@ impl Mission {
             attempt: 0,
             remote_close_confirmed: true,
             spec: JobSpec::default(),
+            finished_at_ms: 0,
         }
     }
 
@@ -331,6 +348,7 @@ impl Mission {
         match &self.state {
             MissionState::InProgress { node } => {
                 self.state = MissionState::Completed { node: node.clone() };
+                self.finished_at_ms = now_ms();
                 Ok(())
             }
             other => Err(TransitionError {
@@ -356,6 +374,7 @@ impl Mission {
             }),
             _ => {
                 self.state = MissionState::Cancelled;
+                self.finished_at_ms = now_ms();
                 Ok(CancelOutcome::Cancelled)
             }
         }
@@ -448,13 +467,26 @@ impl Mission {
         self.state = MissionState::Failed {
             reason: reason.into(),
         };
+        self.finished_at_ms = now_ms();
         Ok(())
     }
 }
 
-#[derive(Serialize, Deserialize, Default)]
+/// The layout of `missions.json` this version writes. A file without the field was
+/// written before it existed and is layout 1; a file that says a higher number was
+/// written by a newer version and is refused instead of being read wrongly (and
+/// overwritten on the next change).
+pub const REGISTRY_SCHEMA_VERSION: u32 = 1;
+
+#[derive(Serialize, Deserialize)]
 struct PersistedRegistry {
+    #[serde(default = "first_schema_version")]
+    schema_version: u32,
     missions: Vec<Mission>,
+}
+
+fn first_schema_version() -> u32 {
+    1
 }
 
 /// Tracks every mission the orchestrator currently knows about, keyed by
@@ -512,6 +544,17 @@ impl MissionRegistry {
         };
         let state: PersistedRegistry = serde_json::from_str(&raw)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        if state.schema_version > REGISTRY_SCHEMA_VERSION {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "{} has schema_version {}, newer than the {} this version reads",
+                    path.display(),
+                    state.schema_version,
+                    REGISTRY_SCHEMA_VERSION
+                ),
+            ));
+        }
         let mut missions = BTreeMap::new();
         for mut mission in state.missions {
             let stale_node = match &mission.state {
@@ -536,6 +579,7 @@ impl MissionRegistry {
             return; // pure in-memory instance (new()) - nothing to persist
         };
         let state = PersistedRegistry {
+            schema_version: REGISTRY_SCHEMA_VERSION,
             missions: self.missions.values().cloned().collect(),
         };
         let result = (|| -> io::Result<()> {
@@ -551,8 +595,8 @@ impl MissionRegistry {
             durable_replace(&tmp_path, path, json.as_bytes())
         })();
         if let Err(e) = result {
-            eprintln!(
-                "[orchestrator] could not persist mission registry at {}: {e}",
+            crate::log_line!(
+                "could not persist mission registry at {}: {e}",
                 path.display()
             );
         }
@@ -581,6 +625,29 @@ impl MissionRegistry {
             self.persist_or_warn();
         }
         requeued
+    }
+
+    /// Forgets the oldest finished missions so `missions.json` (rewritten whole on every
+    /// change) does not grow for ever: of the missions that are over AND whose close was
+    /// confirmed to Job-Dispatcher, only the `keep` that finished last stay. A mission
+    /// whose close is still pending is never forgotten. Returns how many were removed.
+    pub fn compact_finished(&mut self, keep: usize) -> usize {
+        let mut finished: Vec<(u64, String)> = self
+            .missions
+            .values()
+            .filter(|m| m.is_terminal() && m.remote_close_confirmed)
+            .map(|m| (m.finished_at_ms, m.id.clone()))
+            .collect();
+        if finished.len() <= keep {
+            return 0;
+        }
+        finished.sort();
+        let excess = finished.len() - keep;
+        for (_, id) in finished.into_iter().take(excess) {
+            self.missions.remove(&id);
+        }
+        self.persist_or_warn();
+        excess
     }
 
     pub fn add(&mut self, id: impl Into<String>) -> &mut Mission {
@@ -1427,5 +1494,107 @@ mod edge_tests {
             }
         );
         assert_eq!(again.attempt, 1);
+    }
+}
+
+#[cfg(test)]
+mod schema_and_compaction_tests {
+    use super::*;
+
+    fn temp(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("orc-missions-{}-{name}.json", std::process::id()))
+    }
+
+    fn finished(registry: &mut MissionRegistry, id: &str, finished_at_ms: u64, confirmed: bool) {
+        let m = registry.add(id);
+        m.dispatch("n").unwrap();
+        m.start().unwrap();
+        m.complete().unwrap();
+        m.finished_at_ms = finished_at_ms;
+        m.remote_close_confirmed = confirmed;
+    }
+
+    #[test]
+    fn the_file_carries_its_schema_version_and_loads_back() {
+        let path = temp("version");
+        fs::remove_file(&path).ok();
+        let mut registry = MissionRegistry::load(path.clone()).unwrap();
+        registry.add("m1");
+        registry.persist();
+        let raw = fs::read_to_string(&path).unwrap();
+        assert!(
+            raw.contains(&format!("\"schema_version\": {REGISTRY_SCHEMA_VERSION}")),
+            "{raw}"
+        );
+        assert!(MissionRegistry::load(path.clone())
+            .unwrap()
+            .get("m1")
+            .is_some());
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn a_file_without_a_version_is_the_first_layout_and_still_loads() {
+        let path = temp("legacy");
+        fs::write(&path, r#"{"missions":[{"id":"old","state":"Pending"}]}"#).unwrap();
+        let registry = MissionRegistry::load(path.clone()).unwrap();
+        assert!(registry.get("old").is_some());
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn a_file_from_a_newer_version_is_refused_and_left_alone() {
+        let path = temp("newer");
+        let content = r#"{"schema_version":99,"missions":[]}"#;
+        fs::write(&path, content).unwrap();
+        let err = MissionRegistry::load(path.clone()).map(|_| ()).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("99"), "{err}");
+        assert_eq!(fs::read_to_string(&path).unwrap(), content);
+        fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn terminal_transitions_record_when_they_happened() {
+        let mut registry = MissionRegistry::new();
+        let m = registry.add("m");
+        assert_eq!(m.finished_at_ms, 0);
+        m.cancel().unwrap();
+        assert!(m.finished_at_ms > 0);
+        let f = registry.add("f");
+        f.fail("boom").unwrap();
+        assert!(f.finished_at_ms > 0);
+    }
+
+    #[test]
+    fn compaction_forgets_the_oldest_confirmed_finished_missions_only() {
+        let mut registry = MissionRegistry::new();
+        finished(&mut registry, "old", 100, true);
+        finished(&mut registry, "mid", 200, true);
+        finished(&mut registry, "new", 300, true);
+        finished(&mut registry, "unconfirmed-oldest", 1, false);
+        registry.add("still-pending");
+        assert_eq!(registry.compact_finished(2), 1);
+        assert!(registry.get("old").is_none());
+        for kept in ["mid", "new", "unconfirmed-oldest", "still-pending"] {
+            assert!(registry.get(kept).is_some(), "{kept} must stay");
+        }
+        assert_eq!(registry.compact_finished(2), 0, "nothing more to forget");
+        assert_eq!(registry.compact_finished(1), 1);
+        assert!(registry.get("mid").is_none() && registry.get("new").is_some());
+    }
+
+    #[test]
+    fn compaction_is_written_to_the_file() {
+        let path = temp("compact");
+        fs::remove_file(&path).ok();
+        let mut registry = MissionRegistry::load(path.clone()).unwrap();
+        finished(&mut registry, "a", 1, true);
+        finished(&mut registry, "b", 2, true);
+        registry.persist();
+        registry.compact_finished(1);
+        let reloaded = MissionRegistry::load(path.clone()).unwrap();
+        assert!(reloaded.get("a").is_none() && reloaded.get("b").is_some());
+        fs::remove_file(&path).ok();
     }
 }

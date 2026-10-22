@@ -15,7 +15,7 @@
 //! timeout: a dispatcher that accepts the connection and never answers
 //! cannot hang a worker for ever.
 
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -35,6 +35,43 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 const CALL_TIMEOUT: Duration = Duration::from_secs(10);
 #[cfg(test)]
 const CALL_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// What the calls to Job-Dispatcher have been like lately: when one last worked and the
+/// last failure with its time. Reported by `GET /stats`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DispatcherHealth {
+    pub last_ok_ms: Option<u64>,
+    pub last_error: Option<String>,
+    pub last_error_ms: Option<u64>,
+}
+
+static HEALTH: Mutex<DispatcherHealth> = Mutex::new(DispatcherHealth {
+    last_ok_ms: None,
+    last_error: None,
+    last_error_ms: None,
+});
+
+pub fn health() -> DispatcherHealth {
+    HEALTH.lock().unwrap().clone()
+}
+
+/// Records the outcome of one call and hands the result back untouched.
+fn note<T>(result: Result<T, ClientError>) -> Result<T, ClientError> {
+    let mut health = HEALTH.lock().unwrap();
+    let now = crate::logging::now_ms();
+    match &result {
+        Ok(_) => health.last_ok_ms = Some(now),
+        Err(e) => {
+            health.last_error = Some(e.to_string());
+            health.last_error_ms = Some(now);
+        }
+    }
+    result
+}
+
+fn is_zero(value: &u32) -> bool {
+    *value == 0
+}
 
 pub fn set_token(token: String) {
     let _ = TOKEN.set(token);
@@ -76,6 +113,10 @@ struct CompleteRequest<'a> {
     success: bool,
     #[serde(rename = "robotId")]
     robot_id: &'a str,
+    // the assignment the job is on now (as just read): if it moves on before this
+    // write, Job-Dispatcher answers 409 and the close is tried again
+    #[serde(skip_serializing_if = "is_zero")]
+    attempt: u32,
 }
 
 #[derive(Serialize)]
@@ -106,6 +147,8 @@ struct JobView {
     status: String,
     #[serde(rename = "AssignedRobot", default)]
     assigned_robot: String,
+    #[serde(rename = "Attempt", default)]
+    attempt: u32,
 }
 
 /// Real error a caller can act on distinctly: `Unreachable` (Job-
@@ -178,7 +221,7 @@ fn json_body<T: Serialize>(body: &T) -> Result<String, ClientError> {
 /// Best-effort: a 200/201/409 (already submitted) all count as success
 /// here, since the real intent - "this mission is now in the queue" -
 /// is satisfied either way.
-pub fn submit_job(base_url: &str, mission_id: &str, spec: &JobSpec) -> Result<(), ClientError> {
+fn submit_job_inner(base_url: &str, mission_id: &str, spec: &JobSpec) -> Result<(), ClientError> {
     let url = format!("{}/jobs/submit", base_url.trim_end_matches('/'));
     let body = SubmitRequest {
         id: mission_id,
@@ -201,6 +244,10 @@ pub fn submit_job(base_url: &str, mission_id: &str, spec: &JobSpec) -> Result<()
         Err(ureq::Error::Status(code, resp)) => Err(bad_status(code, resp)),
         Err(ureq::Error::Transport(t)) => Err(transport(t)),
     }
+}
+
+pub fn submit_job(base_url: &str, mission_id: &str, spec: &JobSpec) -> Result<(), ClientError> {
+    note(submit_job_inner(base_url, mission_id, spec))
 }
 
 /// Looks up one job on Job-Dispatcher (`GET /jobs/{id}`). `Ok(None)` means
@@ -249,7 +296,7 @@ fn fetch_job(base_url: &str, mission_id: &str) -> Result<Option<JobView>, Client
 /// write) is an error: the caller keeps the close pending and the next
 /// attempt sees the new state. Idempotent, so retrying a close that already
 /// went through is always safe.
-pub fn close_job(base_url: &str, mission_id: &str, success: bool) -> Result<(), ClientError> {
+fn close_job_inner(base_url: &str, mission_id: &str, success: bool) -> Result<(), ClientError> {
     let base_url = base_url.trim_end_matches('/');
     let Some(job) = fetch_job(base_url, mission_id)? else {
         return Ok(());
@@ -261,6 +308,7 @@ pub fn close_job(base_url: &str, mission_id: &str, success: bool) -> Result<(), 
                 id: mission_id,
                 success,
                 robot_id: &job.assigned_robot,
+                attempt: job.attempt,
             };
             let url = format!("{base_url}/jobs/complete");
             match authed(agent().post(&url))
@@ -292,6 +340,10 @@ pub fn close_job(base_url: &str, mission_id: &str, success: bool) -> Result<(), 
     }
 }
 
+pub fn close_job(base_url: &str, mission_id: &str, success: bool) -> Result<(), ClientError> {
+    note(close_job_inner(base_url, mission_id, success))
+}
+
 /// Requeues the mission's job onto a DIFFERENT robot after `node` was
 /// declared unavailable: `POST /jobs/requeue` puts the job back to
 /// `pending` and holds `node`'s robot unavailable until it reports in
@@ -300,6 +352,15 @@ pub fn close_job(base_url: &str, mission_id: &str, success: bool) -> Result<(), 
 /// database), it is submitted again. A job that is not assigned any more
 /// is not an error: there is nothing to take away from anybody.
 pub fn requeue_job(
+    base_url: &str,
+    mission_id: &str,
+    node: &str,
+    spec: &JobSpec,
+) -> Result<(), ClientError> {
+    note(requeue_job_inner(base_url, mission_id, node, spec))
+}
+
+fn requeue_job_inner(
     base_url: &str,
     mission_id: &str,
     node: &str,
@@ -338,7 +399,7 @@ pub fn requeue_job(
 /// `Assignment` it made this call - the real routing decision (tool-
 /// aware matching, fairness by `Load`) this project's own `mission.rs`
 /// has no logic for itself.
-pub fn run_dispatch(base_url: &str) -> Result<Vec<Assignment>, ClientError> {
+fn run_dispatch_inner(base_url: &str) -> Result<Vec<Assignment>, ClientError> {
     let url = format!("{}/dispatch", base_url.trim_end_matches('/'));
     let result = authed(agent().post(&url)).call();
 
@@ -358,6 +419,10 @@ pub fn run_dispatch(base_url: &str) -> Result<Vec<Assignment>, ClientError> {
         Err(ureq::Error::Status(code, resp)) => Err(bad_status(code, resp)),
         Err(ureq::Error::Transport(t)) => Err(transport(t)),
     }
+}
+
+pub fn run_dispatch(base_url: &str) -> Result<Vec<Assignment>, ClientError> {
+    note(run_dispatch_inner(base_url))
 }
 
 #[cfg(test)]
@@ -689,5 +754,122 @@ mod edge_tests {
         assert!(ClientError::BadResponse("HTTP 500".into())
             .to_string()
             .contains("unexpected response"));
+    }
+}
+
+#[cfg(test)]
+mod attempt_and_health_tests {
+    use super::*;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+
+    /// Answers each connection with the next scripted reply and reports the raw requests.
+    fn script(replies: Vec<(u16, String)>) -> (String, std::sync::mpsc::Receiver<String>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            for (status, body) in replies {
+                let Ok((mut stream, _)) = listener.accept() else {
+                    return;
+                };
+                let mut raw = Vec::new();
+                let mut buf = [0u8; 4096];
+                loop {
+                    let n = stream.read(&mut buf).unwrap_or(0);
+                    if n == 0 {
+                        break;
+                    }
+                    raw.extend_from_slice(&buf[..n]);
+                    let text = String::from_utf8_lossy(&raw).to_string();
+                    if let Some(pos) = text.find("\r\n\r\n") {
+                        let length = text
+                            .lines()
+                            .find_map(|l| {
+                                l.to_ascii_lowercase()
+                                    .strip_prefix("content-length:")
+                                    .and_then(|v| v.trim().parse::<usize>().ok())
+                            })
+                            .unwrap_or(0);
+                        if raw.len() >= pos + 4 + length {
+                            break;
+                        }
+                    }
+                }
+                let reply = format!(
+                    "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(reply.as_bytes());
+                let _ = tx.send(String::from_utf8_lossy(&raw).to_string());
+            }
+        });
+        (format!("http://127.0.0.1:{port}"), rx)
+    }
+
+    #[test]
+    fn closing_a_job_sends_the_attempt_the_job_is_on() {
+        let (url, rx) = script(vec![
+            (
+                200,
+                r#"{"ID":"m1","Status":"assigned","AssignedRobot":"arm-3","Attempt":4}"#.into(),
+            ),
+            (200, r#"{"ID":"m1"}"#.into()),
+        ]);
+        close_job(&url, "m1", true).unwrap();
+        let _lookup = rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        let complete = rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(complete.starts_with("POST /jobs/complete"), "{complete}");
+        assert!(complete.contains("\"attempt\":4"), "{complete}");
+        assert!(complete.contains("\"robotId\":\"arm-3\""), "{complete}");
+    }
+
+    #[test]
+    fn a_dispatcher_that_does_not_report_attempts_gets_no_attempt_field() {
+        let (url, rx) = script(vec![
+            (
+                200,
+                r#"{"ID":"m1","Status":"assigned","AssignedRobot":"arm-3"}"#.into(),
+            ),
+            (200, r#"{"ID":"m1"}"#.into()),
+        ]);
+        close_job(&url, "m1", false).unwrap();
+        let _ = rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        let complete = rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(!complete.contains("attempt"), "{complete}");
+    }
+
+    #[test]
+    fn a_conflict_on_the_close_is_an_error_so_the_close_stays_pending() {
+        let (url, _rx) = script(vec![
+            (
+                200,
+                r#"{"ID":"m1","Status":"assigned","AssignedRobot":"arm-3","Attempt":1}"#.into(),
+            ),
+            (409, r#"{"error":"attempt does not match"}"#.into()),
+        ]);
+        assert!(matches!(
+            close_job(&url, "m1", true),
+            Err(ClientError::BadResponse(_))
+        ));
+    }
+
+    #[test]
+    fn the_health_remembers_the_last_success_and_the_last_failure() {
+        let (url, _rx) = script(vec![(200, "[]".into())]);
+        run_dispatch(&url).unwrap();
+        assert!(health().last_ok_ms.is_some());
+        let before_error = crate::logging::now_ms();
+        assert!(run_dispatch("http://127.0.0.1:1").is_err());
+        let after_error = health();
+        assert!(after_error
+            .last_error
+            .as_deref()
+            .is_some_and(|e| e.contains("unreachable")));
+        assert!(after_error.last_error_ms.unwrap() >= before_error);
+        assert!(
+            after_error.last_ok_ms.is_some(),
+            "an error does not erase the last success"
+        );
     }
 }

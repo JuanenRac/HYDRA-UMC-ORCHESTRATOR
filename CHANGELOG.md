@@ -4,11 +4,15 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+- `GET /stats` shows how long the oldest unconfirmed close has waited (`oldestPendingCloseAgeSeconds`) and the last success and last error of the calls to JOB-DISPATCHER.
+- `--log-format json` writes each log line as one JSON object; the default text format is unchanged.
+- `--keep-finished N` forgets the oldest finished missions whose close was confirmed so `missions.json` stops growing; the default keeps everything. The file now carries a `schema_version` and one written by a newer version is refused instead of being read wrongly.
+- Closing a job tells JOB-DISPATCHER which attempt is being closed, so a job reassigned in between answers 409 and the close is retried.
 - Building no longer changes the version; raising it is the explicit `bump` command (`python tools/hydra_project_tool.py bump`). The build scripts only report the version they built, and CI fails if a build script runs a bump.
 - The banner follows the animated style of the ecosystem banners, with the name, the kind and the technologies of the project.
 - Added `tools/hydra_project_tool.py`: the same `validate`, `test`, `version`, `status` and `bump` commands in every repository. The checks run with `HYDRA_UMC_CI=1` and fail if the version changes; only `bump` changes it.
 - CI now runs `tools/verify_compose.py` (every token and secret of the stack is required with `${VAR:?}`, including the swarm-sync shared secret; published ports stay on the loopback interface) and, when Docker Compose is available on the runner, `docker compose config`; a separate advisory job builds and starts the whole stack and probes `/health` of the orchestrator, then tears it down. The advisory job cannot turn the baseline red.
-- The README counters say 126 tests.
+- The README counters say 143 tests.
 
 ## [0.1.8]
 

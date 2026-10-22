@@ -83,6 +83,10 @@ pub struct ServerOptions {
     /// mission was dispatched with, so a node that lost the mission (and was
     /// declared unavailable) cannot overwrite the one that holds it now
     pub require_attempt: bool,
+    /// when above 0, only this many finished missions whose close Job-Dispatcher
+    /// confirmed are kept in `missions.json`, the oldest are forgotten; 0 (the
+    /// default) keeps every mission, as before
+    pub keep_finished: usize,
 }
 
 /// Request bodies here are a few dozen bytes; anything past this is refused
@@ -242,6 +246,7 @@ pub fn run(
     registry: MissionRegistry,
     options: ServerOptions,
 ) {
+    let keep_finished = options.keep_finished;
     let state = Arc::new(AppState {
         registry: Arc::new(Mutex::new(registry)),
         job_dispatcher_url,
@@ -249,6 +254,19 @@ pub fn run(
         token: options.token.filter(|t| !t.is_empty()),
         require_attempt: options.require_attempt,
     });
+
+    if keep_finished > 0 {
+        let registry = Arc::clone(&state.registry);
+        thread::spawn(move || loop {
+            let removed = registry.lock().unwrap().compact_finished(keep_finished);
+            if removed > 0 {
+                crate::log_line!(
+                    "forgot {removed} finished mission(s) beyond the {keep_finished} that are kept"
+                );
+            }
+            thread::sleep(REMOTE_CLOSE_RETRY_INTERVAL);
+        });
+    }
 
     // only spawned when Job-Dispatcher integration is actually
     // configured at all (matching every other real call site in this
@@ -357,6 +375,12 @@ fn handle_stats(request: tiny_http::Request, state: &AppState) {
         (reg.all().count(), by_state)
     };
     by_state.entry("Pending").or_default();
+    let now = crate::logging::now_ms();
+    let oldest_close_age_seconds = state
+        .close_outbox
+        .oldest_pending_since_ms()
+        .map(|since| now.saturating_sub(since) / 1000);
+    let health = job_dispatcher::health();
     write_json(
         request,
         200,
@@ -364,7 +388,13 @@ fn handle_stats(request: tiny_http::Request, state: &AppState) {
             "missionCount": count,
             "missionsByState": by_state,
             "pendingRemoteCloses": state.close_outbox.pending().len(),
+            "oldestPendingCloseAgeSeconds": oldest_close_age_seconds,
             "jobDispatcherUrl": state.job_dispatcher_url,
+            "jobDispatcher": {
+                "lastOkAtMs": health.last_ok_ms,
+                "lastError": health.last_error,
+                "lastErrorAtMs": health.last_error_ms,
+            },
         }),
     );
 }
@@ -670,9 +700,10 @@ fn handle_auto_dispatch(request: tiny_http::Request, state: &AppState, id: &str)
                 // A real state mismatch worth an operator's attention,
                 // but not this caller's own request to fail on - they
                 // asked about `id`, not this other mission.
-                eprintln!(
-                    "[orchestrator] could not reconcile job-dispatcher's assignment of {} to {}: {e}",
-                    assignment.job_id, assignment.robot_id
+                crate::log_line!(
+                    "could not reconcile job-dispatcher's assignment of {} to {}: {e}",
+                    assignment.job_id,
+                    assignment.robot_id
                 );
             }
         }
@@ -680,8 +711,7 @@ fn handle_auto_dispatch(request: tiny_http::Request, state: &AppState, id: &str)
     }
     for (job_id, success) in to_release {
         if let Err(e) = job_dispatcher::close_job(base_url, &job_id, success) {
-            eprintln!(
-                "[orchestrator] could not hand back job {job_id} that job-dispatcher assigned although the mission is closed: {e}"
+            crate::log_line!("could not hand back job {job_id} that job-dispatcher assigned although the mission is closed: {e}"
             );
             state.close_outbox.mark_pending(&job_id, success);
         }
@@ -773,8 +803,7 @@ fn confirm_close_remotely(state: &AppState, id: &str, success: bool) {
     state.close_outbox.mark_pending(id, success);
     match job_dispatcher::close_job(base_url, id, success) {
         Ok(()) => mark_close_confirmed(&state.registry, &state.close_outbox, id),
-        Err(e) => eprintln!(
-            "[orchestrator] could not confirm the closing of mission {id} to job-dispatcher yet (it will be retried): {e}"
+        Err(e) => crate::log_line!("could not confirm the closing of mission {id} to job-dispatcher yet (it will be retried): {e}"
         ),
     }
 }
@@ -1072,8 +1101,8 @@ fn handle_recover(request: tiny_http::Request, state: &AppState, node: &str) {
     if let Some(base_url) = &state.job_dispatcher_url {
         for (mission_id, spec) in &requeued {
             if let Err(e) = job_dispatcher::requeue_job(base_url, mission_id, node, spec) {
-                eprintln!(
-                    "[orchestrator] could not notify job-dispatcher to requeue mission {mission_id}: {e}"
+                crate::log_line!(
+                    "could not notify job-dispatcher to requeue mission {mission_id}: {e}"
                 );
                 not_notified.push(mission_id.clone());
             }
@@ -1929,6 +1958,7 @@ mod tests {
             ServerOptions {
                 token: Some("s3cret-token".to_string()),
                 require_attempt: false,
+                keep_finished: 0,
             },
         );
         for (method, path) in [
@@ -2031,6 +2061,7 @@ mod tests {
             ServerOptions {
                 token: None,
                 require_attempt: true,
+                keep_finished: 0,
             },
         );
         post(strict, "/missions", r#"{"id":"m2"}"#);
@@ -2181,6 +2212,19 @@ mod tests {
             m1.contains("Cancelled"),
             "the mission stays cancelled: {m1}"
         );
+    }
+
+    #[test]
+    fn stats_report_dispatcher_health_and_the_age_of_the_oldest_close() {
+        let _guard = net_test_lock();
+        let port = start_test_server();
+        let (status, body) = get(port, "/stats");
+        assert_eq!(status, 200);
+        let stats: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert!(stats["oldestPendingCloseAgeSeconds"].is_null(), "{body}");
+        assert!(stats["jobDispatcher"].is_object(), "{body}");
+        assert!(stats["jobDispatcher"].get("lastError").is_some(), "{body}");
+        assert!(stats["jobDispatcher"].get("lastOkAtMs").is_some(), "{body}");
     }
 
     #[test]

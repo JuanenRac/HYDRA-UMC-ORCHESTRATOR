@@ -40,6 +40,7 @@
 // already made for real reachable from here, not a new one.
 
 mod job_dispatcher;
+mod logging;
 mod mission;
 mod outbox;
 mod server;
@@ -162,8 +163,28 @@ fn run_serve(args: &[String]) -> bool {
         .filter(|t| !t.is_empty());
     let allow_anonymous = args.iter().any(|a| a == "--allow-anonymous");
     let require_attempt = args.iter().any(|a| a == "--require-attempt");
+    let log_format = find_flag(args, "--log-format")
+        .or_else(|| std::env::var("ORCHESTRATOR_LOG_FORMAT").ok())
+        .unwrap_or_else(|| "text".to_string());
+    match logging::parse_format(&log_format) {
+        Some(json) => logging::set_json(json),
+        None => {
+            crate::log_line!("fatal: --log-format must be text or json, not {log_format:?}");
+            return false;
+        }
+    }
+    let keep_finished = match find_flag(args, "--keep-finished") {
+        None => 0,
+        Some(value) => match value.parse::<usize>() {
+            Ok(n) => n,
+            Err(_) => {
+                crate::log_line!("fatal: --keep-finished must be a whole number, not {value:?}");
+                return false;
+            }
+        },
+    };
     if let Some(problem) = server::startup_problem(&bind_addr, token.as_deref(), allow_anonymous) {
-        eprintln!("[orchestrator] fatal: {problem}");
+        crate::log_line!("fatal: {problem}");
         return false;
     }
     // Job-Dispatcher refuses to listen on a network address without a
@@ -184,8 +205,8 @@ fn run_serve(args: &[String]) -> bool {
     let close_outbox = match outbox::RemoteCloseOutbox::load(outbox_path.clone()) {
         Ok(outbox) => outbox,
         Err(e) => {
-            eprintln!(
-                "[orchestrator] fatal: could not load the pending remote-close outbox at {}: {e}",
+            crate::log_line!(
+                "fatal: could not load the pending remote-close outbox at {}: {e}",
                 outbox_path.display()
             );
             return false;
@@ -204,8 +225,8 @@ fn run_serve(args: &[String]) -> bool {
     let mut registry = match MissionRegistry::load(missions_path.clone()) {
         Ok(registry) => registry,
         Err(e) => {
-            eprintln!(
-                "[orchestrator] fatal: could not load the mission registry at {}: {e}",
+            crate::log_line!(
+                "fatal: could not load the mission registry at {}: {e}",
                 missions_path.display()
             );
             return false;
@@ -213,8 +234,8 @@ fn run_serve(args: &[String]) -> bool {
     };
     let recovered = registry.recover_unknown_missions();
     if !recovered.is_empty() {
-        eprintln!(
-            "[orchestrator] requeued {} mission(s) reloaded as Unknown after an unclean shutdown: {}",
+        crate::log_line!(
+            "requeued {} mission(s) reloaded as Unknown after an unclean shutdown: {}",
             recovered.len(),
             recovered.join(", ")
         );
@@ -222,34 +243,26 @@ fn run_serve(args: &[String]) -> bool {
 
     match server::bind(&bind_addr) {
         Ok(bound) => {
-            eprintln!("[orchestrator] HTTP API listening on {bind_addr}");
-            eprintln!("[orchestrator] POST /missions, GET /missions, GET /missions/:id,");
-            eprintln!("[orchestrator] POST /missions/:id/{{dispatch,auto-dispatch,start,complete,cancel,fail}},");
-            eprintln!("[orchestrator] POST /nodes/:node/recover, GET /stats, GET /health");
+            crate::log_line!("HTTP API listening on {bind_addr}");
+            crate::log_line!("POST /missions, GET /missions, GET /missions/:id,");
+            crate::log_line!(
+                "POST /missions/:id/{{dispatch,auto-dispatch,start,complete,cancel,fail}},"
+            );
+            crate::log_line!("POST /nodes/:node/recover, GET /stats, GET /health");
             if token.is_some() {
-                eprintln!("[orchestrator] bearer token required on every route except GET /health");
+                crate::log_line!("bearer token required on every route except GET /health");
             } else if !server::is_loopback_addr(&addr) {
-                eprintln!(
-                    "[orchestrator] WARNING: --allow-anonymous - this API is open to the network"
-                );
+                crate::log_line!("WARNING: --allow-anonymous - this API is open to the network");
             }
             if require_attempt {
-                eprintln!(
-                    "[orchestrator] start/complete/fail must carry the mission's current attempt"
-                );
+                crate::log_line!("start/complete/fail must carry the mission's current attempt");
             }
             match &job_dispatcher_url {
-                Some(url) => eprintln!("[orchestrator] real jobs will be submitted to job-dispatcher at {url}"),
-                None => eprintln!("[orchestrator] --job-dispatcher-url not set - missions stay local-only, auto-dispatch disabled"),
+                Some(url) => crate::log_line!("real jobs will be submitted to job-dispatcher at {url}"),
+                None => crate::log_line!("--job-dispatcher-url not set - missions stay local-only, auto-dispatch disabled"),
             }
-            eprintln!(
-                "[orchestrator] pending remote-close outbox: {}",
-                outbox_path.display()
-            );
-            eprintln!(
-                "[orchestrator] mission registry: {}",
-                missions_path.display()
-            );
+            crate::log_line!("pending remote-close outbox: {}", outbox_path.display());
+            crate::log_line!("mission registry: {}", missions_path.display());
             server::run(
                 bound,
                 job_dispatcher_url,
@@ -258,12 +271,13 @@ fn run_serve(args: &[String]) -> bool {
                 server::ServerOptions {
                     token,
                     require_attempt,
+                    keep_finished,
                 },
             );
             true
         }
         Err(e) => {
-            eprintln!("[orchestrator] fatal: could not start HTTP server on {bind_addr}: {e}");
+            crate::log_line!("fatal: could not start HTTP server on {bind_addr}: {e}");
             false
         }
     }
