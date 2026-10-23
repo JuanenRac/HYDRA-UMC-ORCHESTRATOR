@@ -29,7 +29,7 @@
 |---|---|
 | Versão | `0.1.8` |
 | Maturidade | Funcional |
-| Testes | 143 (`cargo test`) |
+| Testes | 144 (`cargo test`) |
 | Tecnologia | Rust / tiny_http / ureq / JSON/HTTP |
 | Destino | O Raspberry Pi CM5 de uma célula HYDRA-UMC |
 | Em hardware real | Ainda não: não há registo de execução em hardware real para esta versão |
@@ -41,6 +41,7 @@ O **HYDRA-UMC-ORCHESTRATOR** é a camada de coordenação de alto nível do ecos
 Previsto: planeamento global de missões, equilíbrio de carga na frota e sincronização em tempo real entre robôs para evitar colisões físicas. Hoje acompanha as missões com uma máquina de estados e entrega-as ao JOB-DISPATCHER; não sincroniza robôs, não evita colisões nem garante qualquer precisão.
 
 ### Funcionalidades principais:
+* 🧭 **Um só dono da atribuição:** com `--job-dispatcher-url` configurado, o JOB-DISPATCHER decide que robô recebe uma missão e este orquestrador é dono da própria missão (ciclo de vida, encerramento e recuperação). `POST /missions/:id/dispatch` (um nó escolhido à mão) é então recusado com 409 e remete para `POST /missions/:id/auto-dispatch`; sem job-dispatcher o dispatch manual funciona como antes. *(implementado)*
 * 🕸️ **Coordenação de enxame:** orquestra mais de 32 braços robóticos independentes em vários controladores. *(planeado)*
 * ⚖️ **Equilíbrio de carga:** atribui automaticamente as missões ao robô mais disponível ou mais bem equipado.
 * 🛡️ **Segurança centralizada:** gestão global de E-STOP e monitorização da saúde de toda a frota. *(planeado)*

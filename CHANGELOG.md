@@ -4,6 +4,7 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+- **The job-dispatcher owns the assignment.** With `--job-dispatcher-url` configured, `POST /missions/:id/dispatch` (a node chosen by hand) is refused with 409 and points to `auto-dispatch`: a node picked here never reached the job-dispatcher, which kept the job pending and gave it to another robot, leaving the mission in two places. The orchestrator keeps the mission itself. Without a job-dispatcher the manual dispatch works as before.
 - The manifest declares the health path of the service (`service.health_path: /health`), so the ecosystem status and the service registry of the SDK can probe it over HTTP and not only by its port.
 - `GET /stats` shows how long the oldest unconfirmed close has waited (`oldestPendingCloseAgeSeconds`) and the last success and last error of the calls to JOB-DISPATCHER.
 - `--log-format json` writes each log line as one JSON object; the default text format is unchanged.

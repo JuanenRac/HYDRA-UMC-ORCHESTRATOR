@@ -29,7 +29,7 @@
 |---|---|
 | Versión | `0.1.8` |
 | Madurez | Funcional |
-| Tests | 143 (`cargo test`) |
+| Tests | 144 (`cargo test`) |
 | Tecnología | Rust / tiny_http / ureq / JSON/HTTP |
 | Destino | La Raspberry Pi CM5 de una celda HYDRA-UMC |
 | En hardware real | Todavía no: no consta ninguna ejecución en hardware real para esta versión |
@@ -41,6 +41,7 @@
 Previsto: planificación global de misiones, balanceo de carga en toda la flota y sincronización en tiempo real entre robots para evitar colisiones físicas. Hoy sigue las misiones con una máquina de estados y se las entrega a JOB-DISPATCHER; no sincroniza robots, no evita colisiones ni garantiza ninguna precisión.
 
 ### Características Clave:
+* 🧭 **Un solo dueño de la asignación:** con `--job-dispatcher-url` configurado, JOB-DISPATCHER decide qué robot recibe una misión y este orquestador es dueño de la misión (su ciclo de vida, cierre y recuperación). `POST /missions/:id/dispatch` (un nodo elegido a mano) se rechaza entonces con 409 y remite a `POST /missions/:id/auto-dispatch`; sin job-dispatcher el dispatch manual funciona como antes. *(implementado)*
 * 🕸️ **Coordinación de Enjambres:** Orquesta hasta 32+ brazos robóticos independientes a través de múltiples controladores. *(previsto)*
 * ⚖️ **Balanceo de Carga:** Asigna misiones automáticamente al robot más disponible o mejor equipado.
 * 🛡️ **Seguridad Centralizada:** Gestión global de E-STOP y monitorización de salud de toda la flota. *(previsto)*

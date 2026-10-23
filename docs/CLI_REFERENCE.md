@@ -95,7 +95,7 @@ Real routes (`src/server.rs`'s own dispatch table):
 | `POST` | `/missions` | Add a mission: `{"id": "..."}` (1 to 128 of `A-Z a-z 0-9 . _ -`), optionally `priority`, `requiredTool`, `location` and `dependsOn`, which travel to JOB-DISPATCHER so its tool-aware and multi-stage routing is used. Posting a mission that already exists and is still open submits it again (harmless, and a way to retry a submission that did not get through); one that already ended is `409` and is not sent to JOB-DISPATCHER |
 | `GET` | `/missions` | List every mission; `?state=Pending` narrows by state, `?limit=N&offset=N` pages |
 | `GET` | `/missions/:id` | Get one mission |
-| `POST` | `/missions/:id/dispatch` | Assign the mission to a node (`{"node": "..."}`); the mission's `attempt` goes up by one |
+| `POST` | `/missions/:id/dispatch` | Assign the mission to a node (`{"node": "..."}`); the mission's `attempt` goes up by one. Refused with 409 when a job-dispatcher is configured (it owns the assignment): use `auto-dispatch` |
 | `POST` | `/missions/:id/auto-dispatch` | Submit the mission again if it is still pending (idempotent), run a real JOB-DISPATCHER dispatch pass (`run_dispatch`) and reconcile every assignment it returns, not only this mission's own. Work JOB-DISPATCHER hands out for a mission that is already closed here is handed back, so its robot is not left reserved |
 | `POST` | `/missions/:id/start` | Mark `InProgress`; optional `{"attempt": n, "node": "..."}` fences the report (see below) |
 | `POST` | `/missions/:id/complete` | Mark `Completed`, confirming the real terminal outcome to JOB-DISPATCHER; same optional fencing fields |

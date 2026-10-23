@@ -571,6 +571,19 @@ struct DispatchRequest {
 }
 
 fn handle_dispatch(request: tiny_http::Request, state: &AppState, id: &str, raw: &str) {
+    // With a Job-Dispatcher configured it owns the assignment of missions to robots: a node chosen here would never reach it, it would
+    // go on seeing the job as pending and hand it to another robot on its next pass, and the mission would be in two places at once.
+    if state.job_dispatcher_url.is_some() {
+        write_json(
+            request,
+            409,
+            &json!({
+                "error": "a job-dispatcher is configured and owns the assignment of missions to robots: use POST /missions/{id}/auto-dispatch",
+                "assignmentOwner": "job-dispatcher",
+            }),
+        );
+        return;
+    }
     let req: DispatchRequest = match serde_json::from_str(raw) {
         Ok(r) => r,
         Err(e) => {
@@ -1316,6 +1329,29 @@ mod tests {
         }
     }
 
+    /// A Job-Dispatcher whose dispatch pass assigns `m1` to `robot`, for tests that need a dispatched mission now that the
+    /// orchestrator no longer assigns by hand while a job-dispatcher is configured. With `healthy` false it answers every
+    /// other call (except the job submission) with a 500.
+    fn jd_assigning(
+        robot: &'static str,
+        healthy: bool,
+    ) -> impl Fn(&str) -> (u16, &'static str) + Send + 'static {
+        let holding = jd_holding("assigned");
+        move |req: &str| {
+            if req.starts_with("POST /dispatch") {
+                return if robot == "node-a" {
+                    (200, r#"[{"JobID":"m1","RobotID":"node-a"}]"#)
+                } else {
+                    (200, r#"[{"JobID":"m1","RobotID":"arm-3"}]"#)
+                };
+            }
+            if !healthy && !req.starts_with("POST /jobs/submit") {
+                return (500, r#"{"error":"unavailable"}"#);
+            }
+            holding(req)
+        }
+    }
+
     /// Everything the fake received so far, once it has been quiet for a moment.
     fn drain(rx: &std::sync::mpsc::Receiver<String>) -> Vec<String> {
         let mut seen = Vec::new();
@@ -1455,9 +1491,10 @@ mod tests {
         // same best-effort reasoning every other job_dispatcher.rs call
         // already follows. A real unreachable port, not a mock.
         let _guard = net_test_lock();
-        let port = start_test_server_with_job_dispatcher(Some("http://127.0.0.1:1".to_string()));
+        let (jd_url, _rx) = fake_job_dispatcher_routing(jd_assigning("node-a", false));
+        let port = start_test_server_with_job_dispatcher(Some(jd_url));
         post(port, "/missions", r#"{"id":"m1"}"#);
-        post(port, "/missions/m1/dispatch", r#"{"node":"node-a"}"#);
+        post(port, "/missions/m1/auto-dispatch", "");
 
         let (status, body) = post(port, "/nodes/node-a/recover", "");
         assert_eq!(status, 200);
@@ -1472,10 +1509,10 @@ mod tests {
         // Real, reachable fake this time - proves handle_recover asks for the
         // requeue naming the node that went away.
         let _guard = net_test_lock();
-        let (jd_url, rx) = fake_job_dispatcher_routing(jd_holding("assigned"));
+        let (jd_url, rx) = fake_job_dispatcher_routing(jd_assigning("node-a", true));
         let port = start_test_server_with_job_dispatcher(Some(jd_url));
         post(port, "/missions", r#"{"id":"m1"}"#);
-        post(port, "/missions/m1/dispatch", r#"{"node":"node-a"}"#);
+        post(port, "/missions/m1/auto-dispatch", "");
         drain(&rx);
 
         let (status, body) = post(port, "/nodes/node-a/recover", "");
@@ -1488,6 +1525,28 @@ mod tests {
             .unwrap_or_else(|| panic!("expected a requeue request, got {calls:?}"));
         assert!(requeue.contains("\"id\":\"m1\""));
         assert!(requeue.contains("\"robotId\":\"node-a\""));
+    }
+
+    #[test]
+    fn a_manual_dispatch_is_refused_while_a_job_dispatcher_owns_the_assignment() {
+        let _guard = net_test_lock();
+        let (jd_url, rx) = fake_job_dispatcher_routing(jd_holding("pending"));
+        let port = start_test_server_with_job_dispatcher(Some(jd_url));
+        post(port, "/missions", r#"{"id":"m1"}"#);
+        drain(&rx);
+
+        let (status, body) = post(port, "/missions/m1/dispatch", r#"{"node":"node-a"}"#);
+        assert_eq!(status, 409, "{body}");
+        assert!(body.contains("auto-dispatch"), "{body}");
+        assert!(body.contains("job-dispatcher"), "{body}");
+
+        // nothing moved and the job-dispatcher was not touched
+        let (_, m1_body) = get(port, "/missions/m1");
+        assert!(m1_body.contains("\"Pending\""), "{m1_body}");
+        assert!(
+            drain(&rx).is_empty(),
+            "a refused manual dispatch must not call the job-dispatcher"
+        );
     }
 
     #[test]
@@ -1631,11 +1690,12 @@ mod tests {
     #[test]
     fn complete_confirms_the_real_terminal_outcome_to_job_dispatcher() {
         let _guard = net_test_lock();
-        let (jd_url, rx) = fake_job_dispatcher_routing(jd_holding("assigned"));
+        let (jd_url, rx) = fake_job_dispatcher_routing(jd_assigning("arm-3", true));
         let port = start_test_server_with_job_dispatcher(Some(jd_url));
         post(port, "/missions", r#"{"id":"m1"}"#);
         drain(&rx); // the /jobs/submit call from add
-        post(port, "/missions/m1/dispatch", r#"{"node":"arm-3"}"#);
+        post(port, "/missions/m1/auto-dispatch", "");
+        drain(&rx); // the dispatch pass
         post(port, "/missions/m1/start", "");
 
         let (status, body) = post(port, "/missions/m1/complete", "");
@@ -1740,9 +1800,10 @@ mod tests {
     #[test]
     fn complete_marks_remote_close_pending_when_job_dispatcher_call_fails() {
         let _guard = net_test_lock();
-        let port = start_test_server_with_job_dispatcher(Some("http://127.0.0.1:1".to_string()));
+        let (jd_url, _rx) = fake_job_dispatcher_routing(jd_assigning("node-a", false));
+        let port = start_test_server_with_job_dispatcher(Some(jd_url));
         post(port, "/missions", r#"{"id":"m1"}"#);
-        post(port, "/missions/m1/dispatch", r#"{"node":"node-a"}"#);
+        post(port, "/missions/m1/auto-dispatch", "");
         post(port, "/missions/m1/start", "");
 
         let (status, body) = post(port, "/missions/m1/complete", "");
