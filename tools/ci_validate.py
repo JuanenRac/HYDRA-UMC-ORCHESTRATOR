@@ -83,7 +83,8 @@ VERSION_PROSE_LABELS = (
     "Version:", "Versión:", "Version :", "Versione:", "版本：", "バージョン：",
     "Current version", "Versión actual", "Version actuelle",
     "Versione attuale", "Aktuelle Version", "当前版本", "現在のバージョン",
-    "Status:", "Estado:", "État :", "Stato:", "状态：", "ステータス",
+    "Status:", "Estado:", "État :", "Statut :", "Statut:", "Stato:", "状态：", "ステータス",
+    "状態:", "状態：",
     "Real hoje", "Versão:", "Versão atual",
 )
 VERSION_PROSE_LABEL_PATTERN = re.compile(
