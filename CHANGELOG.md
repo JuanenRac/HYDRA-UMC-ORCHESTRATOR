@@ -4,6 +4,7 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+- The manifest declares the health path of the service (`service.health_path: /health`), so the ecosystem status and the service registry of the SDK can probe it over HTTP and not only by its port.
 - `GET /stats` shows how long the oldest unconfirmed close has waited (`oldestPendingCloseAgeSeconds`) and the last success and last error of the calls to JOB-DISPATCHER.
 - `--log-format json` writes each log line as one JSON object; the default text format is unchanged.
 - `--keep-finished N` forgets the oldest finished missions whose close was confirmed so `missions.json` stops growing; the default keeps everything. The file now carries a `schema_version` and one written by a newer version is refused instead of being read wrongly.
