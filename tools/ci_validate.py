@@ -8,10 +8,10 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import re
 import sys
-import subprocess
 from pathlib import Path
 
 
@@ -65,7 +65,7 @@ VERSION_HEADING = re.compile(r"(?im)^#{1,3}\s*\[?(\d+\.\d+\.\d+(?:\.\d+)?)(?:\]|
 SEMVER = re.compile(r"^\d+\.\d+\.\d+(?:\.\d+)?$")
 
 # Found while investigating a systemic pattern of stale version/test-count
-# claims in README prose (2026-09-07): a version bump already updates the
+# claims in README prose: a version bump already updates the
 # manifest, the native version file and CHANGELOG.md's own heading (all
 # three already checked above) - but a README's own free prose ("Real
 # today: version `X.Y.Z`", "Status: vX.Y.Z", a `<project> vX.Y.Z` CLI
@@ -125,12 +125,27 @@ BUILD_RUN_SECTION_MARKERS = (
     "BUILD & AUSFÜHRUNG",
     "ビルドと実行",
     "构建与运行",
+    "INSTALL AND RUN",
+    "INSTALAR Y EJECUTAR",
+    "INSTALLATION ET EXÉCUTION",
+    "INSTALLAZIONE ED ESECUZIONE",
+    "INSTALLATION UND AUSFÜHRUNG",
+    "インストールと実行",
+    "安装与运行",
+    "DEVELOPMENT ENVIRONMENT",
+    "ENTORNO DE DESARROLLO",
+    "ENVIRONNEMENT DE DÉVELOPPEMENT",
+    "AMBIENTE DI SVILUPPO",
+    "ENTWICKLUNGSUMGEBUNG",
+    "開発環境",
+    "开发环境",
 )
 
 
 def has_build_run_section(text: str) -> bool:
     """Accept the translated BUILD & RUN heading in every public README."""
-    return any(marker in text for marker in BUILD_RUN_SECTION_MARKERS)
+    normalized = text.upper()
+    return any(marker.upper() in normalized for marker in BUILD_RUN_SECTION_MARKERS)
 
 
 def fail(message: str) -> None:
@@ -202,6 +217,28 @@ def validate_local_markdown_links() -> None:
         preview = "; ".join(broken[:10])
         suffix = "" if len(broken) <= 10 else f" (+{len(broken) - 10} more)"
         fail(f"broken local Markdown link(s): {preview}{suffix}")
+def run_extra_checks() -> None:
+    """The checks a repository has of its own live in tools/extra_checks.py, so this file stays identical everywhere.
+
+    The module defines `check(root: Path) -> list[str]` and returns one sentence per problem it found (an empty
+    list when all is well). It is loaded from its path, so it needs no package and no change to sys.path.
+    """
+    path = ROOT / "tools" / "extra_checks.py"
+    if not path.is_file():
+        return
+    spec = importlib.util.spec_from_file_location("hydra_extra_checks", path)
+    if spec is None or spec.loader is None:
+        fail("tools/extra_checks.py cannot be loaded")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    checker = getattr(module, "check", None)
+    if not callable(checker):
+        fail("tools/extra_checks.py must define check(root) returning a list of problems")
+    problems = checker(ROOT)
+    if problems:
+        fail("; ".join(str(problem) for problem in problems))
+
+
 def main() -> int:
     try:
         manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
@@ -225,8 +262,9 @@ def main() -> int:
     missing_documents = [name for name in REQUIRED_DOCUMENTS if not (ROOT / name).is_file()]
     if missing_documents:
         fail(f"required documentation missing: {', '.join(missing_documents)}")
-    if not (ROOT / "bump_manifest_version.py").is_file():
-        fail("bump_manifest_version.py is required")
+    # The bridges keep their bump script under tools/.
+    if not (ROOT / "bump_manifest_version.py").is_file() and not (ROOT / "tools" / "bump_version.py").is_file():
+        fail("bump_manifest_version.py (or tools/bump_version.py) is required")
 
     missing_build_test_files = [name for name in REQUIRED_BUILD_TEST_FILES if not (ROOT / name).is_file()]
     if missing_build_test_files:
@@ -273,6 +311,7 @@ def main() -> int:
         fail(venv_activate_error)
     for readme_problem in check_readme_section_parity(ROOT):
         fail(readme_problem)
+    run_extra_checks()
 
     print(f"CI_VALIDATION=PASS project={manifest['name']} version={manifest['version']}")
     return 0
