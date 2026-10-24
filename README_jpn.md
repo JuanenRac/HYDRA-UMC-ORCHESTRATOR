@@ -126,9 +126,11 @@ E-STOP を発行し、どのロボットがどのミッションを担当する�
 HYDRA-UMC-ORCHESTRATOR/
 ├── src/
 │   ├── mission.rs    # 実際のミッション状態機械（Mission、MissionRegistry）
+│   ├── outbox.rs          # 保留中のリモートクローズ用の実在する永続アウトボックス (再起動後も残る)
 │   ├── job_dispatcher.rs  # HYDRA-UMC-JOB-DISPATCHER自身のHTTP APIに対する実際のクライアント
 │   ├── server.rs          # シンプルなJSON/HTTPサーフェス(tiny_http、ブロッキング、非同期ランタイムなし)
-│   └── main.rs       # エントリポイント + 実際の `mission-demo` サブコマンド
+│   ├── main.rs       # エントリポイント + 実際の `mission-demo` サブコマンド
+│   └── logging.rs    # プロセスが stderr に書く行を一か所にまとめる (平文、または --log-format で選んだ形式)
 ├── proto/            # エコシステム全体のノード間通信のための共有 gRPC
 │                     # コントラクト（proto/README.md を参照）——本リポ
 │                     # ジトリ自身の API だけではありません
@@ -141,7 +143,10 @@ HYDRA-UMC-ORCHESTRATOR/
 │   ├── build_test.py # バージョンを増やさないビルドチェック
 │   ├── ci_validate.py # CI が使用するマニフェスト/CHANGELOG/ドキュメント検証
 │   ├── verify_dispatcher_contract.py # 実際の job-dispatcher と実際のオーケストレーターを互いに動かして契約を検証
-│   └── verify_compose.py # docker-compose.yml の静的チェック（コマンド、固定されたイメージ、ループバックのポート、必須トークン）
+│   ├── verify_compose.py # docker-compose.yml の静的チェック（コマンド、固定されたイメージ、ループバックのポート、必須トークン）
+│   ├── _doc_policy.py    # ファミリー共通のドキュメント規則 (HYDRA-UMC-SDK のコピーで、同期を維持)
+│   ├── _readme_parity.py # 8つの README が同じ構造であることの検査 (HYDRA-UMC-SDK のコピーで、同期を維持)
+│   └── hydra_project_tool.py # すべてのリポジトリで共通のコマンド: validate、test、ci、version、status、bump
 ├── Cargo.toml        # Rust パッケージマニフェスト（名前、バージョン、依存関係）
 ├── bump_version.py   # オドメーター式バージョンインクリメント（明示的な `bump` コマンドのみが実行）
 ├── bump_manifest_version.py # hydra-umc.project.json のバージョンをネイティブ版と同期(--sync)

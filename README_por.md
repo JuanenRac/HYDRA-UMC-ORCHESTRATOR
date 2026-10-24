@@ -151,10 +151,11 @@ Para todos os exemplos reais de `mission-demo`/CLI (capturados de um binário re
 HYDRA-UMC-ORCHESTRATOR/
 ├── src/
 │   ├── mission.rs         # Máquina de estados real das missões (Mission, MissionRegistry) + a sua persistência em disco
-│   ├── outbox.rs          # Caixa de saída real e durável de fechos remotos pendentes (sobrevive a um reinício)
+│   ├── outbox.rs          # Caixa de saída real e durável dos fechos remotos pendentes (sobrevive a um reinício)
 │   ├── job_dispatcher.rs  # Cliente real da API HTTP do HYDRA-UMC-JOB-DISPATCHER
 │   ├── server.rs          # Superfície JSON/HTTP simples (tiny_http, bloqueante, sem runtime assíncrono)
-│   └── main.rs            # Ponto de entrada + subcomando real `mission-demo`
+│   ├── main.rs            # Ponto de entrada + subcomando real `mission-demo`
+│   └── logging.rs         # Um único sítio para as linhas que o processo escreve no stderr (texto simples ou o formato escolhido com --log-format)
 ├── proto/            # Contrato gRPC partilhado para o tráfego nó a nó
 │                     # em todo o ecossistema (ver proto/README.md) -
 │                     # não só a API deste repositório
@@ -167,7 +168,10 @@ HYDRA-UMC-ORCHESTRATOR/
 │   ├── build_test.py # Verificação de compilação sem alterar versões
 │   ├── ci_validate.py # Validação de manifesto/CHANGELOG/docs usada pelo CI
 │   ├── verify_dispatcher_contract.py # Corre o job-dispatcher real e o orquestrador real um contra o outro e verifica o contrato
-│   └── verify_compose.py # Verificações estáticas do docker-compose.yml (comandos, imagens fixadas, portas em loopback, tokens obrigatórios)
+│   ├── verify_compose.py # Verificações estáticas do docker-compose.yml (comandos, imagens fixadas, portas em loopback, tokens obrigatórios)
+│   ├── _doc_policy.py    # Regras de documentação partilhadas pela família (cópia da de HYDRA-UMC-SDK, mantida em sincronia)
+│   ├── _readme_parity.py # Verificação de que os oito README partilham a mesma estrutura (cópia da de HYDRA-UMC-SDK, mantida em sincronia)
+│   └── hydra_project_tool.py # Os mesmos comandos em todos os repositórios: validate, test, ci, version, status, bump
 ├── Cargo.toml        # Manifesto do pacote Rust (nome, versão, dependências)
 ├── bump_version.py   # Subida de versão ao estilo conta-quilómetros (executada só pelo comando `bump` explícito)
 ├── bump_manifest_version.py # Sincroniza a versão do hydra-umc.project.json com a nativa (--sync)

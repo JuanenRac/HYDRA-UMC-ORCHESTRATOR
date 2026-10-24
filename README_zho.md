@@ -120,9 +120,11 @@ flowchart TB
 HYDRA-UMC-ORCHESTRATOR/
 ├── src/
 │   ├── mission.rs         # 真实的任务状态机（Mission、MissionRegistry）
+│   ├── outbox.rs          # 真实且持久的待处理远程关闭发件箱 (重启后仍保留)
 │   ├── job_dispatcher.rs  # 面向 HYDRA-UMC-JOB-DISPATCHER 自身 HTTP API 的真实客户端
 │   ├── server.rs          # 简洁的 JSON/HTTP 接口(tiny_http,阻塞式,无异步运行时)
-│   └── main.rs            # 入口点 + 真实的 `mission-demo` 子命令
+│   ├── main.rs            # 入口点 + 真实的 `mission-demo` 子命令
+│   └── logging.rs         # 进程写入 stderr 的行的统一出口 (纯文本,或用 --log-format 选择的格式)
 ├── proto/            # 用于整个生态系统节点间通信的共享 gRPC 契约
 │                     # （见 proto/README.md）——不仅仅是本仓库自身的 API
 ├── docs/             # 文档与架构指南
@@ -134,7 +136,10 @@ HYDRA-UMC-ORCHESTRATOR/
 │   ├── build_test.py # 不递增版本号的构建检查
 │   ├── ci_validate.py # CI 使用的清单/CHANGELOG/文档校验
 │   ├── verify_dispatcher_contract.py # 让真实的 job-dispatcher 与真实的编排器互相运行并核验契约
-│   └── verify_compose.py # docker-compose.yml 的静态检查（命令、固定镜像、回环端口、必需令牌）
+│   ├── verify_compose.py # docker-compose.yml 的静态检查（命令、固定镜像、回环端口、必需令牌）
+│   ├── _doc_policy.py    # 家族共享的文档规则 (HYDRA-UMC-SDK 的副本,保持同步)
+│   ├── _readme_parity.py # 检查八个 README 结构一致 (HYDRA-UMC-SDK 的副本,保持同步)
+│   └── hydra_project_tool.py # 每个仓库相同的命令: validate、test、ci、version、status、bump
 ├── Cargo.toml        # Rust 包清单（名称、版本、依赖项）
 ├── bump_version.py   # 里程表式版本递增（仅由显式 `bump` 命令运行）
 ├── bump_manifest_version.py # 将 hydra-umc.project.json 的版本与原生版本同步(--sync)

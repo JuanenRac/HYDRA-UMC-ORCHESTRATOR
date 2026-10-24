@@ -151,9 +151,11 @@ Für jedes reale mission-demo/CLI-Beispiel (aus einer echten kompilierten Binär
 HYDRA-UMC-ORCHESTRATOR/
 ├── src/
 │   ├── mission.rs         # Echter Missions-Zustandsautomat (Mission, MissionRegistry)
+│   ├── outbox.rs          # Echter, dauerhafter Ausgangskorb für ausstehende Remote-Abschlüsse (übersteht einen Neustart)
 │   ├── job_dispatcher.rs  # Echter Client für die eigene HTTP-API von HYDRA-UMC-JOB-DISPATCHER
 │   ├── server.rs          # Einfache JSON/HTTP-Oberfläche (tiny_http, blockierend, ohne Async-Runtime)
-│   └── main.rs            # Einstiegspunkt + echter Subbefehl `mission-demo`
+│   ├── main.rs            # Einstiegspunkt + echter Subbefehl `mission-demo`
+│   └── logging.rs         # Eine Stelle für die Zeilen, die der Prozess auf stderr schreibt (Klartext oder das mit --log-format gewählte Format)
 ├── proto/            # Gemeinsamer gRPC-Vertrag für Knoten-zu-Knoten-
 │                     # Verkehr im gesamten Ökosystem (siehe
 │                     # proto/README.md) - nicht nur die API dieses Repos
@@ -166,7 +168,10 @@ HYDRA-UMC-ORCHESTRATOR/
 │   ├── build_test.py # Nicht-versionierender Build-Check
 │   ├── ci_validate.py # Manifest/CHANGELOG/Docs-Validierung, von CI genutzt
 │   ├── verify_dispatcher_contract.py # Lässt den echten Job-Dispatcher und den echten Orchestrator gegeneinander laufen und prüft den Vertrag
-│   └── verify_compose.py # Statische Prüfungen von docker-compose.yml (Befehle, fixierte Images, Loopback-Ports, Pflicht-Token)
+│   ├── verify_compose.py # Statische Prüfungen von docker-compose.yml (Befehle, fixierte Images, Loopback-Ports, Pflicht-Token)
+│   ├── _doc_policy.py    # Von der Familie geteilte Dokumentationsregeln (Kopie der von HYDRA-UMC-SDK, synchron gehalten)
+│   ├── _readme_parity.py # Prüfung, dass die acht READMEs dieselbe Struktur haben (Kopie der von HYDRA-UMC-SDK, synchron gehalten)
+│   └── hydra_project_tool.py # Dieselben Befehle in jedem Repository: validate, test, ci, version, status, bump
 ├── Cargo.toml        # Rust-Paketmanifest (Name, Version, Abhängigkeiten)
 ├── bump_version.py   # Versionserhöhung im Kilometerzähler-Stil (nur vom expliziten `bump`-Befehl ausgeführt)
 ├── bump_manifest_version.py # Synchronisiert die Version von hydra-umc.project.json mit der nativen (--sync)

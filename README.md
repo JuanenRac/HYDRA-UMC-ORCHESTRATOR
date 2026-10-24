@@ -152,7 +152,8 @@ HYDRA-UMC-ORCHESTRATOR/
 │   ├── outbox.rs          # Real, durable pending-remote-close outbox (survives a restart)
 │   ├── job_dispatcher.rs  # Real client for HYDRA-UMC-JOB-DISPATCHER's own HTTP API
 │   ├── server.rs          # Plain JSON/HTTP surface (tiny_http, blocking, no async runtime)
-│   └── main.rs            # Entry point + real `mission-demo` subcommand
+│   ├── main.rs            # Entry point + real `mission-demo` subcommand
+│   └── logging.rs         # One place for the lines the process writes to stderr (plain text, or the format chosen with --log-format)
 ├── proto/            # Shared gRPC contract for node-to-node traffic
 │                     # across the ecosystem (see proto/README.md) -
 │                     # not just this repo's own API
@@ -165,7 +166,10 @@ HYDRA-UMC-ORCHESTRATOR/
 │   ├── build_test.py # Non-versioning build/compile check
 │   ├── ci_validate.py # Manifest/CHANGELOG/docs validation used by CI
 │   ├── verify_dispatcher_contract.py # Runs the real job-dispatcher and the real orchestrator against each other and checks the contract
-│   └── verify_compose.py # Static checks of docker-compose.yml (commands, pinned images, loopback ports, required tokens)
+│   ├── verify_compose.py # Static checks of docker-compose.yml (commands, pinned images, loopback ports, required tokens)
+│   ├── _doc_policy.py    # Documentation rules shared by the family (a copy of HYDRA-UMC-SDK's, kept in sync)
+│   ├── _readme_parity.py # Check that the eight READMEs share one structure (a copy of HYDRA-UMC-SDK's, kept in sync)
+│   └── hydra_project_tool.py # The same commands in every repository: validate, test, ci, version, status, bump
 ├── Cargo.toml        # Rust package manifest (name, version, deps)
 ├── bump_version.py   # Odometer-style version bump (run only by the explicit `bump` command)
 ├── bump_manifest_version.py # Syncs hydra-umc.project.json's version to the native one (--sync)
