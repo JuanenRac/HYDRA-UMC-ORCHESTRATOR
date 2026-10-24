@@ -57,34 +57,39 @@ def next_version(value: str) -> str:
 _THREE_GROUPS = re.compile(r"(\([^()]*\))\\.(\([^()]*\))\\.(\([^()]*\))(?!\(\?:\\.)")
 
 
-def with_optional_fourth_group(pattern: str | dict[str, str]) -> str | dict[str, str]:
+def with_optional_fourth_group(pattern: str) -> str:
     """Let a native-version pattern also match a fourth `.N` component.
 
     Patterns are written for `MAJOR.MINOR.PATCH`; the same text with an
     optional fourth group behind the third one reads both forms. A pattern that
-    already has it, or that keeps the components in separate fields, is
-    returned unchanged.
+    already has it is returned unchanged. Patterns that keep the components in
+    separate fields (a mapping) never reach this function.
     """
-    if isinstance(pattern, dict):
-        return pattern
     match = _THREE_GROUPS.search(pattern)
     if match is None:
         return pattern
     return pattern[: match.end()] + r"(?:\." + match.group(3) + ")?" + pattern[match.end() :]
 
 
+def widen_pattern(pattern: str | dict[str, str]) -> str | dict[str, str]:
+    """The pattern to store once the version has four components."""
+    if isinstance(pattern, dict):
+        return pattern
+    return with_optional_fourth_group(pattern)
+
+
 def read_version(text: str, pattern: str | dict[str, str]) -> str:
     if isinstance(pattern, dict):
-        parts: dict[str, str] = {}
+        fields: dict[str, str] = {}
         for key in ("major", "minor", "patch"):
             match = re.search(pattern[key], text, re.MULTILINE)
             if match is None:
                 raise ValueError(f"native version {key} component was not found")
-            parts[key] = match.group(1)
-        version = f"{parts['major']}.{parts['minor']}.{parts['patch']}"
+            fields[key] = match.group(1)
+        version = f"{fields['major']}.{fields['minor']}.{fields['patch']}"
         # A separate field for the fourth component only counts from the
         # version that carries one; below it a stored 0 is just a placeholder.
-        if "build" in pattern and tuple(int(parts[k]) for k in ("major", "minor", "patch")) >= FOUR_PART_FROM:
+        if "build" in pattern and tuple(int(fields[k]) for k in ("major", "minor", "patch")) >= FOUR_PART_FROM:
             build = re.search(pattern["build"], text, re.MULTILINE)
             if build is not None:
                 version += "." + build.group(1)
@@ -263,7 +268,7 @@ def main() -> int:
             # A per-project bump script produced the last three-part version;
             # the ecosystem rule appends the fourth component.
             source.write_text(replace_version(source_text, pattern, expected), encoding="utf-8")
-            manifest["native_version"]["pattern"] = with_optional_fourth_group(pattern)
+            manifest["native_version"]["pattern"] = widen_pattern(pattern)
             sync_version_mirrors(current, expected)
             current = expected
         manifest["version"] = current
@@ -285,7 +290,7 @@ def main() -> int:
     source.write_text(updated_text, encoding="utf-8")
     sync_version_mirrors(current, new)
     if new.count(".") == 3:
-        manifest["native_version"]["pattern"] = with_optional_fourth_group(pattern)
+        manifest["native_version"]["pattern"] = widen_pattern(pattern)
     manifest["version"] = new
     write_manifest(manifest)
     ensure_changelog_version(new)
