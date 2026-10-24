@@ -12,7 +12,9 @@
 
 from __future__ import annotations
 
+import fnmatch
 import re
+import subprocess
 from pathlib import Path
 from typing import Sequence
 
@@ -95,4 +97,84 @@ def check_readme_section_parity(
             problems.append(
                 f"{language_file} links do not match {language_files[0]}: missing {missing}, extra {extra}"
             )
+    problems.extend(check_readme_tree(root, language_files))
+    return problems
+
+
+# The first level of a repository is described by the file tree of its README, so an entry that Git
+# versions but the tree leaves out is a README that went stale. What every repository has, and the
+# files of tooling and configuration that need no sentence of their own, are not asked for.
+_TREE_EXEMPT = re.compile(
+    r"^(README(_[a-z]{3})?\.md|LICENSE(\.md)?|CHANGELOG\.md|CODE_OF_CONDUCT\.md|CONTRIBUTING\.md|SECURITY\.md|SUPPORT\.md"
+    r"|THIRD_PARTY_NOTICES\.md|.*project\.json|images|\..*|build.*|run.*|dev.*|bump.*|.*\.lock|package(-lock)?\.json"
+    r"|.*\.toml|mypy\.ini|pytest\.ini|tox\.ini|go\.(mod|sum)|Dockerfile.*|docker-compose.*|eslint.*|tsconfig.*|vite.*"
+    r"|requirements.*|gradle.*|gradlew.*|settings\.gradle.*|local\.properties)$"
+)
+_TREE_FENCE = re.compile(r"```[a-z]*\r?\n(.*?)```", re.S)
+_TREE_ROW = re.compile(r"^[├└]── ([^\s,]+(?:(?:, | / | \+ )[^\s,]+)*)")
+
+
+def readme_tree_names(path: Path) -> set[str] | None:
+    """The first-level names that the file tree of `path` lists (a pattern such as `sdkconfig.*` included; `a.sh/.bat` and `a.sh / .bat`
+    list both files), or None when the README has no file tree. The tree is the code block with the most tree rows."""
+    text = path.read_text(encoding="utf-8")
+    best = ""
+    best_rows = 0
+    for fence in _TREE_FENCE.finditer(text):
+        rows = len(re.findall(r"^[├└]── ", fence.group(1), re.M))
+        if rows > best_rows:
+            best, best_rows = fence.group(1), rows
+    if not best_rows:
+        return None
+    names: set[str] = set()
+    for line in best.splitlines():
+        found = _TREE_ROW.match(line)
+        if not found:
+            continue
+        previous = ""
+        for token in re.split(r", | / | \+ ", found.group(1)):
+            for part in re.split(r"/(?=\.)", token):
+                part = part.rstrip("/")
+                if part.startswith(".") and "." in previous.lstrip("."):
+                    part = previous.rsplit(".", 1)[0] + part
+                first = part.split("/")[0]
+                if first:
+                    names.add(first)
+                previous = part
+    return names
+
+
+def tracked_first_level(root: Path) -> list[str] | None:
+    """The first-level entries of the repository that Git versions, or None when Git cannot tell."""
+    try:
+        result = subprocess.run(["git", "ls-files", "-z"], cwd=root, capture_output=True, check=True)
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    entries = {item.split("/")[0] for item in result.stdout.decode("utf-8", "replace").split(chr(0)) if item}
+    return sorted(entries) or None
+
+
+def check_readme_tree(
+    root: Path,
+    language_files: Sequence[str] = DEFAULT_LANGUAGE_FILES,
+    tracked: Sequence[str] | None = None,
+) -> list[str]:
+    """For every README that has a file tree, the versioned first-level entries that the tree leaves out."""
+    entries = list(tracked) if tracked is not None else tracked_first_level(root)
+    if entries is None:
+        return []
+    problems: list[str] = []
+    for language_file in language_files:
+        path = root / language_file
+        if not path.is_file():
+            continue
+        listed = readme_tree_names(path)
+        if listed is None:
+            continue
+        missing = [
+            name for name in entries
+            if not _TREE_EXEMPT.match(name) and not any(fnmatch.fnmatchcase(name, pattern) for pattern in listed)
+        ]
+        if missing:
+            problems.append(f"{language_file} file tree does not list: {', '.join(missing)}")
     return problems
