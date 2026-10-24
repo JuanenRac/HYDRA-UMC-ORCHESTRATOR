@@ -42,6 +42,7 @@
 
 ### 关键特性：
 * 🧭 **分配只有一个所有者：** 配置了 `--job-dispatcher-url` 后，由 JOB-DISPATCHER 决定哪台机器人接收任务，而本编排器拥有任务本身（生命周期、收尾与恢复）。此时手动指定节点的 `POST /missions/:id/dispatch` 会被以 409 拒绝，并提示使用 `POST /missions/:id/auto-dispatch`；没有 job-dispatcher 时，手动 dispatch 与以前一样可用。*(已实现)*
+* 📜 **与 job-dispatcher 的书面契约,用两个真实进程核验:** `docs/JOB_DISPATCHER_CONTRACT.md` 写明谁拥有什么(dispatcher 拥有把工作分配给机器人;本编排器拥有任务:其生命周期、收尾和恢复)以及双方逐步向对方承诺什么。`tools/verify_dispatcher_contract.py` 启动真实的 dispatcher(Go,来自相邻的检出目录)和真实的编排器,并让任务经过它们:任务是一个待处理的作业,手动指派被拒绝,由 dispatcher 选择机器人,完成和失败会关闭作业,而恢复节点会收回它的工作并拦截丢失尝试的迟到报告。缺少 Go、dispatcher 或已构建的编排器时跳过(退出码 0)。*(已实现,23 项检查)*
 * 🕸️ **集群协调：** 跨多个控制器编排最多 32+ 台独立机械臂。 *（计划中）*
 * ⚖️ **负载均衡：** 自动将任务分配给最空闲或最适合的机器人。
 * 🛡️ **集中式安全：** 全局 E-STOP 管理与全车队健康监控。 *（计划中）*
@@ -119,6 +120,7 @@ HYDRA-UMC-ORCHESTRATOR/
 ├── tools/
 │   ├── build_test.py # 不递增版本号的构建检查
 │   ├── ci_validate.py # CI 使用的清单/CHANGELOG/文档校验
+│   ├── verify_dispatcher_contract.py # 让真实的 job-dispatcher 与真实的编排器互相运行并核验契约
 │   └── verify_compose.py # docker-compose.yml 的静态检查（命令、固定镜像、回环端口、必需令牌）
 ├── Cargo.toml        # Rust 包清单（名称、版本、依赖项）
 ├── bump_version.py   # 里程表式版本递增（仅由显式 `bump` 命令运行）

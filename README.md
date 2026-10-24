@@ -42,6 +42,7 @@ Planned: global mission planning, load balancing across the fleet, and real-time
 
 ### Key Features:
 * 🧭 **One owner of the assignment:** with `--job-dispatcher-url` configured, JOB-DISPATCHER decides which robot gets a mission and this orchestrator owns the mission itself (its life cycle, close-out and recovery). `POST /missions/:id/dispatch` (a node chosen by hand) is then refused with 409 and points to `POST /missions/:id/auto-dispatch`; without a job-dispatcher the manual dispatch works as before. *(implemented)*
+* 📜 **A written contract with the job-dispatcher, checked with both real processes:** `docs/JOB_DISPATCHER_CONTRACT.md` says who owns what (the dispatcher the assignment of work to robots, this orchestrator the mission: its life cycle, its closing and its recovery) and what each side promises the other, step by step. `tools/verify_dispatcher_contract.py` starts the real dispatcher (Go, from its sibling checkout) and the real orchestrator and drives missions through them: a mission is a pending job, a manual dispatch is refused, the dispatcher chooses the robot, complete and fail close the job, and recovering a node takes its work back and fences a late report of the lost attempt. It skips (exit 0) when Go, the dispatcher or the built orchestrator is missing. *(implemented, 23 checks)*
 * 🕸️ **Swarm Coordination:** Orchestrates up to 32+ independent robot arms across multiple controllers. *(planned)*
 * ⚖️ **Load Balancing:** Automatically assigns missions to the most available or best-equipped robot.
 * 🛡️ **Centralized Safety:** Global E-STOP management and fleet-wide health monitoring. *(planned)*
@@ -150,6 +151,7 @@ HYDRA-UMC-ORCHESTRATOR/
 ├── tools/
 │   ├── build_test.py # Non-versioning build/compile check
 │   ├── ci_validate.py # Manifest/CHANGELOG/docs validation used by CI
+│   ├── verify_dispatcher_contract.py # Runs the real job-dispatcher and the real orchestrator against each other and checks the contract
 │   └── verify_compose.py # Static checks of docker-compose.yml (commands, pinned images, loopback ports, required tokens)
 ├── Cargo.toml        # Rust package manifest (name, version, deps)
 ├── bump_version.py   # Odometer-style version bump (run only by the explicit `bump` command)

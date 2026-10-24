@@ -42,6 +42,7 @@ Geplant: globale Missionsplanung, Lastverteilung über die Flotte und Echtzeit-S
 
 ### Hauptmerkmale:
 * 🧭 **Ein Besitzer der Zuweisung:** Ist `--job-dispatcher-url` gesetzt, entscheidet JOB-DISPATCHER, welcher Roboter eine Mission bekommt, und dieser Orchestrator besitzt die Mission selbst (Lebenszyklus, Abschluss und Wiederherstellung). `POST /missions/:id/dispatch` (ein von Hand gewählter Knoten) wird dann mit 409 abgelehnt und verweist auf `POST /missions/:id/auto-dispatch`; ohne Job-Dispatcher funktioniert der manuelle Dispatch wie zuvor. *(implementiert)*
+* 📜 **Ein schriftlicher Vertrag mit dem Job-Dispatcher, mit beiden echten Prozessen geprüft:** `docs/JOB_DISPATCHER_CONTRACT.md` sagt, wem was gehört (dem Dispatcher die Zuweisung der Arbeit an Roboter, diesem Orchestrator die Mission: ihr Lebenszyklus, ihr Abschluss und ihre Wiederherstellung) und was jede Seite der anderen zusagt, Schritt für Schritt. `tools/verify_dispatcher_contract.py` startet den echten Dispatcher (Go, aus dem Nachbar-Checkout) und den echten Orchestrator und lässt Missionen durch beide laufen: eine Mission ist ein wartender Auftrag, eine manuelle Zuweisung wird abgelehnt, der Dispatcher wählt den Roboter, Abschließen und Scheitern schließen den Auftrag, und das Wiederherstellen eines Knotens nimmt ihm seine Arbeit weg und sperrt einen verspäteten Bericht des verlorenen Versuchs. Es wird übersprungen (Exit 0), wenn Go, der Dispatcher oder der gebaute Orchestrator fehlt. *(implementiert, 23 Prüfungen)*
 * 🕸️ **Schwarm-Koordination:** Orchestriert bis zu 32+ unabhängige Roboterarme über mehrere Controller. *(geplant)*
 * ⚖️ **Lastausgleich:** Weist Missionen automatisch dem am besten verfügbaren oder am besten ausgestatteten Roboter zu.
 * 🛡️ **Zentralisierte Sicherheit:** Globales E-STOP-Management und flottenweite Zustandsüberwachung. *(geplant)*
@@ -151,6 +152,7 @@ HYDRA-UMC-ORCHESTRATOR/
 ├── tools/
 │   ├── build_test.py # Nicht-versionierender Build-Check
 │   ├── ci_validate.py # Manifest/CHANGELOG/Docs-Validierung, von CI genutzt
+│   ├── verify_dispatcher_contract.py # Lässt den echten Job-Dispatcher und den echten Orchestrator gegeneinander laufen und prüft den Vertrag
 │   └── verify_compose.py # Statische Prüfungen von docker-compose.yml (Befehle, fixierte Images, Loopback-Ports, Pflicht-Token)
 ├── Cargo.toml        # Rust-Paketmanifest (Name, Version, Abhängigkeiten)
 ├── bump_version.py   # Versionserhöhung im Kilometerzähler-Stil (nur vom expliziten `bump`-Befehl ausgeführt)

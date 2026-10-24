@@ -42,6 +42,7 @@ Previsto: planeamento global de missões, equilíbrio de carga na frota e sincro
 
 ### Funcionalidades principais:
 * 🧭 **Um só dono da atribuição:** com `--job-dispatcher-url` configurado, o JOB-DISPATCHER decide que robô recebe uma missão e este orquestrador é dono da própria missão (ciclo de vida, encerramento e recuperação). `POST /missions/:id/dispatch` (um nó escolhido à mão) é então recusado com 409 e remete para `POST /missions/:id/auto-dispatch`; sem job-dispatcher o dispatch manual funciona como antes. *(implementado)*
+* 📜 **Um contrato escrito com o job-dispatcher, verificado com os dois processos reais:** `docs/JOB_DISPATCHER_CONTRACT.md` diz quem é dono de quê (o dispatcher, da atribuição do trabalho aos robôs; este orquestrador, da missão: o seu ciclo de vida, o fecho e a recuperação) e o que cada parte promete à outra, passo a passo. `tools/verify_dispatcher_contract.py` arranca o dispatcher real (Go, do seu checkout irmão) e o orquestrador real e faz passar missões por eles: uma missão é um trabalho pendente, uma atribuição manual é recusada, o dispatcher escolhe o robô, concluir e falhar fecham o trabalho, e recuperar um nó tira-lhe o trabalho e bloqueia um relatório tardio da tentativa perdida. É ignorado (saída 0) se faltar o Go, o dispatcher ou o orquestrador compilado. *(implementado, 23 verificações)*
 * 🕸️ **Coordenação de enxame:** orquestra mais de 32 braços robóticos independentes em vários controladores. *(planeado)*
 * ⚖️ **Equilíbrio de carga:** atribui automaticamente as missões ao robô mais disponível ou mais bem equipado.
 * 🛡️ **Segurança centralizada:** gestão global de E-STOP e monitorização da saúde de toda a frota. *(planeado)*
@@ -152,6 +153,7 @@ HYDRA-UMC-ORCHESTRATOR/
 ├── tools/
 │   ├── build_test.py # Verificação de compilação sem alterar versões
 │   ├── ci_validate.py # Validação de manifesto/CHANGELOG/docs usada pelo CI
+│   ├── verify_dispatcher_contract.py # Corre o job-dispatcher real e o orquestrador real um contra o outro e verifica o contrato
 │   └── verify_compose.py # Verificações estáticas do docker-compose.yml (comandos, imagens fixadas, portas em loopback, tokens obrigatórios)
 ├── Cargo.toml        # Manifesto do pacote Rust (nome, versão, dependências)
 ├── bump_version.py   # Subida de versão ao estilo conta-quilómetros (executada só pelo comando `bump` explícito)

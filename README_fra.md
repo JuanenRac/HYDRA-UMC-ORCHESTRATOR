@@ -42,6 +42,7 @@ Prévu : planification globale des missions, répartition de la charge sur la fl
 
 ### Caractéristiques principales :
 * 🧭 **Un seul propriétaire de l'affectation :** avec `--job-dispatcher-url` configuré, JOB-DISPATCHER décide quel robot reçoit une mission et cet orchestrateur possède la mission elle-même (cycle de vie, clôture et reprise). `POST /missions/:id/dispatch` (un nœud choisi à la main) est alors refusé avec 409 et renvoie vers `POST /missions/:id/auto-dispatch` ; sans job-dispatcher le dispatch manuel fonctionne comme avant. *(implémenté)*
+* 📜 **Un contrat écrit avec le job-dispatcher, vérifié avec les deux processus réels :** `docs/JOB_DISPATCHER_CONTRACT.md` dit qui possède quoi (le dispatcher, l'affectation du travail aux robots ; cet orchestrateur, la mission : son cycle de vie, sa clôture et sa reprise) et ce que chaque partie promet à l'autre, pas à pas. `tools/verify_dispatcher_contract.py` démarre le vrai dispatcher (Go, depuis son dépôt voisin) et le vrai orchestrateur et leur fait traverser des missions : une mission est un travail en attente, une affectation manuelle est refusée, le dispatcher choisit le robot, terminer et échouer clôturent le travail, et récupérer un nœud lui reprend son travail et bloque un rapport tardif de la tentative perdue. Il est ignoré (sortie 0) si Go, le dispatcher ou l'orchestrateur compilé manque. *(implémenté, 23 vérifications)*
 * 🕸️ **Coordination d'essaim :** Orchestre jusqu'à plus de 32 bras robotisés indépendants via plusieurs contrôleurs. *(prévu)*
 * ⚖️ **Équilibrage de charge :** Assigne automatiquement des missions au robot le plus disponible ou le mieux équipé.
 * 🛡️ **Sécurité centralisée :** Gestion globale de l'E-STOP et surveillance de l'état de l'ensemble de la flotte. *(prévu)*
@@ -150,6 +151,7 @@ HYDRA-UMC-ORCHESTRATOR/
 ├── tools/
 │   ├── build_test.py # Vérification de build sans versionnage
 │   ├── ci_validate.py # Validation manifeste/CHANGELOG/docs utilisée par CI
+│   ├── verify_dispatcher_contract.py # Fait tourner le vrai job-dispatcher et le vrai orchestrateur l'un contre l'autre et vérifie le contrat
 │   └── verify_compose.py # Contrôles statiques de docker-compose.yml (commandes, images épinglées, ports en loopback, jetons obligatoires)
 ├── Cargo.toml        # Manifeste du paquet Rust (nom, version, dépendances)
 ├── bump_version.py   # Incrément de version type compteur kilométrique (exécuté seulement par la commande `bump` explicite)
