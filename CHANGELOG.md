@@ -2,20 +2,28 @@
 
 All notable changes to this project are documented here.
 
-## [Unreleased]
+## [0.1.9] - The job-dispatcher owns the assignment
+
+### Firmware and protocol
+
+- The manifest declares the health path of the service (`service.health_path: /health`), so the ecosystem status and the service registry of the SDK can probe it over HTTP and not only by its port.
+
+### Tests, builds and checks
 
 - **A written contract with the job-dispatcher, checked with both real processes.** `docs/JOB_DISPATCHER_CONTRACT.md` says who owns what (the dispatcher the assignment of work to robots, the orchestrator the mission: life cycle, closing and recovery) and what each side promises the other, including a dispatcher that is down. `tools/verify_dispatcher_contract.py` starts the real dispatcher (Go, from its sibling checkout) and the real orchestrator on free loopback ports and checks 23 points across them: a mission is a pending job, a manual dispatch is refused with 409 and names the owner, `auto-dispatch` lets the dispatcher choose the robot, complete and fail close the job as done and failed and free the robot, and recovering a node requeues the job, holds the robot and fences a late report of the lost attempt. It skips (exit 0) without Go, the checkout or the built orchestrator.
+- Building no longer changes the version; raising it is the explicit `bump` command (`python tools/hydra_project_tool.py bump`). The build scripts only report the version they built, and CI fails if a build script runs a bump.
+- Added `tools/hydra_project_tool.py`: the same `validate`, `test`, `version`, `status` and `bump` commands in every repository. The checks run with `HYDRA_UMC_CI=1` and fail if the version changes; only `bump` changes it.
+- CI now runs `tools/verify_compose.py` (every token and secret of the stack is required with `${VAR:?}`, including the swarm-sync shared secret; published ports stay on the loopback interface) and, when Docker Compose is available on the runner, `docker compose config`; a separate advisory job builds and starts the whole stack and probes `/health` of the orchestrator, then tears it down. The advisory job cannot turn the baseline red.
+- The README counters say 143 tests.
+
+### Other changes
+
 - **The job-dispatcher owns the assignment.** With `--job-dispatcher-url` configured, `POST /missions/:id/dispatch` (a node chosen by hand) is refused with 409 and points to `auto-dispatch`: a node picked here never reached the job-dispatcher, which kept the job pending and gave it to another robot, leaving the mission in two places. The orchestrator keeps the mission itself. Without a job-dispatcher the manual dispatch works as before.
-- The manifest declares the health path of the service (`service.health_path: /health`), so the ecosystem status and the service registry of the SDK can probe it over HTTP and not only by its port.
 - `GET /stats` shows how long the oldest unconfirmed close has waited (`oldestPendingCloseAgeSeconds`) and the last success and last error of the calls to JOB-DISPATCHER.
 - `--log-format json` writes each log line as one JSON object; the default text format is unchanged.
 - `--keep-finished N` forgets the oldest finished missions whose close was confirmed so `missions.json` stops growing; the default keeps everything. The file now carries a `schema_version` and one written by a newer version is refused instead of being read wrongly.
 - Closing a job tells JOB-DISPATCHER which attempt is being closed, so a job reassigned in between answers 409 and the close is retried.
-- Building no longer changes the version; raising it is the explicit `bump` command (`python tools/hydra_project_tool.py bump`). The build scripts only report the version they built, and CI fails if a build script runs a bump.
 - The banner follows the animated style of the ecosystem banners, with the name, the kind and the technologies of the project.
-- Added `tools/hydra_project_tool.py`: the same `validate`, `test`, `version`, `status` and `bump` commands in every repository. The checks run with `HYDRA_UMC_CI=1` and fail if the version changes; only `bump` changes it.
-- CI now runs `tools/verify_compose.py` (every token and secret of the stack is required with `${VAR:?}`, including the swarm-sync shared secret; published ports stay on the loopback interface) and, when Docker Compose is available on the runner, `docker compose config`; a separate advisory job builds and starts the whole stack and probes `/health` of the orchestrator, then tears it down. The advisory job cannot turn the baseline red.
-- The README counters say 143 tests.
 
 ## [0.1.8]
 

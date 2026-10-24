@@ -27,9 +27,9 @@
 
 | | |
 |---|---|
-| Versione | `0.1.8` |
+| Versione | `0.1.9` |
 | Maturità | Funzionale |
-| Test | 144 (`cargo test`) |
+| Test | 143 (`cargo test`) |
 | Tecnologia | Rust / tiny_http / ureq / JSON/HTTP |
 | Destinazione | Il Raspberry Pi CM5 di una cella HYDRA-UMC |
 | Su hardware reale | Non ancora: per questa versione non risulta alcuna esecuzione su hardware reale |

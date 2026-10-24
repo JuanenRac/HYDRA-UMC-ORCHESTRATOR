@@ -27,9 +27,9 @@
 
 | | |
 |---|---|
-| 版本 | `0.1.8` |
+| 版本 | `0.1.9` |
 | 成熟度 | 可用 |
-| 测试 | 144 (`cargo test`) |
+| 测试 | 143 (`cargo test`) |
 | 技术栈 | Rust / tiny_http / ureq / JSON/HTTP |
 | 目标 | HYDRA-UMC 工作单元的 Raspberry Pi CM5 |
 | 真实硬件 | 尚未：此版本没有在真实硬件上运行的记录 |
