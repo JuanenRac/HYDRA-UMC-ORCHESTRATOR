@@ -106,7 +106,7 @@ def check_readme_section_parity(
 # files of tooling and configuration that need no sentence of their own, are not asked for.
 _TREE_EXEMPT = re.compile(
     r"^(README(_[a-z]{3})?\.md|LICENSE(\.md)?|CHANGELOG\.md|CODE_OF_CONDUCT\.md|CONTRIBUTING\.md|SECURITY\.md|SUPPORT\.md"
-    r"|THIRD_PARTY_NOTICES\.md|.*project\.json|images|\..*|build.*|run.*|dev.*|bump.*|.*\.lock|package(-lock)?\.json"
+    r"|THIRD_PARTY_NOTICES\.md|.*project\.json|images|\..*|build.*|run.*|test\.(bat|sh)|dev.*|bump.*|.*\.lock|package(-lock)?\.json"
     r"|.*\.toml|mypy\.ini|pytest\.ini|tox\.ini|go\.(mod|sum)|Dockerfile.*|docker-compose.*|eslint.*|tsconfig.*|vite.*"
     r"|requirements.*|gradle.*|gradlew.*|settings\.gradle.*|local\.properties)$"
 )

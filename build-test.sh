@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+# PRETTY_RUN_BEGIN
+if [ -z "${PRETTY_RUN:-}" ] && [ -f "$(dirname "$0")/tools/pretty_run.py" ] && command -v python3 >/dev/null 2>&1; then
+    PRETTY_RUN=1 exec python3 "$(dirname "$0")/tools/pretty_run.py" --wrap --mode "${PRETTY_MODE:-build-test}" -- bash "$0" "$@"
+fi
+# PRETTY_RUN_END
 # HYDRA_UMC_SCRIPT_STANDARD_HEADER_BEGIN
 # *****************************************************************************
 # Project   : HYDRA-UMC-ORCHESTRATOR

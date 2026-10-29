@@ -1,4 +1,14 @@
 @echo off
+rem PRETTY_RUN_BEGIN
+if not defined PRETTY_MODE set "PRETTY_MODE=build-test"
+set "PRETTY_PY=python"
+where py >nul 2>&1 && set "PRETTY_PY=py -3"
+if not defined PRETTY_RUN if exist "%~dp0tools\pretty_run.py" (
+    set "PRETTY_RUN=1"
+    %PRETTY_PY% "%~dp0tools\pretty_run.py" --wrap --mode %PRETTY_MODE% -- cmd /d /c "%~f0" %*
+    exit /b
+)
+rem PRETTY_RUN_END
 REM HYDRA_UMC_SCRIPT_STANDARD_HEADER_BEGIN
 REM *****************************************************************************
 REM Project   : HYDRA-UMC-ORCHESTRATOR
