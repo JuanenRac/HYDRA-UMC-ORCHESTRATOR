@@ -331,7 +331,7 @@ def _wrap_main(argv: Sequence[str]) -> int:
         try:
             data = json.loads(manifest.read_text(encoding="utf-8"))
             name, version = str(data.get("name", name)), str(data.get("version", ""))
-            tagline = {"A.R.M.O.R.": "A.R.M.O.R.", "HYDRA-UMC": "HYDRA-UMC", "URTC": "URTC", "EH3D": "EH3D"}.get(str(data.get("ecosystem", "")), tagline)
+            tagline = str(data.get("ecosystem") or tagline)   # the name of the family, as its manifest says
         except (OSError, ValueError):
             continue
         break
