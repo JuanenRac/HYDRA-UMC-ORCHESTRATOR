@@ -22,6 +22,7 @@
     "pattern": "^version\\s*=\\s*\"(\\d+)\\.(\\d+)\\.(\\d+)\""
   },
   "service": {
+    "port": 8114,
     "systemd_unit": "hydra-umc-orchestrator.service",
     "health_path": "/health"
   }
