@@ -240,6 +240,16 @@ def run_extra_checks() -> None:
         fail("; ".join(str(problem) for problem in problems))
 
 
+def _universal_readme_ci(root: Path) -> list[str]:
+    """The layout of the README (22 sections in a fixed order, in the eight languages): a warning until the family has migrated; see tools/universal_readme_check.py."""
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import universal_readme_check
+    except ImportError:
+        return []
+    return universal_readme_check.run_in_ci(root)
+
+
 def main() -> int:
     try:
         manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
@@ -314,6 +324,8 @@ def main() -> int:
         fail(readme_problem)
     run_extra_checks()
 
+    for _universal_problem in _universal_readme_ci(ROOT):
+        fail(_universal_problem)
     print(f"CI_VALIDATION=PASS project={manifest['name']} version={manifest['version']}")
     return 0
 
