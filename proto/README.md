@@ -59,7 +59,7 @@ plausible-looking text.
 
 ## Versioning
 
-No odometer-style version bump here yet - this is schema, not a runnable
+No version bump here yet - this is schema, not a runnable
 binary. `package hydra.common.v1` inside the `.proto` file itself is the
 version marker: a breaking change bumps to `hydra.common.v2` in a new
 package/file rather than silently changing `v1` under every consumer's

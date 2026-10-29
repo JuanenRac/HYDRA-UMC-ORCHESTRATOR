@@ -1,0 +1,588 @@
+{
+  "repo": "HYDRA-UMC-ORCHESTRATOR",
+  "ecosystem": "hydra",
+  "svg": "en",
+  "exempt": [
+    "CODE_OF_CONDUCT.md",
+    "CONTRIBUTING.md",
+    "SECURITY.md",
+    "SUPPORT.md",
+    "LICENSE",
+    "LICENSE.md",
+    "Cargo.lock",
+    "build-test.bat",
+    "build.bat",
+    "run.bat",
+    "test.bat"
+  ],
+  "cards": [
+    {
+      "name": "tools/",
+      "span": 3,
+      "accent": "a",
+      "rows": [
+        {
+          "name": "build_test.py",
+          "desc": {
+            "en": "Non-versioning build/compile check",
+            "es": "Comprobación de compilación sin versionado",
+            "de": "Nicht-versionierender Build-Check",
+            "fr": "Vérification de build sans versionnage",
+            "it": "Controllo build senza versionamento",
+            "ja": "バージョンを増やさないビルドチェック",
+            "zh": "不递增版本号的构建检查",
+            "pt": "Verificação de compilação sem alterar"
+          },
+          "tree_desc": {
+            "en": "Non-versioning build/compile check",
+            "es": "Comprobación de compilación sin versionado",
+            "de": "Nicht-versionierender Build-Check",
+            "fr": "Vérification de build sans versionnage",
+            "it": "Controllo build senza versionamento",
+            "ja": "バージョンを増やさないビルドチェック",
+            "zh": "不递增版本号的构建检查",
+            "pt": "Verificação de compilação sem alterar versões"
+          }
+        },
+        {
+          "name": "ci_validate.py",
+          "desc": {
+            "en": "Manifest/CHANGELOG/docs validation used by",
+            "es": "Validación de manifiesto/CHANGELOG/docs",
+            "de": "Manifest/CHANGELOG/Docs-Validierung",
+            "fr": "Validation manifeste/CHANGELOG/docs",
+            "it": "Validazione manifest/CHANGELOG/docs usata",
+            "ja": "CI が使用するマニフェスト/CHANGEL",
+            "zh": "CI 使用的清单/CHANGELOG/文档校",
+            "pt": "Validação de manifesto/CHANGELOG/docs usada"
+          },
+          "tree_desc": {
+            "en": "Manifest/CHANGELOG/docs validation used by CI",
+            "es": "Validación de manifiesto/CHANGELOG/docs usada por CI",
+            "de": "Manifest/CHANGELOG/Docs-Validierung, von CI genutzt",
+            "fr": "Validation manifeste/CHANGELOG/docs utilisée par CI",
+            "it": "Validazione manifest/CHANGELOG/docs usata dalla CI",
+            "ja": "CI が使用するマニフェスト/CHANGELOG/ドキュメント検証",
+            "zh": "CI 使用的清单/CHANGELOG/文档校验",
+            "pt": "Validação de manifesto/CHANGELOG/docs usada pelo CI"
+          }
+        },
+        {
+          "name": "verify_dispatcher_contract.py",
+          "desc": {
+            "en": "Runs the real job-dispatcher and the real",
+            "es": "Ejecuta el job-dispatcher real y el",
+            "de": "Lässt den echten Job-Dispatcher und den",
+            "fr": "Fait tourner le vrai job-dispatcher et le",
+            "it": "Esegue il vero job-dispatcher e il vero",
+            "ja": "実際の job-dispatcher と実際",
+            "zh": "让真实的 job-dispatcher 与真",
+            "pt": "Corre o job-dispatcher real e o"
+          },
+          "tree_desc": {
+            "en": "Runs the real job-dispatcher and the real orchestrator against each other and checks the contract",
+            "es": "Ejecuta el job-dispatcher real y el orquestador real uno contra otro y comprueba el contrato",
+            "de": "Lässt den echten Job-Dispatcher und den echten Orchestrator gegeneinander laufen und prüft den Vertrag",
+            "fr": "Fait tourner le vrai job-dispatcher et le vrai orchestrateur l'un contre l'autre et vérifie le contrat",
+            "it": "Esegue il vero job-dispatcher e il vero orchestratore uno contro l'altro e verifica il contratto",
+            "ja": "実際の job-dispatcher と実際のオーケストレーターを互いに動かして契約を検証",
+            "zh": "让真实的 job-dispatcher 与真实的编排器互相运行并核验契约",
+            "pt": "Corre o job-dispatcher real e o orquestrador real um contra o outro e verifica o contrato"
+          }
+        },
+        {
+          "name": "verify_compose.py",
+          "desc": {
+            "en": "Static checks of docker-compose.yml",
+            "es": "Comprobaciones estáticas de",
+            "de": "Statische Prüfungen von docker-compose.yml",
+            "fr": "Contrôles statiques de docker-compose.yml",
+            "it": "Controlli statici di docker-compose.yml",
+            "ja": "docker-compose.yml の静的",
+            "zh": "docker-compose.yml 的静态",
+            "pt": "Verificações estáticas do docker-compose.yml"
+          },
+          "tree_desc": {
+            "en": "Static checks of docker-compose.yml (commands, pinned images, loopback ports, required tokens)",
+            "es": "Comprobaciones estáticas de docker-compose.yml (comandos, imágenes fijadas, puertos en loopback, tokens obligatorios)",
+            "de": "Statische Prüfungen von docker-compose.yml (Befehle, fixierte Images, Loopback-Ports, Pflicht-Token)",
+            "fr": "Contrôles statiques de docker-compose.yml (commandes, images épinglées, ports en loopback, jetons obligatoires)",
+            "it": "Controlli statici di docker-compose.yml (comandi, immagini fissate, porte su loopback, token obbligatori)",
+            "ja": "docker-compose.yml の静的チェック（コマンド、固定されたイメージ、ループバックのポート、必須トークン）",
+            "zh": "docker-compose.yml 的静态检查（命令、固定镜像、回环端口、必需令牌）",
+            "pt": "Verificações estáticas do docker-compose.yml (comandos, imagens fixadas, portas em loopback, tokens obrigatórios)"
+          }
+        },
+        {
+          "name": "_doc_policy.py",
+          "desc": {
+            "en": "Documentation rules shared by the family",
+            "es": "Reglas de documentación compartidas por la",
+            "de": "Von der Familie geteilte",
+            "fr": "Règles de documentation partagées par la",
+            "it": "Regole di documentazione condivise dalla",
+            "ja": "ファミリー共通のドキュメント規則",
+            "zh": "家族共享的文档规则 (HYDRA-UMC-S",
+            "pt": "Regras de documentação partilhadas pela"
+          },
+          "tree_desc": {
+            "en": "Documentation rules shared by the family (a copy of HYDRA-UMC-SDK's, kept in sync)",
+            "es": "Reglas de documentación compartidas por la familia (copia de la de HYDRA-UMC-SDK, mantenida en sincronía)",
+            "de": "Von der Familie geteilte Dokumentationsregeln (Kopie der von HYDRA-UMC-SDK, synchron gehalten)",
+            "fr": "Règles de documentation partagées par la famille (copie de celle de HYDRA-UMC-SDK, tenue synchronisée)",
+            "it": "Regole di documentazione condivise dalla famiglia (copia di quella di HYDRA-UMC-SDK, mantenuta sincronizzata)",
+            "ja": "ファミリー共通のドキュメント規則 (HYDRA-UMC-SDK のコピーで、同期を維持)",
+            "zh": "家族共享的文档规则 (HYDRA-UMC-SDK 的副本,保持同步)",
+            "pt": "Regras de documentação partilhadas pela família (cópia da de HYDRA-UMC-SDK, mantida em sincronia)"
+          }
+        },
+        {
+          "name": "_readme_parity.py",
+          "desc": {
+            "en": "Check that the eight READMEs share one",
+            "es": "Comprobación de que los ocho README",
+            "de": "Prüfung, dass die acht READMEs dieselbe",
+            "fr": "Contrôle que les huit README partagent la",
+            "it": "Verifica che gli otto README abbiano la",
+            "ja": "8つの README が同じ構造であることの",
+            "zh": "检查八个 README 结构一致",
+            "pt": "Verificação de que os oito README partilham"
+          },
+          "tree_desc": {
+            "en": "Check that the eight READMEs share one structure (a copy of HYDRA-UMC-SDK's, kept in sync)",
+            "es": "Comprobación de que los ocho README comparten estructura (copia de la de HYDRA-UMC-SDK, mantenida en sincronía)",
+            "de": "Prüfung, dass die acht READMEs dieselbe Struktur haben (Kopie der von HYDRA-UMC-SDK, synchron gehalten)",
+            "fr": "Contrôle que les huit README partagent la même structure (copie de celui de HYDRA-UMC-SDK, tenue synchronisée)",
+            "it": "Verifica che gli otto README abbiano la stessa struttura (copia di quella di HYDRA-UMC-SDK, mantenuta sincronizzata)",
+            "ja": "8つの README が同じ構造であることの検査 (HYDRA-UMC-SDK のコピーで、同期を維持)",
+            "zh": "检查八个 README 结构一致 (HYDRA-UMC-SDK 的副本,保持同步)",
+            "pt": "Verificação de que os oito README partilham a mesma estrutura (cópia da de HYDRA-UMC-SDK, mantida em sincronia)"
+          }
+        },
+        {
+          "name": "hydra_project_tool.py",
+          "desc": {
+            "en": "The same commands in every repository",
+            "es": "Los mismos comandos en todos los",
+            "de": "Dieselben Befehle in jedem Repository",
+            "fr": "Les mêmes commandes dans chaque dépôt",
+            "it": "Gli stessi comandi in ogni repository",
+            "ja": "すべてのリポジトリで共通のコマンド",
+            "zh": "每个仓库相同的命令: validate",
+            "pt": "Os mesmos comandos em todos os repositórios"
+          },
+          "tree_desc": {
+            "en": "The same commands in every repository: validate, test, ci, version, status, bump",
+            "es": "Los mismos comandos en todos los repositorios: validate, test, ci, version, status, bump",
+            "de": "Dieselben Befehle in jedem Repository: validate, test, ci, version, status, bump",
+            "fr": "Les mêmes commandes dans chaque dépôt : validate, test, ci, version, status, bump",
+            "it": "Gli stessi comandi in ogni repository: validate, test, ci, version, status, bump",
+            "ja": "すべてのリポジトリで共通のコマンド: validate、test、ci、version、status、bump",
+            "zh": "每个仓库相同的命令: validate、test、ci、version、status、bump",
+            "pt": "Os mesmos comandos em todos os repositórios: validate, test, ci, version, status, bump"
+          }
+        }
+      ],
+      "tree_head": {
+        "en": "source code",
+        "es": "código fuente",
+        "de": "Quellcode",
+        "fr": "code source",
+        "it": "codice sorgente",
+        "ja": "ソースコード",
+        "zh": "源代码",
+        "pt": "código-fonte"
+      },
+      "sub": {
+        "en": "source code",
+        "es": "código fuente",
+        "de": "Quellcode",
+        "fr": "code source",
+        "it": "codice sorgente",
+        "ja": "ソースコード",
+        "zh": "源代码",
+        "pt": "código-fonte"
+      }
+    },
+    {
+      "name": {
+        "en": "folders",
+        "es": "carpetas",
+        "de": "Ordner",
+        "fr": "dossiers",
+        "it": "cartelle",
+        "ja": "フォルダ",
+        "zh": "文件夹",
+        "pt": "pastas"
+      },
+      "kind": "group",
+      "span": 3,
+      "accent": "b",
+      "columns": 2,
+      "rows": [
+        {
+          "name": "src/",
+          "desc": {
+            "en": "source code",
+            "es": "código fuente",
+            "de": "Quellcode",
+            "fr": "code source",
+            "it": "codice sorgente",
+            "ja": "ソースコード",
+            "zh": "源代码",
+            "pt": "código-fonte"
+          },
+          "tree_desc": {
+            "en": "source code",
+            "es": "código fuente",
+            "de": "Quellcode",
+            "fr": "code source",
+            "it": "codice sorgente",
+            "ja": "ソースコード",
+            "zh": "源代码",
+            "pt": "código-fonte"
+          }
+        },
+        {
+          "name": "proto/",
+          "desc": {
+            "en": "Shared gRPC contract for node-to-node",
+            "es": "Contrato gRPC compartido para tráfico",
+            "de": "Gemeinsamer gRPC-Vertrag für",
+            "fr": "Contrat gRPC partagé pour le trafic",
+            "it": "Contratto gRPC condiviso per il traffico",
+            "ja": "エコシステム全体のノード間通信のための共有",
+            "zh": "用于整个生态系统节点间通信的共享 gRPC",
+            "pt": "Contrato gRPC partilhado para o tráfego nó"
+          },
+          "tree_desc": {
+            "en": "Shared gRPC contract for node-to-node traffic",
+            "es": "Contrato gRPC compartido para tráfico nodo-a-nodo",
+            "de": "Gemeinsamer gRPC-Vertrag für Knoten-zu-Knoten-",
+            "fr": "Contrat gRPC partagé pour le trafic nœud-à-nœud",
+            "it": "Contratto gRPC condiviso per il traffico nodo-a-nodo",
+            "ja": "エコシステム全体のノード間通信のための共有 gRPC",
+            "zh": "用于整个生态系统节点间通信的共享 gRPC 契约",
+            "pt": "Contrato gRPC partilhado para o tráfego nó a nó"
+          }
+        },
+        {
+          "name": "docs/",
+          "desc": {
+            "en": "Documentation and architecture guides",
+            "es": "Documentación y guías de arquitectura",
+            "de": "Dokumentation und Architekturleitfäden",
+            "fr": "Documentation et guides d'architecture",
+            "it": "Documentazione e guide all'architettura",
+            "ja": "ドキュメントとアーキテクチャガイド",
+            "zh": "文档与架构指南",
+            "pt": "Documentação e guias de arquitetura"
+          },
+          "tree_desc": {
+            "en": "Documentation and architecture guides",
+            "es": "Documentación y guías de arquitectura",
+            "de": "Dokumentation und Architekturleitfäden",
+            "fr": "Documentation et guides d'architecture",
+            "it": "Documentazione e guide all'architettura",
+            "ja": "ドキュメントとアーキテクチャガイド",
+            "zh": "文档与架构指南",
+            "pt": "Documentação e guias de arquitetura"
+          }
+        },
+        {
+          "name": "images/",
+          "desc": {
+            "en": "Media and diagrams",
+            "es": "Medios y diagramas",
+            "de": "Medien und Diagramme",
+            "fr": "Médias et diagrammes",
+            "it": "Media e diagrammi",
+            "ja": "メディアと図表",
+            "zh": "媒体与图表",
+            "pt": "Multimédia e diagramas"
+          },
+          "tree_desc": {
+            "en": "Media and diagrams",
+            "es": "Medios y diagramas",
+            "de": "Medien und Diagramme",
+            "fr": "Médias et diagrammes",
+            "it": "Media e diagrammi",
+            "ja": "メディアと図表",
+            "zh": "媒体与图表",
+            "pt": "Multimédia e diagramas"
+          }
+        },
+        {
+          "name": "systemd/",
+          "desc": {
+            "en": "service unit",
+            "es": "unidad de servicio",
+            "de": "Dienst-Unit",
+            "fr": "unité de service",
+            "it": "unità di servizio",
+            "ja": "サービスユニット",
+            "zh": "服务单元",
+            "pt": "unidade de serviço"
+          },
+          "tree_desc": {
+            "en": "service unit",
+            "es": "unidad de servicio",
+            "de": "Dienst-Unit",
+            "fr": "unité de service",
+            "it": "unità di servizio",
+            "ja": "サービスユニット",
+            "zh": "服务单元",
+            "pt": "unidade de serviço"
+          }
+        },
+        {
+          "name": ".github/",
+          "desc": {
+            "en": "CI workflow and issue templates",
+            "es": "flujo de CI y plantillas de incidencias",
+            "de": "CI-Workflow und Issue-Vorlagen",
+            "fr": "workflow de CI et modèles de tickets",
+            "it": "workflow di CI e modelli di segnalazione",
+            "ja": "CI ワークフローと Issue テンプレート",
+            "zh": "CI 工作流和 Issue 模板",
+            "pt": "fluxo de CI e modelos de problemas"
+          }
+        }
+      ]
+    },
+    {
+      "name": {
+        "en": "project files",
+        "es": "ficheros del proyecto",
+        "de": "Projektdateien",
+        "fr": "fichiers du projet",
+        "it": "file del progetto",
+        "ja": "プロジェクトのファイル",
+        "zh": "项目文件",
+        "pt": "ficheiros do projeto"
+      },
+      "kind": "group",
+      "span": 3,
+      "accent": "c",
+      "columns": 2,
+      "rows": [
+        {
+          "name": "Cargo.toml",
+          "desc": {
+            "en": "Rust package manifest (name, version, deps)",
+            "es": "Manifiesto del paquete Rust",
+            "de": "Rust-Paketmanifest",
+            "fr": "Manifeste du paquet Rust",
+            "it": "Manifesto del pacchetto Rust",
+            "ja": "Rust パッケージマニフェスト（名前",
+            "zh": "Rust 包清单（名称、版本、依赖项）",
+            "pt": "Manifesto do pacote Rust"
+          },
+          "tree_desc": {
+            "en": "Rust package manifest (name, version, deps)",
+            "es": "Manifiesto del paquete Rust (nombre, versión, deps)",
+            "de": "Rust-Paketmanifest (Name, Version, Abhängigkeiten)",
+            "fr": "Manifeste du paquet Rust (nom, version, dépendances)",
+            "it": "Manifesto del pacchetto Rust (nome, versione, dep)",
+            "ja": "Rust パッケージマニフェスト（名前、バージョン、依存関係）",
+            "zh": "Rust 包清单（名称、版本、依赖项）",
+            "pt": "Manifesto do pacote Rust (nome, versão, dependências)"
+          }
+        },
+        {
+          "name": "bump_version.py",
+          "desc": {
+            "en": "explicit version bump",
+            "es": "Incremento de versión tipo cuentakilómetros",
+            "de": "ausdrückliche Versionserhöhung",
+            "fr": "Incrément de version type compteur",
+            "it": "Incremento di versione stile contachilometri",
+            "ja": "明示的なバージョン更新",
+            "zh": "显式提升版本",
+            "pt": "Subida de versão ao estilo conta-quilómetros"
+          },
+          "tree_desc": {
+            "en": "explicit version bump",
+            "es": "Incremento de versión tipo cuentakilómetros (solo lo ejecuta el comando `bump` explícito)",
+            "de": "ausdrückliche Versionserhöhung",
+            "fr": "Incrément de version type compteur kilométrique (exécuté seulement par la commande `bump` explicite)",
+            "it": "Incremento di versione stile contachilometri (eseguito solo dal comando `bump` esplicito)",
+            "ja": "明示的なバージョン更新",
+            "zh": "显式提升版本",
+            "pt": "Subida de versão ao estilo conta-quilómetros (executada só pelo comando `bump` explícito)"
+          }
+        },
+        {
+          "name": "bump_manifest_version.py",
+          "desc": {
+            "en": "Syncs hydra-umc.project.json's version to",
+            "es": "Sincroniza la versión de",
+            "de": "Synchronisiert die Version von",
+            "fr": "Synchronise la version de",
+            "it": "Sincronizza la versione di",
+            "ja": "hydra-umc.project.json",
+            "zh": "将 hydra-umc.project.js",
+            "pt": "Sincroniza a versão do"
+          },
+          "tree_desc": {
+            "en": "Syncs hydra-umc.project.json's version to the native one (--sync)",
+            "es": "Sincroniza la versión de hydra-umc.project.json con la nativa (--sync)",
+            "de": "Synchronisiert die Version von hydra-umc.project.json mit der nativen (--sync)",
+            "fr": "Synchronise la version de hydra-umc.project.json avec la version native (--sync)",
+            "it": "Sincronizza la versione di hydra-umc.project.json con quella nativa (--sync)",
+            "ja": "hydra-umc.project.json のバージョンをネイティブ版と同期(--sync)",
+            "zh": "将 hydra-umc.project.json 的版本与原生版本同步(--sync)",
+            "pt": "Sincroniza a versão do hydra-umc.project.json com a nativa (--sync)"
+          }
+        },
+        {
+          "name": "docker-compose.yml",
+          "desc": {
+            "en": "Integrates this repo with its 3 real",
+            "es": "Integra este repo con sus 3 hijos reales",
+            "de": "Integriert dieses Repo mit seinen 3 echten",
+            "fr": "Intègre ce dépôt avec ses 3 enfants réels",
+            "it": "Integra questo repo con i suoi 3 figli reali",
+            "ja": "本リポジトリを実際の 3 つの子プロジェクト",
+            "zh": "将本仓库与其 3 个实际子项目集成",
+            "pt": "Integra este repositório com os seus 3"
+          },
+          "tree_desc": {
+            "en": "Integrates this repo with its 3 real children",
+            "es": "Integra este repo con sus 3 hijos reales",
+            "de": "Integriert dieses Repo mit seinen 3 echten Kindern",
+            "fr": "Intègre ce dépôt avec ses 3 enfants réels",
+            "it": "Integra questo repo con i suoi 3 figli reali",
+            "ja": "本リポジトリを実際の 3 つの子プロジェクトと統合",
+            "zh": "将本仓库与其 3 个实际子项目集成",
+            "pt": "Integra este repositório com os seus 3 filhos reais"
+          }
+        },
+        {
+          "name": "nodes.compose.json",
+          "desc": {
+            "en": "Node registry NODE-HEALING uses inside the",
+            "es": "Registro de nodos que NODE-HEALING usa",
+            "de": "Knotenregister",
+            "fr": "Registre de nœuds utilisé par NODE-HEALING",
+            "it": "Registro dei nodi che NODE-HEALING usa",
+            "ja": "compose スタック内で NODE-HE",
+            "zh": "NODE-HEALING 在 compose",
+            "pt": "Registo de nós que o NODE-HEALING usa"
+          },
+          "tree_desc": {
+            "en": "Node registry NODE-HEALING uses inside the compose stack",
+            "es": "Registro de nodos que NODE-HEALING usa dentro del stack compose",
+            "de": "Knotenregister, das NODE-HEALING im Compose-Stack nutzt",
+            "fr": "Registre de nœuds utilisé par NODE-HEALING dans la pile compose",
+            "it": "Registro dei nodi che NODE-HEALING usa nello stack compose",
+            "ja": "compose スタック内で NODE-HEALING が使うノードレジストリ",
+            "zh": "NODE-HEALING 在 compose 栈中使用的节点注册表",
+            "pt": "Registo de nós que o NODE-HEALING usa dentro da stack compose"
+          }
+        },
+        {
+          "name": ".env.example",
+          "desc": {
+            "en": "Tokens the compose stack requires",
+            "es": "Tokens que exige el stack compose",
+            "de": "Token, die der Compose-Stack verlangt",
+            "fr": "Jetons exigés par la pile compose",
+            "it": "Token richiesti dallo stack compose",
+            "ja": "compose スタックが要求するトークン",
+            "zh": "compose 栈要求的令牌",
+            "pt": "Tokens que a stack compose exige"
+          },
+          "tree_desc": {
+            "en": "Tokens the compose stack requires (copy to .env)",
+            "es": "Tokens que exige el stack compose (copiar a .env)",
+            "de": "Token, die der Compose-Stack verlangt (nach .env kopieren)",
+            "fr": "Jetons exigés par la pile compose (à copier dans .env)",
+            "it": "Token richiesti dallo stack compose (copiare in .env)",
+            "ja": "compose スタックが要求するトークン（.env にコピー）",
+            "zh": "compose 栈要求的令牌（复制为 .env）",
+            "pt": "Tokens que a stack compose exige (copiar para .env)"
+          }
+        },
+        {
+          "name": "CHANGELOG.md",
+          "desc": {
+            "en": "what changed in each version",
+            "es": "qué cambió en cada versión",
+            "de": "was sich in jeder Version geändert hat",
+            "fr": "ce qui a changé à chaque version",
+            "it": "cosa è cambiato in ogni versione",
+            "ja": "各バージョンの変更点",
+            "zh": "每个版本的变更",
+            "pt": "o que mudou em cada versão"
+          }
+        },
+        {
+          "name": "build-test.sh",
+          "desc": {
+            "en": "non-mutating build check",
+            "es": "comprobación de compilación sin cambios",
+            "de": "Build-Prüfung ohne Änderungen",
+            "fr": "vérification de build sans modification",
+            "it": "controllo di build senza modifiche",
+            "ja": "変更を伴わないビルド確認",
+            "zh": "不修改内容的构建检查",
+            "pt": "verificação de compilação sem alterações"
+          }
+        },
+        {
+          "name": "build.sh",
+          "desc": {
+            "en": "builds and checks; never changes the version",
+            "es": "compila y comprueba; nunca cambia la versión",
+            "de": "baut und prüft; ändert nie die Version",
+            "fr": "construit et vérifie ; ne change jamais la version",
+            "it": "compila e controlla; non cambia mai la versione",
+            "ja": "ビルドと検査。バージョンは変更しない",
+            "zh": "构建并检查；从不改变版本",
+            "pt": "compila e verifica; nunca muda a versão"
+          }
+        },
+        {
+          "name": "hydra-umc.project.json",
+          "desc": {
+            "en": "manifest: version, maturity, family",
+            "es": "manifiesto: versión, madurez, familia",
+            "de": "Manifest: Version, Reifegrad, Familie",
+            "fr": "manifeste : version, maturité, famille",
+            "it": "manifesto: versione, maturità, famiglia",
+            "ja": "マニフェスト：バージョン、成熟度、ファミリー",
+            "zh": "清单：版本、成熟度、系列",
+            "pt": "manifesto: versão, maturidade, família"
+          }
+        },
+        {
+          "name": "run.sh",
+          "desc": {
+            "en": "starts the program",
+            "es": "arranca el programa",
+            "de": "startet das Programm",
+            "fr": "démarre le programme",
+            "it": "avvia il programma",
+            "ja": "プログラムを起動",
+            "zh": "启动程序",
+            "pt": "arranca o programa"
+          }
+        },
+        {
+          "name": "test.sh",
+          "desc": {
+            "en": "runs the tests",
+            "es": "ejecuta las pruebas",
+            "de": "führt die Tests aus",
+            "fr": "lance les tests",
+            "it": "esegue i test",
+            "ja": "テストを実行",
+            "zh": "运行测试",
+            "pt": "executa os testes"
+          }
+        }
+      ]
+    }
+  ]
+}

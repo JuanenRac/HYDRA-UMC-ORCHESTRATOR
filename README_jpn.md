@@ -1,3 +1,9 @@
+<!-- =============================================================================
+HYDRA-UMC-ORCHESTRATOR - Mission coordinator
+Copyright (C) JuanenRac (Electro Hobby 3D) <electrohobby3d@gmail.com>
+GPL-3.0-or-later - see LICENSE
+============================================================================= -->
+
 <p align="center">
   <img src="images/HYDRA_UMC_BANNER.svg" alt="HYDRA-UMC-ORCHESTRATOR banner" width="100%">
 </p>
@@ -9,10 +15,13 @@
 ### 🤖 分散型スウォームマネージャー & マルチノードコーディネーター
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Licencia-GPL%203.0--or--later-blue.svg" alt="GPL 3.0 or later">
-  <img src="https://img.shields.io/badge/Language-Rust-orange.svg" alt="Rust">
-  <img src="https://img.shields.io/badge/Architecture-Distributed%20Edge-blue.svg" alt="Distributed">
+  <img src="https://img.shields.io/badge/License-GPL%203.0--or--later-blue.svg" alt="GPL 3.0 or later">
+  <img src="https://img.shields.io/badge/Language-Rust-orange.svg" alt="Language">
+  <img src="https://img.shields.io/badge/Architecture-Distributed%20Edge-blue.svg" alt="Architecture">
   <img src="https://img.shields.io/badge/Sync-JSON%2FHTTP-yellow.svg" alt="Sync">
+  <img src="https://img.shields.io/badge/Tests-144%20passing-2ea44f.svg" alt="Tests">
+  <img src="https://img.shields.io/badge/Version-0.1.9-0f6cbd.svg" alt="Version">
+  <img src="https://img.shields.io/badge/Maturity-functional-0F6CBD.svg" alt="Maturity">
 </p>
 
 ---
@@ -23,16 +32,20 @@
 
 > **安全性とセキュリティの現状:** このエコシステムは認証された安全システムではありません。ハードウェアの E-STOP 経路、ファームウェアが強制する制限やインターロック、検証済みの動作コマンドはまだありません。ファームウェアイメージは CRC32 と共有鍵の HMAC-SHA256 で検査しており、非対称署名ではありません。TLS と相互 TLS は任意で、既定では無効です。独自基板はまだ実装も試験もされていません。ここに書かれた内容を人の安全のために頼る前に、[セキュリティベースライン](https://github.com/JuanenRac/HYDRA-UMC-DOCS/blob/main/docs/SECURITY_BASELINE.md)と[脅威モデル](https://github.com/JuanenRac/HYDRA-UMC-DOCS/blob/main/docs/THREAT_MODEL.md)をお読みください。
 
+---
+
 ## 📋 ひと目で
 
 | | |
 |---|---|
 | バージョン | `0.1.9` |
 | 成熟度 | 機能する |
-| テスト | 143 (`cargo test`) |
+| テスト | 144 (`cargo test`) |
 | 技術 | Rust / tiny_http / ureq / JSON/HTTP |
 | 対象 | HYDRA-UMC セルの Raspberry Pi CM5 |
 | 実機での確認 | まだです：このバージョンについて実機での動作記録はありません |
+
+**移動：** [概要](#-概要) · [アーキテクチャ](#-アーキテクチャ) · [クイックスタート](#-クイックスタート) · [テスト](#-テスト) · [リポジトリの構成](#-リポジトリの構成) · [関連プロジェクト](#-関連プロジェクト)
 
 ## 🚦 プロジェクトの状況
 
@@ -43,11 +56,11 @@
 | 領域 | 状態 | ここでの意味 |
 |---|---|---|
 | ソフトウェア | 🟡 | 主な目的では動作します。足りない点は上の正直さの確認に書かれています |
-| テスト | 🟢 | 自動テスト 143 件。変更のたびに実行されます |
+| テスト | 🟢 | 自動テスト 144 件。変更のたびに実行されます |
 | 実機 | 🔴 | まだです：このバージョンについて実機での動作記録はありません |
 | ドキュメント | 🟢 | 8 言語の README。変更のたびにマニフェストと照合されます |
 
-## 1. 🛠️ 技術概要
+## 🎯 概要
 
 **HYDRA-UMC-ORCHESTRATOR** は、HYDRA-UMC エコシステムの高レベル調整層です。複数の HydraNode(Kinematic Brain、Vision Node、Cognitive Node)を 1 つの統合されたスウォームとして管理することを目指しています。
 
@@ -64,9 +77,18 @@
 * 🧱 **デフォルトで安全。遅れて届いた報告は引き継ぎを上書きできません（v0）：** API は指定がなければ `127.0.0.1:8114` で待ち受け、別のアドレスにはベアラートークン（`--token` / `ORCHESTRATOR_TOKEN`。設定すると `GET /health` 以外のすべてのルートが要求します）か、明示的な `--allow-anonymous` が必要です。64 KB を超えるリクエストボディは `413` で拒否されます。ディスパッチのたびにミッションの `attempt` が増え、古い `attempt`（またはもうそのミッションを保持していないノードの名前）を持つ `start`/`complete`/`fail` は、ミッションに触れずに `409` で拒否されます。利用不可と宣言されたノードがネットワーク分断から戻ってきても、ミッションの引き継ぎ先ノードを上書きできません（`--require-attempt` でこのフィールドを必須にできます）。ミッションレジストリとアウトボックスは、前のファイルを置き換える前にディスクへ強制書き込みされ、同梱の systemd ユニットはプロセスに書き込み可能な状態ディレクトリを与えます（以前は `ProtectSystem=strict` により既定の `data` ディレクトリが読み取り専用になり、再起動で何も残りませんでした）。また `docker-compose.yml` は実際にサービスを起動します（`serve` コマンド、ヘルスチェック、必須トークン、固定イメージ、公開されるのはオーケストレーターのみでホストのループバックだけ）。*（実装済み）*
 * 🔭 **読みやすい運用(任意):** `GET /stats` は、確認されていない最も古いクローズの経過時間(`oldestPendingCloseAgeSeconds`)と、JOB-DISPATCHER への呼び出しの最後の成功と最後の失敗も示します。`--log-format json` はログ 1 行につき JSON オブジェクト 1 つを書き出します。`--keep-finished N` はクローズが確認済みの最も古い完了ミッションを忘れ、`missions.json` が際限なく増えないようにします。ファイルには `schema_version` があり、より新しいバージョンが書いたものは拒否されます。クローズは、どの試行を閉じるかを JOB-DISPATCHER に伝えます。すべて既定では無効または変更なしです。 *(実装済み)*
 
----
+## 🧩 HYDRA-UMC での役割
 
-## 2. 🔄 オーケストレーションアーキテクチャ
+**HYDRA-UMC-ORCHESTRATOR** はミッションのコーディネーターです。Rust のサービスで、ミッションをステートマシンで追跡し、`HYDRA-UMC-JOB-DISPATCHER` に渡し、`HYDRA-UMC-NODE-HEALING` がノードを到達不能と報告したときはそのミッションを取り戻します。ロボットの同期や衝突の回避は行いません。
+
+## 🏛️ アーキテクチャ
+
+<p align="center">
+  <img src="images/architecture.svg" alt="HYDRA-UMC-ORCHESTRATOR architecture" width="100%">
+</p>
+
+<details>
+<summary>図のテキスト版（Mermaid）</summary>
 
 ```mermaid
 flowchart TB
@@ -79,11 +101,13 @@ flowchart TB
     HEAL["NODE-HEALING (Failover)"] --> ORCH
 ```
 
+</details>
+
+### オーケストレーションアーキテクチャ
+
 > 実線の矢印は現在存在します（HTTP API、JOB-DISPATCHER、`POST /nodes/:node/recover` を呼び出す NODE-HEALING）。点線の矢印は計画中で、未実装です。PATH-PLANNER-3D や SWARM-SYNC を呼び出すコードはありません。
 
----
-
-## 3. 🧠 アーキテクチャと設計上の決定
+### アーキテクチャと設計上の決定
 
 > 以下の内部レイヤーは、このエントリポイントの背後に置かれる予定のロジック
 > の計画設計です——今日実際に動くものについては、さらに下の「🔧 ビルドと
@@ -118,55 +142,23 @@ E-STOP を発行し、どのロボットがどのミッションを担当する�
 
 実際にビルドされたバイナリから取得した mission-demo/CLI の実例については [`docs/CLI_REFERENCE.md`](docs/CLI_REFERENCE.md) を参照してください。共有 `hydra.common.v1` gRPC 契約そのもの——その定義内容、このリポジトリに置かれている理由、各言語が自身のバインディングを生成する方法——については [`proto/README.md`](proto/README.md) を参照してください。
 
----
+## 🚀 クイックスタート
 
-## 📂 リポジトリ構成
+安定版の Rust ツールチェーン（エディション 2021）と `cargo` が必要です。
 
-```text
-HYDRA-UMC-ORCHESTRATOR/
-├── src/
-│   ├── mission.rs    # 実際のミッション状態機械（Mission、MissionRegistry）
-│   ├── outbox.rs          # 保留中のリモートクローズ用の実在する永続アウトボックス (再起動後も残る)
-│   ├── job_dispatcher.rs  # HYDRA-UMC-JOB-DISPATCHER自身のHTTP APIに対する実際のクライアント
-│   ├── server.rs          # シンプルなJSON/HTTPサーフェス(tiny_http、ブロッキング、非同期ランタイムなし)
-│   ├── main.rs       # エントリポイント + 実際の `mission-demo` サブコマンド
-│   └── logging.rs    # プロセスが stderr に書く行を一か所にまとめる (平文、または --log-format で選んだ形式)
-├── proto/            # エコシステム全体のノード間通信のための共有 gRPC
-│                     # コントラクト（proto/README.md を参照）——本リポ
-│                     # ジトリ自身の API だけではありません
-├── docs/             # ドキュメントとアーキテクチャガイド
-├── build/            # コンパイル済みバイナリ（build.sh/build.bat の出力）
-├── images/           # メディアと図表
-├── systemd/
-│   └── hydra-umc-orchestrator.service # ローカルCM5 mission/dispatch APIのsystemdユニット
-├── tools/
-│   ├── build_test.py # バージョンを増やさないビルドチェック
-│   ├── ci_validate.py # CI が使用するマニフェスト/CHANGELOG/ドキュメント検証
-│   ├── verify_dispatcher_contract.py # 実際の job-dispatcher と実際のオーケストレーターを互いに動かして契約を検証
-│   ├── verify_compose.py # docker-compose.yml の静的チェック（コマンド、固定されたイメージ、ループバックのポート、必須トークン）
-│   ├── _doc_policy.py    # ファミリー共通のドキュメント規則 (HYDRA-UMC-SDK のコピーで、同期を維持)
-│   ├── _readme_parity.py # 8つの README が同じ構造であることの検査 (HYDRA-UMC-SDK のコピーで、同期を維持)
-│   └── hydra_project_tool.py # すべてのリポジトリで共通のコマンド: validate、test、ci、version、status、bump
-├── Cargo.toml        # Rust パッケージマニフェスト（名前、バージョン、依存関係）
-├── bump_version.py   # オドメーター式バージョンインクリメント（明示的な `bump` コマンドのみが実行）
-├── bump_manifest_version.py # hydra-umc.project.json のバージョンをネイティブ版と同期(--sync)
-├── build.sh/.bat     # バージョンを増加させ、その後 `cargo build --release` を実行
-├── build-test.sh/.bat # バージョンを増やさないビルドチェック
-├── run.sh/.bat       # コンパイル済みバイナリを実行
-├── docker-compose.yml # 本リポジトリを実際の 3 つの子プロジェクトと統合
-├── nodes.compose.json # compose スタック内で NODE-HEALING が使うノードレジストリ
-├── .env.example # compose スタックが要求するトークン（.env にコピー）
-└── README.md
+```bash
+./build.sh             # Linux, macOS (build.bat on Windows)
+./run.sh mission-demo  # a real scenario of the mission state machine
+cargo test
 ```
 
-元のテンプレートから省略：`hardware/`、`firmware/`、`os/` —— これは純粋
-なソフトウェアサービス（Rust バイナリ）であり、専用のハードウェアや
-ファームウェアを持たず、維持すべきオペレーティングシステムイメージも
-ありません。
+## 🧪 テスト
 
----
+`cargo test` で自動テスト 144 件を実行します。 ハードウェアも、このマシンの外にあるものも必要ありません。
 
-## 🔧 ビルドと実行
+CI は `HYDRA_UMC_CI=1 python tools/ci_validate.py` を実行し、マニフェスト、文書、8 つの README、図を検査します。
+
+## 🏗️ ビルドとリリース
 
 素の呼び出しは引き続き最小限のスケルトンのままです(識別情報を表示し、
 終了コード 0 で終了)。実際のミッション状態機械は、今日 `mission-demo`
@@ -211,7 +203,7 @@ run.bat mission-demo
 ```
 
 ```bash
-cargo test   # 143 件のテスト：mission.rs の全状態遷移・不正な遷移の拒否・
+cargo test   # 144 件のテスト：mission.rs の全状態遷移・不正な遷移の拒否・
              # 冪等なキャンセル・ノード障害後のリカバリーに加え、
              # outbox.rs のクラッシュに強い永続化、job_dispatcher.rs の
              # 実際のHTTPクライアント、server.rs のHTTPハンドラー
@@ -226,15 +218,59 @@ cargo test   # 143 件のテスト：mission.rs の全状態遷移・不正な�
 docker compose up --build
 ```
 
----
+## 📂 リポジトリの構成
 
-## 🚀 ロードマップ
+<p align="center">
+  <img src="images/repository-structure.svg" alt="Repository structure of HYDRA-UMC-ORCHESTRATOR" width="100%">
+</p>
+
+<details>
+<summary>ツリーのテキスト版</summary>
+
+```text
+HYDRA-UMC-ORCHESTRATOR/
+├── tools/                              ソースコード
+│   ├── build_test.py                   バージョンを増やさないビルドチェック
+│   ├── ci_validate.py                  CI が使用するマニフェスト/CHANGELOG/ドキュメント検証
+│   ├── verify_dispatcher_contract.py   実際の job-dispatcher と実際のオーケストレーターを互いに動かして契約を検証
+│   ├── verify_compose.py               docker-compose.yml の静的チェック（コマンド、固定されたイメージ、ループバックのポート、必須トークン）
+│   ├── _doc_policy.py                  ファミリー共通のドキュメント規則 (HYDRA-UMC-SDK のコピーで、同期を維持)
+│   ├── _readme_parity.py               8つの README が同じ構造であることの検査 (HYDRA-UMC-SDK のコピーで、同期を維持)
+│   └── hydra_project_tool.py           すべてのリポジトリで共通のコマンド: validate、test、ci、version、status、bump
+├── src/                                ソースコード
+├── proto/                              エコシステム全体のノード間通信のための共有 gRPC
+├── docs/                               ドキュメントとアーキテクチャガイド
+├── images/                             メディアと図表
+├── systemd/                            サービスユニット
+├── .github/                            CI ワークフローと Issue テンプレート
+├── Cargo.toml                          Rust パッケージマニフェスト（名前、バージョン、依存関係）
+├── bump_version.py                     明示的なバージョン更新
+├── bump_manifest_version.py            hydra-umc.project.json のバージョンをネイティブ版と同期(--sync)
+├── docker-compose.yml                  本リポジトリを実際の 3 つの子プロジェクトと統合
+├── nodes.compose.json                  compose スタック内で NODE-HEALING が使うノードレジストリ
+├── .env.example                        compose スタックが要求するトークン（.env にコピー）
+├── CHANGELOG.md                        各バージョンの変更点
+├── build-test.sh                       変更を伴わないビルド確認
+├── build.sh                            ビルドと検査。バージョンは変更しない
+├── hydra-umc.project.json              マニフェスト：バージョン、成熟度、ファミリー
+├── run.sh                              プログラムを起動
+└── test.sh                             テストを実行
+```
+
+</details>
+
+## 🗺️ ロードマップと既知の制限
+
+**現時点の既知の制限**
+
 * **フェーズ 1：** TSN による決定論的スウォーム同期とサブミリ秒ジッタの低減。
 * **フェーズ 2：** マルチロボットセルにおける動的障害物回避を伴う 3D パスプランニング。
 * **フェーズ 3：** リアルタイムのリソース可用性を用いたマルチロボットジョブディスパッチの最適化。
 * **フェーズ 4：** 高可用性フェイルオーバークラスターの実装と異種ロボットのサポート。
 
----
+## 🌍 言語
+
+この README とリポジトリの文書は、英語・スペイン語・ドイツ語・フランス語・イタリア語・日本語・中国語・ポルトガル語（ポルトガル）の 8 言語で提供されています。8 つのファイルは同時に書かれ、同じ節と同じリンクを持つことを CI が確認します。 このリポジトリには独自の画面もメッセージカタログもないため、翻訳すべきインターフェース文字列はありません。
 
 ## 🔗 関連プロジェクト
 
@@ -325,21 +361,26 @@ docker compose up --build
 - **[HYDRA-UMC-OPS-AGENT](https://github.com/JuanenRac/HYDRA-UMC-OPS-AGENT)** — 保守インシデントコーディネーター: 低権限のエッジ役割がサニタイズされたインベントリ/ヘルスのスナップショットを収集し、コントロールプレーン役割がそれを読み取り専用でレンダリングして AI プロバイダーに診断の提案を依頼します - パッチを適用することも、何かをデプロイすることも決してありません。
 - **[HYDRA-UMC-DEV-SERVER](https://github.com/JuanenRac/HYDRA-UMC-DEV-SERVER)** — 再現可能な開発ホスト（Raspberry Pi 5 / CM5）。エコシステムのソースコードを保管し、永続キューのもとで境界の明確なビルド/テストタスクを実行する。運用中の CM5 とは明確に異なる、開発専用の役割。
 
+## 📚 ドキュメント
 
----
+さらに読むには：
 
-## 📚 ドキュメント & コミュニティ
+* [エコシステムのセキュリティ基準](https://github.com/JuanenRac/HYDRA-UMC-DOCS/blob/main/docs/SECURITY_BASELINE.md)
+* [エコシステムの脅威モデル](https://github.com/JuanenRac/HYDRA-UMC-DOCS/blob/main/docs/THREAT_MODEL.md)
+* [このリポジトリの変更履歴](CHANGELOG.md)
+* [このリポジトリのライセンス](LICENSE.md)
 
-- **[CONTRIBUTING.md](CONTRIBUTING.md)** —— プルリクエストのための技術スタックとコーディング指針。
-- **[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)** —— このコミュニティで期待される行動規範。
-- **[SECURITY.md](SECURITY.md)** —— 脆弱性の報告方法と、このプロジェクトの実際のセキュリティ重点領域。
-- **[SUPPORT.md](SUPPORT.md)** —— 質問の投稿先とバグの報告先。
-- **[LICENSE.md](LICENSE.md)** —— このプロジェクト自身のライセンス。
+## 🤝 コントリビュートとコミュニティ
+
+* プルリクエストの前に `HYDRA_UMC_CI=1 py -3 tools/ci_validate.py`（または `HYDRA_UMC_CI=1 python3 tools/ci_validate.py`）を実行してください。`CI_VALIDATION=PASS` と表示される必要があります。この確認に `build.sh` や `build.bat` は使わないでください。ビルドは検査ではありません。
+* 8 つの README は HYDRA-UMC-DOCS の 1 つのソースから書かれます。手で編集しないでください。ソースを変更し、`tools/make_readmes.py` で書き直します。
+* 実行していないことを README に書かないでください。事実であれば「シミュレーションのみ」「実機では未確認」と書きます。
+* [CONTRIBUTING.md](CONTRIBUTING.md)、[行動規範](CODE_OF_CONDUCT.md)、[SECURITY.md](SECURITY.md)、[SUPPORT.md](SUPPORT.md) を参照してください。
 
 ## 👤 作者
-**JuanenRac** (Electro Hobby 3D)
-📧 electrohobby3d@gmail.com
-📺 [youtube.com/@electrohobby3d](https://youtube.com/@electrohobby3d)
+
+**JuanenRac (Electro Hobby 3D)** · electrohobby3d@gmail.com
 
 ## 📜 ライセンス
-GPL-3.0-or-later —— 詳細は LICENSE を参照してください。
+
+GPL-3.0-or-later - [LICENSE](LICENSE).

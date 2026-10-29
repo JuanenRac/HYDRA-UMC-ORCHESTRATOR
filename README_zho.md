@@ -1,3 +1,9 @@
+<!-- =============================================================================
+HYDRA-UMC-ORCHESTRATOR - Mission coordinator
+Copyright (C) JuanenRac (Electro Hobby 3D) <electrohobby3d@gmail.com>
+GPL-3.0-or-later - see LICENSE
+============================================================================= -->
+
 <p align="center">
   <img src="images/HYDRA_UMC_BANNER.svg" alt="HYDRA-UMC-ORCHESTRATOR banner" width="100%">
 </p>
@@ -9,19 +15,24 @@
 ### 🤖 分布式集群管理器与多节点协调器
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Licencia-GPL%203.0--or--later-blue.svg" alt="GPL 3.0 or later">
-  <img src="https://img.shields.io/badge/Language-Rust-orange.svg" alt="Rust">
-  <img src="https://img.shields.io/badge/Architecture-Distributed%20Edge-blue.svg" alt="Distributed">
+  <img src="https://img.shields.io/badge/License-GPL%203.0--or--later-blue.svg" alt="GPL 3.0 or later">
+  <img src="https://img.shields.io/badge/Language-Rust-orange.svg" alt="Language">
+  <img src="https://img.shields.io/badge/Architecture-Distributed%20Edge-blue.svg" alt="Architecture">
   <img src="https://img.shields.io/badge/Sync-JSON%2FHTTP-yellow.svg" alt="Sync">
+  <img src="https://img.shields.io/badge/Tests-144%20passing-2ea44f.svg" alt="Tests">
+  <img src="https://img.shields.io/badge/Version-0.1.9-0f6cbd.svg" alt="Version">
+  <img src="https://img.shields.io/badge/Maturity-functional-0F6CBD.svg" alt="Maturity">
 </p>
 
 ---
 
-**诚实核查——今天真正能跑起来的部分：** 任务状态机（`src/mission.rs`：`Mission`/`MissionRegistry`，每一次 `Pending -> Dispatched -> InProgress -> Completed`/`Cancelled`/`Failed` 转换、幂等取消、节点故障恢复）、它自己的磁盘持久化（`MissionRegistry::load`/`persist`，`data/missions.json`）、持久化的远程关闭待办outbox（`src/outbox.rs`）、指向 HYDRA-UMC-JOB-DISPATCHER 的真实 HTTP 客户端（`src/job_dispatcher.rs`），以及把这一切暴露出来的简单 JSON/HTTP 服务器（`src/server.rs`，`tiny_http`，没有异步运行时）都是真实且经过测试的（143 个测试，`cargo test`）。`mission-demo` CLI 子命令针对同一个 `MissionRegistry` 运行一个真实的端到端场景——不是模拟（mock）。仍然只是设想、尚未实现的部分：下面第 3 节中的"计划中的内部层"（API 层、PTP 同步调度、作为常驻服务的舰队健康聚合）描述的是设计意图，不是已经存在的代码；本仓库目前没有到真实运行中的 JOB-DISPATCHER 或 NODE-HEALING 进程的 gRPC 连接，没有与 PATH-PLANNER-3D/SWARM-SYNC 的集成，也从未有过真实的多节点舰队跑在这个二进制文件上——`docker-compose.yml` 会一起构建并启动这 3 个兄弟服务，但这从未在真实机器人硬件上验证过。已交付的具体内容见 `CHANGELOG.md`，尚未完成的部分见下面的 ROADMAP。
+**诚实核查——今天真正能跑起来的部分：** 任务状态机（`src/mission.rs`：`Mission`/`MissionRegistry`，每一次 `Pending -> Dispatched -> InProgress -> Completed`/`Cancelled`/`Failed` 转换、幂等取消、节点故障恢复）、它自己的磁盘持久化（`MissionRegistry::load`/`persist`，`data/missions.json`）、持久化的远程关闭待办outbox（`src/outbox.rs`）、指向 HYDRA-UMC-JOB-DISPATCHER 的真实 HTTP 客户端（`src/job_dispatcher.rs`），以及把这一切暴露出来的简单 JSON/HTTP 服务器（`src/server.rs`，`tiny_http`，没有异步运行时）都是真实且经过测试的（144 个测试，`cargo test`）。`mission-demo` CLI 子命令针对同一个 `MissionRegistry` 运行一个真实的端到端场景——不是模拟（mock）。仍然只是设想、尚未实现的部分：下面第 3 节中的"计划中的内部层"（API 层、PTP 同步调度、作为常驻服务的舰队健康聚合）描述的是设计意图，不是已经存在的代码；本仓库目前没有到真实运行中的 JOB-DISPATCHER 或 NODE-HEALING 进程的 gRPC 连接，没有与 PATH-PLANNER-3D/SWARM-SYNC 的集成，也从未有过真实的多节点舰队跑在这个二进制文件上——`docker-compose.yml` 会一起构建并启动这 3 个兄弟服务，但这从未在真实机器人硬件上验证过。已交付的具体内容见 `CHANGELOG.md`，尚未完成的部分见下面的 ROADMAP。
 
 ---
 
 > **安全与安防现状:**本生态系统不是经认证的安全系统。目前尚无硬件 E-STOP 通路,没有由固件强制执行的限位或联锁,也没有经过验证的运动指令;固件映像使用 CRC32 和共享密钥的 HMAC-SHA256 校验,而非非对称签名;TLS 与双向 TLS 均为可选项,默认关闭;自制电路板尚未组装或测试。在依赖此处任何说法来保障人身安全之前,请先阅读[安全基线](https://github.com/JuanenRac/HYDRA-UMC-DOCS/blob/main/docs/SECURITY_BASELINE.md)和[威胁模型](https://github.com/JuanenRac/HYDRA-UMC-DOCS/blob/main/docs/THREAT_MODEL.md)。
+
+---
 
 ## 📋 速览
 
@@ -29,10 +40,12 @@
 |---|---|
 | 版本 | `0.1.9` |
 | 成熟度 | 可用 |
-| 测试 | 143 (`cargo test`) |
+| 测试 | 144 (`cargo test`) |
 | 技术栈 | Rust / tiny_http / ureq / JSON/HTTP |
 | 目标 | HYDRA-UMC 工作单元的 Raspberry Pi CM5 |
 | 真实硬件 | 尚未：此版本没有在真实硬件上运行的记录 |
+
+**跳转：** [概述](#-概述) · [架构](#-架构) · [快速开始](#-快速开始) · [测试](#-测试) · [仓库结构](#-仓库结构) · [相关项目](#-相关项目)
 
 ## 🚦 项目状态
 
@@ -43,11 +56,11 @@
 | 领域 | 状态 | 在这里的含义 |
 |---|---|---|
 | 软件 | 🟡 | 主要用途可用；上面的诚实性检查列出了仍然缺少的内容 |
-| 测试 | 🟢 | 143 项自动测试，每次变更都会运行 |
+| 测试 | 🟢 | 144 项自动测试，每次变更都会运行 |
 | 真实硬件 | 🔴 | 尚未：此版本没有在真实硬件上运行的记录 |
 | 文档 | 🟢 | 八种语言的 README，每次变更都会与清单核对 |
 
-## 1. 🛠️ 技术概述
+## 🎯 概述
 
 **HYDRA-UMC-ORCHESTRATOR** 是 HYDRA-UMC 生态系统的高层协调层。它的目标是将多个 HydraNode(Kinematic Brain、Vision Node 和 Cognitive Node)作为一个统一的集群来管理。
 
@@ -64,9 +77,18 @@
 * 🧱 **默认安全，迟到的报告无法覆盖交接结果（v0）：** API 默认只监听 `127.0.0.1:8114`，使用其他地址需要 bearer 令牌（`--token` / `ORCHESTRATOR_TOKEN`；设置后除 `GET /health` 外的所有路由都要求它）或显式的 `--allow-anonymous`；超过 64 KB 的请求体会被以 `413` 拒绝。每次派发都会让任务的 `attempt` 加一；携带过期 `attempt`（或已不再持有该任务的节点名称）的 `start`/`complete`/`fail` 会被以 `409` 拒绝，且不会改动任务，因此被宣告不可用、之后从网络分区中恢复的节点无法覆盖任务被交接到的节点（`--require-attempt` 可将该字段设为必填）。任务注册表和发件箱在替换旧文件之前会被强制写入磁盘；随附的 systemd 单元现在为进程提供可写的状态目录（此前 `ProtectSystem=strict` 使默认的 `data` 目录只读，重启后什么都保留不下来）；`docker-compose.yml` 现在启动真正的服务（`serve` 命令、健康检查、必填令牌、固定镜像，只发布编排器，且只绑定宿主机回环地址）。*（已实现）*
 * 🔭 **可读的运维（可选）：** `GET /stats` 还显示最旧的未确认关闭已等待多久（`oldestPendingCloseAgeSeconds`），以及对 JOB-DISPATCHER 调用的最近一次成功与失败；`--log-format json` 每行日志写一个 JSON 对象；`--keep-finished N` 会忘记关闭已确认的最旧的已结束任务，使 `missions.json` 不会无限增长；文件带有 `schema_version`，由更新版本写入的文件会被拒绝；关闭时会告诉 JOB-DISPATCHER 正在关闭哪一次尝试。全部默认关闭或保持不变。 *(已实现)*
 
----
+## 🧩 在 HYDRA-UMC 中的角色
 
-## 2. 🔄 编排架构
+**HYDRA-UMC-ORCHESTRATOR** 是任务协调器：一个 Rust 服务，用状态机跟踪任务，把任务交给 `HYDRA-UMC-JOB-DISPATCHER`，并在 `HYDRA-UMC-NODE-HEALING` 报告节点不可达时收回任务。它不同步机器人，也不避免碰撞。
+
+## 🏛️ 架构
+
+<p align="center">
+  <img src="images/architecture.svg" alt="HYDRA-UMC-ORCHESTRATOR architecture" width="100%">
+</p>
+
+<details>
+<summary>图表的文本版本（Mermaid）</summary>
 
 ```mermaid
 flowchart TB
@@ -79,11 +101,13 @@ flowchart TB
     HEAL["NODE-HEALING (Failover)"] --> ORCH
 ```
 
+</details>
+
+### 编排架构
+
 > 实线箭头今天已存在（HTTP API、JOB-DISPATCHER，以及调用 `POST /nodes/:node/recover` 的 NODE-HEALING）。虚线箭头仅为计划，尚未实现：没有任何代码调用 PATH-PLANNER-3D 或 SWARM-SYNC。
 
----
-
-## 3. 🧠 架构与设计决策
+### 架构与设计决策
 
 > 下方的内部分层是本入口点背后逻辑的规划设计——目前实际运行的内容请见
 > 下方"🔧 构建与运行"部分：一个真实的、纯内存中的任务状态机
@@ -112,53 +136,23 @@ flowchart TB
 
 关于每个真实的 mission-demo/CLI 示例（取自实际编译的二进制文件），参见 [`docs/CLI_REFERENCE.md`](docs/CLI_REFERENCE.md)。关于共享的 `hydra.common.v1` gRPC 契约本身——它定义了什么、为何位于本仓库，以及各语言如何生成自己的绑定——参见 [`proto/README.md`](proto/README.md)。
 
----
+## 🚀 快速开始
 
-## 📂 目录结构
+需要稳定版 Rust 工具链（2021 版）及 `cargo`。
 
-```text
-HYDRA-UMC-ORCHESTRATOR/
-├── src/
-│   ├── mission.rs         # 真实的任务状态机（Mission、MissionRegistry）
-│   ├── outbox.rs          # 真实且持久的待处理远程关闭发件箱 (重启后仍保留)
-│   ├── job_dispatcher.rs  # 面向 HYDRA-UMC-JOB-DISPATCHER 自身 HTTP API 的真实客户端
-│   ├── server.rs          # 简洁的 JSON/HTTP 接口(tiny_http,阻塞式,无异步运行时)
-│   ├── main.rs            # 入口点 + 真实的 `mission-demo` 子命令
-│   └── logging.rs         # 进程写入 stderr 的行的统一出口 (纯文本,或用 --log-format 选择的格式)
-├── proto/            # 用于整个生态系统节点间通信的共享 gRPC 契约
-│                     # （见 proto/README.md）——不仅仅是本仓库自身的 API
-├── docs/             # 文档与架构指南
-├── build/            # 编译后的二进制文件（build.sh/build.bat 的输出）
-├── images/           # 媒体与图表
-├── systemd/
-│   └── hydra-umc-orchestrator.service # 本地 CM5 mission/dispatch API 的 systemd 单元
-├── tools/
-│   ├── build_test.py # 不递增版本号的构建检查
-│   ├── ci_validate.py # CI 使用的清单/CHANGELOG/文档校验
-│   ├── verify_dispatcher_contract.py # 让真实的 job-dispatcher 与真实的编排器互相运行并核验契约
-│   ├── verify_compose.py # docker-compose.yml 的静态检查（命令、固定镜像、回环端口、必需令牌）
-│   ├── _doc_policy.py    # 家族共享的文档规则 (HYDRA-UMC-SDK 的副本,保持同步)
-│   ├── _readme_parity.py # 检查八个 README 结构一致 (HYDRA-UMC-SDK 的副本,保持同步)
-│   └── hydra_project_tool.py # 每个仓库相同的命令: validate、test、ci、version、status、bump
-├── Cargo.toml        # Rust 包清单（名称、版本、依赖项）
-├── bump_version.py   # 里程表式版本递增（仅由显式 `bump` 命令运行）
-├── bump_manifest_version.py # 将 hydra-umc.project.json 的版本与原生版本同步(--sync)
-├── build.sh/.bat     # 然后执行 `cargo build --release`
-├── build-test.sh/.bat # 不递增版本号的构建检查
-├── run.sh/.bat       # 运行编译后的二进制文件
-├── docker-compose.yml # 将本仓库与其 3 个实际子项目集成
-├── nodes.compose.json # NODE-HEALING 在 compose 栈中使用的节点注册表
-├── .env.example # compose 栈要求的令牌（复制为 .env）
-└── README.md
+```bash
+./build.sh             # Linux, macOS (build.bat on Windows)
+./run.sh mission-demo  # a real scenario of the mission state machine
+cargo test
 ```
 
-从原始模板中省略：`hardware/`、`firmware/` 和 `os/`——这是一个纯软件
-服务（Rust 二进制文件），没有专属硬件或固件，也没有需要维护的操作系统
-镜像。
+## 🧪 测试
 
----
+运行 `cargo test` 会执行 144 个自动测试。 不需要硬件，也不需要这台机器以外的任何东西。
 
-## 🔧 构建与运行
+CI 运行 `HYDRA_UMC_CI=1 python tools/ci_validate.py`，检查清单、文档、八个 README 和图片。
+
+## 🏗️ 构建与发布
 
 裸调用仍然是一个最小骨架（打印身份信息，退出码 0）；真实的任务状态机
 今天已经可以通过 `mission-demo` 体验。
@@ -201,7 +195,7 @@ run.bat mission-demo
 ```
 
 ```bash
-cargo test   # 143 个测试：mission.rs 的每一次状态转换、每一次非法转换的
+cargo test   # 144 个测试：mission.rs 的每一次状态转换、每一次非法转换的
              # 拒绝、幂等取消、节点故障后的恢复，加上 outbox.rs 的
              # 抗崩溃持久化、job_dispatcher.rs 的真实 HTTP 客户端，
              # 以及 server.rs 的 HTTP 处理器
@@ -214,15 +208,59 @@ cargo test   # 143 个测试：mission.rs 的每一次状态转换、每一次�
 docker compose up --build
 ```
 
----
+## 📂 仓库结构
 
-## 🚀 路线图
+<p align="center">
+  <img src="images/repository-structure.svg" alt="Repository structure of HYDRA-UMC-ORCHESTRATOR" width="100%">
+</p>
+
+<details>
+<summary>目录树的文本版本</summary>
+
+```text
+HYDRA-UMC-ORCHESTRATOR/
+├── tools/                              源代码
+│   ├── build_test.py                   不递增版本号的构建检查
+│   ├── ci_validate.py                  CI 使用的清单/CHANGELOG/文档校验
+│   ├── verify_dispatcher_contract.py   让真实的 job-dispatcher 与真实的编排器互相运行并核验契约
+│   ├── verify_compose.py               docker-compose.yml 的静态检查（命令、固定镜像、回环端口、必需令牌）
+│   ├── _doc_policy.py                  家族共享的文档规则 (HYDRA-UMC-SDK 的副本,保持同步)
+│   ├── _readme_parity.py               检查八个 README 结构一致 (HYDRA-UMC-SDK 的副本,保持同步)
+│   └── hydra_project_tool.py           每个仓库相同的命令: validate、test、ci、version、status、bump
+├── src/                                源代码
+├── proto/                              用于整个生态系统节点间通信的共享 gRPC 契约
+├── docs/                               文档与架构指南
+├── images/                             媒体与图表
+├── systemd/                            服务单元
+├── .github/                            CI 工作流和 Issue 模板
+├── Cargo.toml                          Rust 包清单（名称、版本、依赖项）
+├── bump_version.py                     显式提升版本
+├── bump_manifest_version.py            将 hydra-umc.project.json 的版本与原生版本同步(--sync)
+├── docker-compose.yml                  将本仓库与其 3 个实际子项目集成
+├── nodes.compose.json                  NODE-HEALING 在 compose 栈中使用的节点注册表
+├── .env.example                        compose 栈要求的令牌（复制为 .env）
+├── CHANGELOG.md                        每个版本的变更
+├── build-test.sh                       不修改内容的构建检查
+├── build.sh                            构建并检查；从不改变版本
+├── hydra-umc.project.json              清单：版本、成熟度、系列
+├── run.sh                              启动程序
+└── test.sh                             运行测试
+```
+
+</details>
+
+## 🗺️ 路线图与已知限制
+
+**当前已知限制**
+
 * **第一阶段：** 基于 TSN 的确定性集群同步与亚毫秒级抖动降低。
 * **第二阶段：** 多机器人单元中带动态避障的 3D 路径规划。
 * **第三阶段：** 利用实时资源可用性进行多机器人任务分发优化。
 * **第四阶段：** 高可用性故障转移集群的实现与异构机器人支持。
 
----
+## 🌍 语言
+
+本 README 和仓库文档提供八种语言：英语、西班牙语、德语、法语、意大利语、日语、中文和葡萄牙语（葡萄牙）。它们同时编写，并由 CI 检查八个文件拥有相同的章节和相同的链接。 本仓库没有自己的界面或消息目录，因此没有需要翻译的界面文字。
 
 ## 🔗 相关项目
 
@@ -313,21 +351,26 @@ docker compose up --build
 - **[HYDRA-UMC-OPS-AGENT](https://github.com/JuanenRac/HYDRA-UMC-OPS-AGENT)** — 维护事件协调器：一个低权限的边缘角色采集经过脱敏的库存/健康快照，一个控制面角色以只读方式渲染它，并请求某个 AI 提供方给出诊断建议——从不应用补丁，也从不部署任何内容。
 - **[HYDRA-UMC-DEV-SERVER](https://github.com/JuanenRac/HYDRA-UMC-DEV-SERVER)** — 可复现的开发主机（Raspberry Pi 5 / CM5），保存整个生态系统的源代码，并在持久队列下运行有界的构建/测试任务；这是专用的开发角色，明确区别于运行中的 CM5。
 
+## 📚 文档
 
----
+更多阅读：
 
-## 📚 文档与社区
+* [生态系统的安全基线](https://github.com/JuanenRac/HYDRA-UMC-DOCS/blob/main/docs/SECURITY_BASELINE.md)
+* [生态系统的威胁模型](https://github.com/JuanenRac/HYDRA-UMC-DOCS/blob/main/docs/THREAT_MODEL.md)
+* [本仓库的更新日志](CHANGELOG.md)
+* [本仓库的许可证](LICENSE.md)
 
-- **[CONTRIBUTING.md](CONTRIBUTING.md)** —— 提交 Pull Request 所需的技术栈和编码规范。
-- **[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)** —— 本社区所期望的行为准则。
-- **[SECURITY.md](SECURITY.md)** —— 如何报告漏洞，以及本项目真实的安全关注重点。
-- **[SUPPORT.md](SUPPORT.md)** —— 在哪里提问和报告缺陷。
-- **[LICENSE.md](LICENSE.md)** —— 本项目自身的许可证。
+## 🤝 参与贡献与社区
+
+* 提交 pull request 之前，请运行 `HYDRA_UMC_CI=1 py -3 tools/ci_validate.py`（或 `HYDRA_UMC_CI=1 python3 tools/ci_validate.py`）：它必须输出 `CI_VALIDATION=PASS`。此检查不要运行 `build.sh` 或 `build.bat`；构建不是检查。
+* 八个 README 由 HYDRA-UMC-DOCS 中的同一个源生成；请勿手工编辑。修改源文件，再用 `tools/make_readmes.py` 重新生成。
+* 不要在 README 中声称尚未运行过的内容：属实时请写“仅模拟”或“尚未在硬件上试过”。
+* 请参阅 [CONTRIBUTING.md](CONTRIBUTING.md)、[行为准则](CODE_OF_CONDUCT.md)、[SECURITY.md](SECURITY.md) 和 [SUPPORT.md](SUPPORT.md)。
 
 ## 👤 作者
-**JuanenRac** (Electro Hobby 3D)
-📧 electrohobby3d@gmail.com
-📺 [youtube.com/@electrohobby3d](https://youtube.com/@electrohobby3d)
+
+**JuanenRac (Electro Hobby 3D)** · electrohobby3d@gmail.com
 
 ## 📜 许可证
-GPL-3.0-or-later —— 详见 LICENSE。
+
+GPL-3.0-or-later - [LICENSE](LICENSE).

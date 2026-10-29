@@ -1,3 +1,9 @@
+<!-- =============================================================================
+HYDRA-UMC-ORCHESTRATOR - Mission coordinator
+Copyright (C) JuanenRac (Electro Hobby 3D) <electrohobby3d@gmail.com>
+GPL-3.0-or-later - see LICENSE
+============================================================================= -->
+
 <p align="center">
   <img src="images/HYDRA_UMC_BANNER.svg" alt="HYDRA-UMC-ORCHESTRATOR banner" width="100%">
 </p>
@@ -9,19 +15,24 @@
 ### 🤖 Verteilter Schwarm-Manager & Multi-Knoten-Koordinator
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Lizenz-GPL%203.0--or--later-blue.svg" alt="GPL 3.0 or later">
-  <img src="https://img.shields.io/badge/Sprache-Rust-orange.svg" alt="Rust">
-  <img src="https://img.shields.io/badge/Architektur-Distributed%20Edge-blue.svg" alt="Distributed">
+  <img src="https://img.shields.io/badge/License-GPL%203.0--or--later-blue.svg" alt="GPL 3.0 or later">
+  <img src="https://img.shields.io/badge/Language-Rust-orange.svg" alt="Language">
+  <img src="https://img.shields.io/badge/Architecture-Distributed%20Edge-blue.svg" alt="Architecture">
   <img src="https://img.shields.io/badge/Sync-JSON%2FHTTP-yellow.svg" alt="Sync">
+  <img src="https://img.shields.io/badge/Tests-144%20passing-2ea44f.svg" alt="Tests">
+  <img src="https://img.shields.io/badge/Version-0.1.9-0f6cbd.svg" alt="Version">
+  <img src="https://img.shields.io/badge/Maturity-functional-0F6CBD.svg" alt="Maturity">
 </p>
 
 ---
 
-**Ehrlichkeitscheck - was heute wirklich läuft:** die Missions-Zustandsmaschine (`src/mission.rs`: `Mission`/`MissionRegistry`, jeder Übergang `Pending -> Dispatched -> InProgress -> Completed`/`Cancelled`/`Failed`, idempotenter Abbruch, Wiederherstellung bei Knotenausfall), ihre eigene Festplatten-Persistenz (`MissionRegistry::load`/`persist`, `data/missions.json`), das dauerhafte Outbox für ausstehende Remote-Abschlüsse (`src/outbox.rs`), der echte HTTP-Client zu HYDRA-UMC-JOB-DISPATCHER (`src/job_dispatcher.rs`) und der einfache JSON/HTTP-Server, der all das bereitstellt (`src/server.rs`, `tiny_http`, ohne Async-Runtime), sind real und getestet (143 Tests, `cargo test`). Der CLI-Unterbefehl `mission-demo` führt ein echtes End-to-End-Szenario gegen genau diese `MissionRegistry` aus - kein Mock. Was noch angestrebt, aber nicht umgesetzt ist: die "geplanten internen Schichten" in Abschnitt 3 weiter unten (API-Schicht, PTP-synchronisiertes Dispatching, Flotten-Gesundheitsaggregation als dauerhafter Dienst) beschreiben Designabsicht, keinen bereits existierenden Code; es gibt keine gRPC-Anbindung von diesem Repo an einen echten laufenden JOB-DISPATCHER oder NODE-HEALING-Prozess, keine PATH-PLANNER-3D-/SWARM-SYNC-Integration, und es lief noch nie eine echte Multi-Node-Flotte gegen dieses Binary - `docker-compose.yml` baut und startet die 3 Geschwisterdienste zusammen, das wurde aber nie gegen echte Roboter-Hardware getestet. Siehe `CHANGELOG.md` für genau das, was bisher ausgeliefert wurde, und die ROADMAP weiter unten für das, was noch offen ist.
+**Ehrlichkeitscheck - was heute wirklich läuft:** die Missions-Zustandsmaschine (`src/mission.rs`: `Mission`/`MissionRegistry`, jeder Übergang `Pending -> Dispatched -> InProgress -> Completed`/`Cancelled`/`Failed`, idempotenter Abbruch, Wiederherstellung bei Knotenausfall), ihre eigene Festplatten-Persistenz (`MissionRegistry::load`/`persist`, `data/missions.json`), das dauerhafte Outbox für ausstehende Remote-Abschlüsse (`src/outbox.rs`), der echte HTTP-Client zu HYDRA-UMC-JOB-DISPATCHER (`src/job_dispatcher.rs`) und der einfache JSON/HTTP-Server, der all das bereitstellt (`src/server.rs`, `tiny_http`, ohne Async-Runtime), sind real und getestet (144 Tests, `cargo test`). Der CLI-Unterbefehl `mission-demo` führt ein echtes End-to-End-Szenario gegen genau diese `MissionRegistry` aus - kein Mock. Was noch angestrebt, aber nicht umgesetzt ist: die "geplanten internen Schichten" in Abschnitt 3 weiter unten (API-Schicht, PTP-synchronisiertes Dispatching, Flotten-Gesundheitsaggregation als dauerhafter Dienst) beschreiben Designabsicht, keinen bereits existierenden Code; es gibt keine gRPC-Anbindung von diesem Repo an einen echten laufenden JOB-DISPATCHER oder NODE-HEALING-Prozess, keine PATH-PLANNER-3D-/SWARM-SYNC-Integration, und es lief noch nie eine echte Multi-Node-Flotte gegen dieses Binary - `docker-compose.yml` baut und startet die 3 Geschwisterdienste zusammen, das wurde aber nie gegen echte Roboter-Hardware getestet. Siehe `CHANGELOG.md` für genau das, was bisher ausgeliefert wurde, und die ROADMAP weiter unten für das, was noch offen ist.
 
 ---
 
 > **Stand von Sicherheit (Safety) und Security:** Dieses Ökosystem ist kein zertifiziertes Sicherheitssystem. Es gibt noch keinen Hardware-E-STOP-Pfad, keine von der Firmware durchgesetzten Grenzen oder Verriegelungen und keinen verifizierten Bewegungsbefehl; Firmware-Images werden mit CRC32 und einem HMAC-SHA256 mit gemeinsamem Schlüssel geprüft, nicht mit einer asymmetrischen Signatur; TLS und gegenseitiges TLS sind optional und standardmäßig aus; noch keine eigene Platine wurde bestückt oder getestet. Lesen Sie die [Sicherheitsbasis](https://github.com/JuanenRac/HYDRA-UMC-DOCS/blob/main/docs/SECURITY_BASELINE.md) und das [Bedrohungsmodell](https://github.com/JuanenRac/HYDRA-UMC-DOCS/blob/main/docs/THREAT_MODEL.md), bevor Sie sich für die Sicherheit einer Person auf eine Aussage hier verlassen.
+
+---
 
 ## 📋 Auf einen Blick
 
@@ -29,10 +40,12 @@
 |---|---|
 | Version | `0.1.9` |
 | Reifegrad | Funktionsfähig |
-| Tests | 143 (`cargo test`) |
+| Tests | 144 (`cargo test`) |
 | Technik | Rust / tiny_http / ureq / JSON/HTTP |
 | Ziel | Der Raspberry Pi CM5 einer HYDRA-UMC-Zelle |
 | Auf echter Hardware | Noch nicht: für diese Version ist kein Lauf auf echter Hardware vermerkt |
+
+**Springe zu:** [Überblick](#-überblick) · [Architektur](#-architektur) · [Schnellstart](#-schnellstart) · [Tests](#-tests) · [Struktur des Repositorys](#-struktur-des-repositorys) · [Verwandte Projekte](#-verwandte-projekte)
 
 ## 🚦 Projektstatus
 
@@ -43,11 +56,11 @@ Jede Zeile ist ein Teil dieses Repositorys, und die Ampel sagt, wie weit er heut
 | Bereich | Stand | Was das hier bedeutet |
 |---|---|---|
 | Software | 🟡 | Funktioniert für seinen Hauptzweck; die Ehrlichkeitsprüfung oben nennt, was noch fehlt |
-| Tests | 🟢 | 143 automatische Tests, bei jeder Änderung ausgeführt |
+| Tests | 🟢 | 144 automatische Tests, bei jeder Änderung ausgeführt |
 | Echte Hardware | 🔴 | Noch nicht: für diese Version ist kein Lauf auf echter Hardware vermerkt |
 | Dokumentation | 🟢 | README in acht Sprachen, bei jeder Änderung gegen das Manifest geprüft |
 
-## 1. 🛠️ TECHNISCHER ÜBERBLICK
+## 🎯 Überblick
 
 **HYDRA-UMC-ORCHESTRATOR** ist die übergeordnete Koordinationsschicht des HYDRA-UMC-Ökosystems. Er soll mehrere HydraNodes (Kinematik-Brains, Vision-Knoten und kognitive Knoten) als einen einzigen, einheitlichen Schwarm verwalten.
 
@@ -64,9 +77,18 @@ Geplant: globale Missionsplanung, Lastverteilung über die Flotte und Echtzeit-S
 * 🧱 **Standardmäßig sicher, und ein verspäteter Bericht kann keine Übergabe überschreiben (v0):** Die API lauscht auf `127.0.0.1:8114`, sofern nichts anderes angegeben ist; eine andere Adresse verlangt ein Bearer-Token (`--token` / `ORCHESTRATOR_TOKEN`; dann verlangt jede Route außer `GET /health` es) oder ein ausdrückliches `--allow-anonymous`, und Anfragekörper über 64 KB werden mit `413` abgelehnt. Jede Zuteilung erhöht den `attempt` der Mission; ein `start`/`complete`/`fail` mit veraltetem `attempt` (oder dem Namen eines Knotens, der die Mission nicht mehr hält) wird mit `409` abgelehnt, ohne die Mission anzufassen. So kann ein Knoten, der für nicht verfügbar erklärt wurde und aus einer Netzpartition zurückkehrt, den Knoten nicht überschreiben, an den die Mission übergeben wurde (`--require-attempt` macht das Feld verpflichtend). Missionsregister und Ausgangspuffer werden auf den Datenträger erzwungen, bevor sie die vorherige Datei ersetzen, die mitgelieferte systemd-Unit gibt dem Prozess jetzt ein beschreibbares Zustandsverzeichnis (zuvor machte `ProtectSystem=strict` das Standardverzeichnis `data` schreibgeschützt, und nichts überstand einen Neustart), und `docker-compose.yml` startet jetzt echte Dienste (`serve`-Befehle, Gesundheitsprüfungen, Pflicht-Token, fixierte Images, nur der Orchestrator veröffentlicht und nur auf dem Loopback des Hosts). *(implementiert)*
 * 🔭 **Lesbarer Betrieb (optional):** `GET /stats` zeigt zusätzlich das Alter des ältesten unbestätigten Abschlusses (`oldestPendingCloseAgeSeconds`) sowie den letzten Erfolg und den letzten Fehler der Aufrufe an JOB-DISPATCHER; `--log-format json` schreibt pro Logzeile ein JSON-Objekt; `--keep-finished N` vergisst die ältesten beendeten Missionen, deren Abschluss bestätigt wurde, damit `missions.json` nicht endlos wächst; die Datei trägt eine `schema_version`, eine von einer neueren Version geschriebene wird abgelehnt; ein Abschluss teilt JOB-DISPATCHER mit, welchen Versuch er abschließt. Standardmäßig alles aus oder unverändert. *(implementiert)*
 
----
+## 🧩 Rolle in HYDRA-UMC
 
-## 2. 🔄 ORCHESTRIERUNGSARCHITEKTUR
+**HYDRA-UMC-ORCHESTRATOR** ist der Missionskoordinator: ein Rust-Dienst, der Missionen in einer Zustandsmaschine verfolgt, sie an `HYDRA-UMC-JOB-DISPATCHER` übergibt und sie zurücknimmt, wenn `HYDRA-UMC-NODE-HEALING` einen Knoten als unerreichbar meldet. Er synchronisiert keine Roboter und verhindert keine Kollisionen.
+
+## 🏛️ Architektur
+
+<p align="center">
+  <img src="images/architecture.svg" alt="HYDRA-UMC-ORCHESTRATOR architecture" width="100%">
+</p>
+
+<details>
+<summary>Textversion des Diagramms (Mermaid)</summary>
 
 ```mermaid
 flowchart TB
@@ -79,11 +101,13 @@ flowchart TB
     HEAL["NODE-HEALING (Failover)"] --> ORCH
 ```
 
+</details>
+
+### ORCHESTRIERUNGSARCHITEKTUR
+
 > Durchgezogene Pfeile gibt es heute (die HTTP-API, JOB-DISPATCHER und NODE-HEALING, das `POST /nodes/:node/recover` aufruft). Gepunktete Pfeile sind geplant, nicht umgesetzt: Kein Code ruft PATH-PLANNER-3D oder SWARM-SYNC auf.
 
----
-
-## 3. 🧠 ARCHITEKTUR UND ENTSCHEIDUNGEN
+### ARCHITEKTUR UND ENTSCHEIDUNGEN
 
 > Die folgenden internen Schichten sind das geplante Design für die Logik
 > hinter diesem Einstiegspunkt. Unter „🔧 BUILD UND AUSFÜHRUNG“ steht, was heute
@@ -143,54 +167,23 @@ ihre einfacheren, isolierten Aufgaben passt, nicht jedoch für diesen Kernprozes
 
 Für jedes reale mission-demo/CLI-Beispiel (aus einer echten kompilierten Binärdatei aufgezeichnet) siehe [`docs/CLI_REFERENCE.md`](docs/CLI_REFERENCE.md). Für den gemeinsamen `hydra.common.v1`-gRPC-Vertrag selbst - was er definiert, warum er in diesem Repo liegt und wie jede Sprache ihre eigenen Bindings generiert - siehe [`proto/README.md`](proto/README.md).
 
----
+## 🚀 Schnellstart
 
-## 📂 VERZEICHNISSTRUKTUR
+Benötigt die stabile Rust-Toolchain (Edition 2021) mit `cargo`.
 
-```text
-HYDRA-UMC-ORCHESTRATOR/
-├── src/
-│   ├── mission.rs         # Echter Missions-Zustandsautomat (Mission, MissionRegistry)
-│   ├── outbox.rs          # Echter, dauerhafter Ausgangskorb für ausstehende Remote-Abschlüsse (übersteht einen Neustart)
-│   ├── job_dispatcher.rs  # Echter Client für die eigene HTTP-API von HYDRA-UMC-JOB-DISPATCHER
-│   ├── server.rs          # Einfache JSON/HTTP-Oberfläche (tiny_http, blockierend, ohne Async-Runtime)
-│   ├── main.rs            # Einstiegspunkt + echter Subbefehl `mission-demo`
-│   └── logging.rs         # Eine Stelle für die Zeilen, die der Prozess auf stderr schreibt (Klartext oder das mit --log-format gewählte Format)
-├── proto/            # Gemeinsamer gRPC-Vertrag für Knoten-zu-Knoten-
-│                     # Verkehr im gesamten Ökosystem (siehe
-│                     # proto/README.md) - nicht nur die API dieses Repos
-├── docs/             # Dokumentation und Architekturleitfäden
-├── build/            # Kompilierte Binärdateien (Ausgabe von build.sh/.bat)
-├── images/           # Medien und Diagramme
-├── systemd/
-│   └── hydra-umc-orchestrator.service # systemd-Unit der lokalen CM5-Mission-/Dispatch-API
-├── tools/
-│   ├── build_test.py # Nicht-versionierender Build-Check
-│   ├── ci_validate.py # Manifest/CHANGELOG/Docs-Validierung, von CI genutzt
-│   ├── verify_dispatcher_contract.py # Lässt den echten Job-Dispatcher und den echten Orchestrator gegeneinander laufen und prüft den Vertrag
-│   ├── verify_compose.py # Statische Prüfungen von docker-compose.yml (Befehle, fixierte Images, Loopback-Ports, Pflicht-Token)
-│   ├── _doc_policy.py    # Von der Familie geteilte Dokumentationsregeln (Kopie der von HYDRA-UMC-SDK, synchron gehalten)
-│   ├── _readme_parity.py # Prüfung, dass die acht READMEs dieselbe Struktur haben (Kopie der von HYDRA-UMC-SDK, synchron gehalten)
-│   └── hydra_project_tool.py # Dieselben Befehle in jedem Repository: validate, test, ci, version, status, bump
-├── Cargo.toml        # Rust-Paketmanifest (Name, Version, Abhängigkeiten)
-├── bump_version.py   # Versionserhöhung im Kilometerzähler-Stil (nur vom expliziten `bump`-Befehl ausgeführt)
-├── bump_manifest_version.py # Synchronisiert die Version von hydra-umc.project.json mit der nativen (--sync)
-├── build.sh/.bat     # dann `cargo build --release`
-├── build-test.sh/.bat # Nicht-versionierender Build-Check
-├── run.sh/.bat       # Führt die kompilierte Binärdatei aus
-├── docker-compose.yml # Integriert dieses Repo mit seinen 3 echten Kindern
-├── nodes.compose.json # Knotenregister, das NODE-HEALING im Compose-Stack nutzt
-├── .env.example # Token, die der Compose-Stack verlangt (nach .env kopieren)
-└── README.md
+```bash
+./build.sh             # Linux, macOS (build.bat on Windows)
+./run.sh mission-demo  # a real scenario of the mission state machine
+cargo test
 ```
 
-Aus der ursprünglichen Vorlage entfernt: `hardware/`, `firmware/` und `os/`
-— dies ist ein reiner Softwaredienst (Rust-Binärdatei) ohne eigene Hardware
-oder Firmware und ohne zu pflegendes Betriebssystem-Image.
+## 🧪 Tests
 
----
+144 automatische Tests laufen mit `cargo test`. Sie brauchen weder Hardware noch etwas außerhalb dieses Rechners.
 
-## 🔧 BUILD UND AUSFÜHRUNG
+Die CI führt `HYDRA_UMC_CI=1 python tools/ci_validate.py` aus; das prüft das Manifest, die Dokumente, die acht READMEs und die Bilder.
+
+## 🏗️ Build und Veröffentlichung
 
 Der nackte Aufruf bleibt ein minimales Grundgerüst (gibt Identität aus,
 beendet sich mit 0); der echte Missions-Zustandsautomat lässt sich schon
@@ -236,7 +229,7 @@ aus:
 ```
 
 ```bash
-cargo test   # 143 Tests: die Zustandsänderungen/Ablehnungen ungültiger
+cargo test   # 144 Tests: die Zustandsänderungen/Ablehnungen ungültiger
              # Zustandsänderungen/idempotente Stornierung/Wiederherstellung
              # nach Knotenausfall aus mission.rs, plus die absturzsichere
              # Persistenz von outbox.rs, den echten HTTP-Client von
@@ -252,15 +245,59 @@ die als Geschwisterordner erwartet werden:
 docker compose up --build
 ```
 
----
+## 📂 Struktur des Repositorys
 
-## 🚀 FAHRPLAN
+<p align="center">
+  <img src="images/repository-structure.svg" alt="Repository structure of HYDRA-UMC-ORCHESTRATOR" width="100%">
+</p>
+
+<details>
+<summary>Textversion des Baums</summary>
+
+```text
+HYDRA-UMC-ORCHESTRATOR/
+├── tools/                              Quellcode
+│   ├── build_test.py                   Nicht-versionierender Build-Check
+│   ├── ci_validate.py                  Manifest/CHANGELOG/Docs-Validierung, von CI genutzt
+│   ├── verify_dispatcher_contract.py   Lässt den echten Job-Dispatcher und den echten Orchestrator gegeneinander laufen und prüft den Vertrag
+│   ├── verify_compose.py               Statische Prüfungen von docker-compose.yml (Befehle, fixierte Images, Loopback-Ports, Pflicht-Token)
+│   ├── _doc_policy.py                  Von der Familie geteilte Dokumentationsregeln (Kopie der von HYDRA-UMC-SDK, synchron gehalten)
+│   ├── _readme_parity.py               Prüfung, dass die acht READMEs dieselbe Struktur haben (Kopie der von HYDRA-UMC-SDK, synchron gehalten)
+│   └── hydra_project_tool.py           Dieselben Befehle in jedem Repository: validate, test, ci, version, status, bump
+├── src/                                Quellcode
+├── proto/                              Gemeinsamer gRPC-Vertrag für Knoten-zu-Knoten-
+├── docs/                               Dokumentation und Architekturleitfäden
+├── images/                             Medien und Diagramme
+├── systemd/                            Dienst-Unit
+├── .github/                            CI-Workflow und Issue-Vorlagen
+├── Cargo.toml                          Rust-Paketmanifest (Name, Version, Abhängigkeiten)
+├── bump_version.py                     ausdrückliche Versionserhöhung
+├── bump_manifest_version.py            Synchronisiert die Version von hydra-umc.project.json mit der nativen (--sync)
+├── docker-compose.yml                  Integriert dieses Repo mit seinen 3 echten Kindern
+├── nodes.compose.json                  Knotenregister, das NODE-HEALING im Compose-Stack nutzt
+├── .env.example                        Token, die der Compose-Stack verlangt (nach .env kopieren)
+├── CHANGELOG.md                        was sich in jeder Version geändert hat
+├── build-test.sh                       Build-Prüfung ohne Änderungen
+├── build.sh                            baut und prüft; ändert nie die Version
+├── hydra-umc.project.json              Manifest: Version, Reifegrad, Familie
+├── run.sh                              startet das Programm
+└── test.sh                             führt die Tests aus
+```
+
+</details>
+
+## 🗺️ Roadmap und bekannte Grenzen
+
+**Bekannte Grenzen heute**
+
 * **Phase 1:** Deterministische Schwarm-Synchronisation über TSN und Sub-ms-Jitter-Reduzierung.
 * **Phase 2:** 3D-Pfadplanung mit dynamischer Hindernisvermeidung in Multi-Roboter-Zellen.
 * **Phase 3:** Multi-Roboter-Job-Dispatching-Optimierung unter Berücksichtigung der Ressourcenverfügbarkeit in Echtzeit.
 * **Phase 4:** Implementierung eines Hochverfügbarkeits-Failover-Clusters und Unterstützung heterogener Roboter.
 
----
+## 🌍 Sprachen
+
+Diese README und die Dokumente des Repositorys gibt es in acht Sprachen: Englisch, Spanisch, Deutsch, Französisch, Italienisch, Japanisch, Chinesisch und Portugiesisch (Portugal). Sie entstehen gemeinsam, und die CI prüft, dass die acht Dateien dieselben Abschnitte und dieselben Links haben. Dieses Repository hat weder eine eigene Oberfläche noch einen eigenen Meldungskatalog, es gibt also keine Oberflächentexte zu übersetzen.
 
 ## 🔗 Verwandte Projekte
 
@@ -351,21 +388,26 @@ Dieses Projekt ist Teil des HYDRA-UMC-Robotik-Ökosystems desselben Autors (Juan
 - **[HYDRA-UMC-OPS-AGENT](https://github.com/JuanenRac/HYDRA-UMC-OPS-AGENT)** — Wartungsvorfall-Koordinator: eine Edge-Rolle mit niedrigem Privileg sammelt einen bereinigten Inventar-/Gesundheits-Snapshot, eine Control-Plane-Rolle rendert ihn schreibgeschützt und bittet einen KI-Anbieter um einen Diagnosevorschlag - wendet nie einen Patch an und stellt nie etwas bereit.
 - **[HYDRA-UMC-DEV-SERVER](https://github.com/JuanenRac/HYDRA-UMC-DEV-SERVER)** — reproduzierbarer Entwicklungshost (Raspberry Pi 5 / CM5), der den Quellcode des Ökosystems vorhält und begrenzte Build-/Test-Aufgaben über eine dauerhafte Warteschlange ausführt; eine dedizierte Entwicklerrolle, ausdrücklich kein operativer CM5.
 
+## 📚 Dokumentation
 
----
+Hier steht mehr:
 
-## 📚 Dokumentation & Community
+* [Sicherheitsgrundlage des Ökosystems](https://github.com/JuanenRac/HYDRA-UMC-DOCS/blob/main/docs/SECURITY_BASELINE.md)
+* [Bedrohungsmodell des Ökosystems](https://github.com/JuanenRac/HYDRA-UMC-DOCS/blob/main/docs/THREAT_MODEL.md)
+* [Änderungsprotokoll dieses Repositorys](CHANGELOG.md)
+* [Lizenz dieses Repositorys](LICENSE.md)
 
-- **[CONTRIBUTING.md](CONTRIBUTING.md)** — Technologie-Stack und Coding-Richtlinien für einen Pull Request.
-- **[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)** — die in dieser Community erwarteten Verhaltensstandards.
-- **[SECURITY.md](SECURITY.md)** — wie man eine Schwachstelle meldet, und die echten Sicherheitsschwerpunkte dieses Projekts.
-- **[SUPPORT.md](SUPPORT.md)** — wo man Fragen stellt und Fehler meldet.
-- **[LICENSE.md](LICENSE.md)** — die eigene Lizenz dieses Projekts.
+## 🤝 Mitwirken und Community
+
+* Führe vor einem Pull Request `HYDRA_UMC_CI=1 py -3 tools/ci_validate.py` (oder `HYDRA_UMC_CI=1 python3 tools/ci_validate.py`) aus: Es muss `CI_VALIDATION=PASS` ausgeben. Führe dafür nicht `build.sh` oder `build.bat` aus; Bauen ist keine Prüfung.
+* Die acht READMEs entstehen aus einer einzigen Quelle in HYDRA-UMC-DOCS; bearbeite sie nicht von Hand. Ändere die Quelle und schreibe sie mit `tools/make_readmes.py` neu.
+* Behaupte in einer README nichts, was nicht gelaufen ist: Schreibe „simuliert“ oder „nicht auf Hardware erprobt“, wo das stimmt.
+* Siehe [CONTRIBUTING.md](CONTRIBUTING.md), den [Verhaltenskodex](CODE_OF_CONDUCT.md), [SECURITY.md](SECURITY.md) und [SUPPORT.md](SUPPORT.md).
 
 ## 👤 AUTOR
-**JuanenRac** (Electro Hobby 3D)
-📧 electrohobby3d@gmail.com
-📺 [youtube.com/@electrohobby3d](https://youtube.com/@electrohobby3d)
+
+**JuanenRac (Electro Hobby 3D)** · electrohobby3d@gmail.com
 
 ## 📜 LIZENZ
-GPL-3.0-or-later - Siehe LICENSE für Details.
+
+GPL-3.0-or-later - [LICENSE](LICENSE).

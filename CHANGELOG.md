@@ -4,6 +4,8 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+- **README in the universal layout:** the README and its seven translations follow the layout that the four families share (22 sections in a fixed order), with an architecture picture and a repository-structure picture drawn from `docs/architecture.json` and `docs/structure.json`; the CI validator checks both pictures and the file tree.
+
 - **The layout of the README is checked in the CI:** the validator runs `tools/universal_readme_check.py` and lists, as a warning, what differs from the universal layout of the README.
 
 ## [0.1.9] - The job-dispatcher owns the assignment
@@ -411,7 +413,7 @@ fix (against a real fake Job-Dispatcher, no mocked HTTP):
 - Inline "why" comments across `src/main.rs`, `bump_version.py`, `build.bat`,
   `build.sh`, `run.bat` and `run.sh` explaining non-obvious decisions: why
   Rust for this specific orchestrator, why the entry point is a deliberately
-  inert skeleton for now, why the odometer-style version bump runs before
+  inert skeleton for now, why the version bump runs before
   every real build, and why `run.*` checks `build/` before `target/release/`.
 - Expanded `README.md` (and its 4 translations) with an advanced technical
   section (internal architecture, Rust rationale, design decisions), a
@@ -427,7 +429,7 @@ fix (against a real fake Job-Dispatcher, no mocked HTTP):
 - Initial Rust skeleton: `Cargo.toml`, `src/main.rs` (prints identity and
   role, exits 0).
 - GPL-3.0 copyright headers on source and build scripts.
-- Odometer-style version bump (`bump_version.py`), wired into `build.bat`
+- Version bump (`bump_version.py`), wired into `build.bat`
   and `build.sh` ahead of `cargo build --release`.
 - `run.bat` / `run.sh` to launch the compiled binary.
 - Multi-language `README.md` (English, Spanish, French, Italian, German).

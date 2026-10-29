@@ -1,0 +1,132 @@
+{
+  "repo": "HYDRA-UMC-ORCHESTRATOR",
+  "ecosystem": "hydra",
+  "tagline": "A mission state machine that dispatches jobs and recovers them when a node is lost.",
+  "description": "HYDRA-UMC-ORCHESTRATOR keeps missions in a registry with a state machine, hands jobs to the job dispatcher through an outbox, serves a gRPC health-report contract and recovers the missions of a node reported unreachable.",
+  "columns": [
+    "WHO CALLS IT",
+    "THIS REPOSITORY",
+    "WHAT IT CALLS"
+  ],
+  "nodes": [
+    {
+      "id": "heal",
+      "column": 0,
+      "level": "external",
+      "title": "NODE-HEALING",
+      "lines": [
+        "reports a node as",
+        "unreachable"
+      ]
+    },
+    {
+      "id": "nodes",
+      "column": 0,
+      "level": "external",
+      "title": "HYDRA nodes",
+      "lines": [
+        "send health reports over",
+        "gRPC"
+      ]
+    },
+    {
+      "id": "disp",
+      "column": 2,
+      "level": "external",
+      "title": "JOB-DISPATCHER",
+      "lines": [
+        "priority queue with",
+        "deduplication"
+      ]
+    },
+    {
+      "id": "srv",
+      "column": 1,
+      "level": "tested",
+      "title": "server.rs",
+      "lines": [
+        "gRPC health-report",
+        "contract (hydra_common.proto)"
+      ],
+      "code": [
+        "src/server.rs",
+        "proto/hydra_common.proto"
+      ]
+    },
+    {
+      "id": "mis",
+      "column": 1,
+      "level": "tested",
+      "title": "mission.rs",
+      "lines": [
+        "MissionRegistry and the",
+        "mission state machine"
+      ],
+      "code": [
+        "src/mission.rs"
+      ]
+    },
+    {
+      "id": "jd",
+      "column": 1,
+      "level": "tested",
+      "title": "job_dispatcher.rs",
+      "lines": [
+        "submits a mission as a job",
+        "over the dispatcher API"
+      ],
+      "code": [
+        "src/job_dispatcher.rs"
+      ]
+    },
+    {
+      "id": "out",
+      "column": 1,
+      "level": "tested",
+      "title": "outbox.rs",
+      "lines": [
+        "durable outbox of the closes",
+        "still to confirm"
+      ],
+      "code": [
+        "src/outbox.rs"
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "from": "heal",
+      "to": "mis",
+      "level": "external",
+      "label": "alert"
+    },
+    {
+      "from": "nodes",
+      "to": "srv",
+      "level": "external",
+      "label": "gRPC"
+    },
+    {
+      "from": "srv",
+      "to": "mis",
+      "level": "tested"
+    },
+    {
+      "from": "mis",
+      "to": "out",
+      "level": "tested"
+    },
+    {
+      "from": "out",
+      "to": "jd",
+      "level": "tested"
+    },
+    {
+      "from": "jd",
+      "to": "disp",
+      "level": "external",
+      "label": "HTTP"
+    }
+  ],
+  "footer": "Missions are tracked and handed on; no robots are synchronised."
+}
