@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -218,6 +220,82 @@ def validate_local_markdown_links() -> None:
         preview = "; ".join(broken[:10])
         suffix = "" if len(broken) <= 10 else f" (+{len(broken) - 10} more)"
         fail(f"broken local Markdown link(s): {preview}{suffix}")
+# Test counts written by hand in the manifest `notes` go stale the moment a test is added; the README's counts are
+# checked against the code by the documentation tools instead. A number in front of the word "tests" (or "tests:
+# 142", "142 passing") is refused.
+TEST_COUNT_IN_NOTES = re.compile(
+    r"(?i)\b\d+(?:,\d{3})*\s+(?:[\w-]+\s+){0,2}(?:tests?|test cases|assertions|specs)\b"
+    r"|\b(?:tests?|assertions)\s*[:=]\s*\d+"
+    r"|\b\d+\s+(?:passing|passed)\b"
+)
+
+
+def check_notes_have_no_test_counts(manifest: dict) -> list[str]:
+    notes = manifest.get("notes")
+    if not isinstance(notes, str):
+        return []
+    found = [match.group(0).strip() for match in TEST_COUNT_IN_NOTES.finditer(notes)]
+    if not found:
+        return []
+    shown = "; ".join(repr(text) for text in found[:3])
+    return [f"manifest notes carry a hand-written test count ({shown}): drop it, the count lives in the README and is checked against the code"]
+
+
+def changelog_version_section(changelog: str, version: str) -> str | None:
+    """The text under the heading of `version` up to the next version heading, or None when there is no such heading."""
+    headings = list(VERSION_HEADING.finditer(changelog))
+    for index, heading in enumerate(headings):
+        if heading.group(1) == version:
+            end = headings[index + 1].start() if index + 1 < len(headings) else len(changelog)
+            line_end = changelog.find("\n", heading.end())
+            return changelog[(line_end if line_end != -1 else end):end]
+    return None
+
+
+def check_changelog_note(changelog: str, version: str, environment: dict[str, str] | None = None) -> list[str]:
+    """The heading of the manifest version needs a note under it; on a tag build the tag must also name that version."""
+    environment = os.environ if environment is None else environment
+    section = changelog_version_section(changelog, version)
+    if section is None:
+        return [f"CHANGELOG.md has no heading for version {version}"]
+    problems: list[str] = []
+    if not any(line.strip() and not line.lstrip().startswith("#") for line in section.splitlines()):
+        problems.append(f"CHANGELOG.md has no note under the heading of version {version}")
+    reference = environment.get("GITHUB_REF", "")
+    if environment.get("GITHUB_REF_TYPE") == "tag" or reference.startswith("refs/tags/"):
+        tag = reference.removeprefix("refs/tags/") or environment.get("GITHUB_REF_NAME", "")
+        if tag.removeprefix("v") != version:
+            problems.append(f"the tag {tag!r} does not name the manifest version {version}")
+    return problems
+
+
+def check_glance(root: Path, environment: dict[str, str] | None = None) -> list[str]:
+    """Run the documentation repository's `make_glance.py --check` for this repository when that checkout is at hand.
+
+    The data and the tool live in HYDRA-UMC-DOCS: it is looked for in HYDRA_UMC_DOCS_DIR or next to this repository, and
+    the check is skipped when it is absent or does not list this repository (a plain CI checkout has no sibling).
+    """
+    environment = os.environ if environment is None else environment
+    docs = Path(environment["HYDRA_UMC_DOCS_DIR"]) if environment.get("HYDRA_UMC_DOCS_DIR") else root.parent / "HYDRA-UMC-DOCS"
+    script, data = docs / "tools" / "make_glance.py", docs / "data" / "glance.json"
+    if not script.is_file() or not data.is_file():
+        return []
+    try:
+        listed = json.loads(data.read_text(encoding="utf-8")).get("repos", {})
+    except (OSError, json.JSONDecodeError):
+        return ["the glance data file of the documentation repository cannot be read"]
+    if root.name not in listed:
+        return []
+    result = subprocess.run(
+        [sys.executable, "-I", str(script), "--check", "--repo", root.name, "--workspace", str(root.parent)],
+        cwd=docs, text=True, encoding="utf-8", errors="replace", capture_output=True, check=False,
+    )
+    if result.returncode == 0:
+        return []
+    lines = [line for line in (result.stdout + result.stderr).splitlines() if line.strip()]
+    return ["make_glance.py --check: " + "; ".join(lines[:3])[:400]]
+
+
 def run_extra_checks() -> None:
     """The checks a repository has of its own live in tools/extra_checks.py, so this file stays identical everywhere.
 
@@ -297,8 +375,12 @@ def main() -> int:
     if heading is None or heading.group(1) != manifest["version"]:
         found = heading.group(1) if heading else "<none>"
         fail(f"latest changelog version {found} differs from manifest {manifest['version']}")
+    for note_problem in check_changelog_note(changelog, manifest["version"]):
+        fail(note_problem)
 
     validate_readme_version_prose(manifest)
+    for notes_problem in check_notes_have_no_test_counts(manifest):
+        fail(notes_problem)
 
     gitignore = ROOT / ".gitignore"
     if not gitignore.is_file():
@@ -322,10 +404,12 @@ def main() -> int:
         fail(venv_activate_error)
     for readme_problem in check_readme_section_parity(ROOT):
         fail(readme_problem)
-    run_extra_checks()
-
     for _universal_problem in _universal_readme_ci(ROOT):
         fail(_universal_problem)
+    for glance_problem in check_glance(ROOT):
+        fail(glance_problem)
+    run_extra_checks()
+
     print(f"CI_VALIDATION=PASS project={manifest['name']} version={manifest['version']}")
     return 0
 
