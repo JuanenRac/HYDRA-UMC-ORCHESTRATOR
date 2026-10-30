@@ -296,6 +296,50 @@ def check_glance(root: Path, environment: dict[str, str] | None = None) -> list[
     return ["make_glance.py --check: " + "; ".join(lines[:3])[:400]]
 
 
+def check_ecosystem_release(root: Path, environment: dict[str, str] | None = None) -> list[str]:
+    """Check this repository against `ecosystem-release.json` (the versions of the family that go together).
+
+    The file is written by the SDK tool `tools/ecosystem_release.py` and published in the documentation repository
+    (`data/ecosystem-release.json`): it is looked for in HYDRA_UMC_DOCS_DIR or next to this repository, and the check is
+    skipped when it is absent or does not list this repository (a plain CI checkout has no sibling). The listed version
+    must not be ahead of the manifest and the listed commit must be in this repository's history.
+    """
+    environment = os.environ if environment is None else environment
+    docs = Path(environment["HYDRA_UMC_DOCS_DIR"]) if environment.get("HYDRA_UMC_DOCS_DIR") else root.parent / "HYDRA-UMC-DOCS"
+    data = docs / "data" / "ecosystem-release.json"
+    if not data.is_file():
+        return []
+    try:
+        listed = json.loads(data.read_text(encoding="utf-8")).get("repositories", [])
+        entry = next((item for item in listed if isinstance(item, dict) and item.get("name") == root.name), None)
+    except (OSError, json.JSONDecodeError, AttributeError):
+        return ["ecosystem-release.json of the documentation repository cannot be read"]
+    if entry is None:
+        return []
+    problems: list[str] = []
+    try:
+        manifest_version = json.loads((root / "hydra-umc.project.json").read_text(encoding="utf-8"))["version"]
+        wanted = tuple(int(part) for part in str(entry["version"]).split("."))
+        have = tuple(int(part) for part in manifest_version.split("."))
+        width = max(len(wanted), len(have))
+        if wanted + (0,) * (width - len(wanted)) > have + (0,) * (width - len(have)):
+            problems.append(f"ecosystem-release.json lists version {entry['version']}, ahead of the manifest ({manifest_version})")
+    except (OSError, KeyError, ValueError, json.JSONDecodeError):
+        problems.append("ecosystem-release.json has an entry for this repository that cannot be compared with the manifest")
+    try:
+        commit = str(entry.get("commit", ""))
+        shallow = subprocess.run(["git", "rev-parse", "--is-shallow-repository"], cwd=root, text=True, capture_output=True, check=False)
+        if not re.fullmatch(r"[0-9a-f]{40}", commit):
+            problems.append("ecosystem-release.json lists a commit that is not 40 hexadecimal characters")
+        elif shallow.returncode == 0 and shallow.stdout.strip() == "false":
+            known = subprocess.run(["git", "cat-file", "-e", commit + "^{commit}"], cwd=root, capture_output=True, check=False)
+            if known.returncode != 0:
+                problems.append(f"ecosystem-release.json lists commit {commit[:12]}, which is not in the history of this repository")
+    except OSError:
+        pass
+    return problems
+
+
 def run_extra_checks() -> None:
     """The checks a repository has of its own live in tools/extra_checks.py, so this file stays identical everywhere.
 
@@ -380,6 +424,9 @@ def main() -> int:
     if Path(str(native["file"])).name == "pubspec.yaml":
         # a Flutter version name has three components (the build number follows the plus sign)
         same = native_version == ".".join(manifest["version"].split(".")[:3])
+    elif Path(str(native["file"])).name == "package.json":
+        # npm only accepts three components; a file written before that rule may still hold all four
+        same = native_version in (manifest["version"], ".".join(manifest["version"].split(".")[:3]))
     else:
         same = native_version == manifest["version"]
     if not same:
@@ -425,6 +472,8 @@ def main() -> int:
         fail(_lights_problem)
     for glance_problem in check_glance(ROOT):
         fail(glance_problem)
+    for release_problem in check_ecosystem_release(ROOT):
+        fail(release_problem)
     run_extra_checks()
 
     print(f"CI_VALIDATION=PASS project={manifest['name']} version={manifest['version']}")

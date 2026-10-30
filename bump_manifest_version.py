@@ -77,9 +77,12 @@ def with_optional_fourth_group(pattern: str, separator: str = r"\.") -> str:
 #   cargo   a.b.c.d  ->  a.b.c+d        (Cargo.toml and Cargo.lock: the fourth component is semver build metadata)
 #   pubspec a.b.c.d  ->  a.b.c+N        (pubspec.yaml: the fourth component is not stored; +N is the build number,
 #                                        a plain counter raised by one on every bump)
-# Reading goes the other way, so a cargo file reads back as four components and a pubspec as three.
+#   npm     a.b.c.d  ->  a.b.c          (package.json and package-lock.json: npm only accepts semver, so the fourth
+#                                        component is not stored there either)
+# Reading goes the other way, so a cargo file reads back as four components and a pubspec as three. A package.json
+# that still holds all four components (written before this rule) is accepted until the next bump rewrites it.
 def native_style(source: Path) -> str:
-    return {"Cargo.toml": "cargo", "pubspec.yaml": "pubspec"}.get(source.name, "plain")
+    return {"Cargo.toml": "cargo", "pubspec.yaml": "pubspec", "package.json": "npm"}.get(source.name, "plain")
 
 
 def to_native(version: str, style: str) -> str:
@@ -88,13 +91,15 @@ def to_native(version: str, style: str) -> str:
         return version
     if style == "cargo":
         return ".".join(parts[:3]) + "+" + parts[3]
-    if style == "pubspec":
+    if style in ("pubspec", "npm"):
         return ".".join(parts[:3])
     raise ValueError(f"unknown native version style: {style}")
 
 
 def same_version(native: str, declared: str, style: str) -> bool:
     """Whether the version read from the native file is the manifest one, as that file can express it."""
+    if style == "npm":
+        return native == declared or native == to_native(declared, style)
     return to_native(declared, style) == to_native(native, style) if style == "pubspec" else native == declared
 
 
@@ -226,6 +231,7 @@ def sync_package_lock(version: str) -> bool:
     lock_path = ROOT / "package-lock.json"
     if not lock_path.is_file():
         return False
+    version = to_native(version, "npm")  # npm accepts three components only
     try:
         raw = lock_path.read_text(encoding="utf-8")
         lock = json.loads(raw)

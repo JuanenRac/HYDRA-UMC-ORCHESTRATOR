@@ -117,10 +117,12 @@ def _version_key(value: str) -> tuple[int, ...]:
 
 # What each toolchain accepts in its own version field. The manifest, the CHANGELOG and the tags always keep the four
 # components from 0.8.0; these files get a fixed translation of them (see bump_manifest_version.py): Cargo
-# "a.b.c+d" (semver build metadata, the same in Cargo.lock) and Flutter "a.b.c+N" (N is the build number).
+# "a.b.c+d" (semver build metadata, the same in Cargo.lock), Flutter "a.b.c+N" (N is the build number) and npm "a.b.c".
 _NATIVE_FORMATS = {
     "Cargo.toml": (re.compile(r'(?m)^version\s*=\s*"([^"]*)"'), re.compile(r"^\d+\.\d+\.\d+(?:\+\d+)?$"), "a.b.c or a.b.c+d"),
     "pubspec.yaml": (re.compile(r"(?m)^version:\s*(\S+)"), re.compile(r"^\d+\.\d+\.\d+\+\d+$"), "a.b.c+N"),
+    # npm only accepts semver: three components (a file written before the rule may still hold all four until the next bump)
+    "package.json": (re.compile(r'(?m)^\s*"version"\s*:\s*"([^"]*)"'), re.compile(r"^\d+\.\d+\.\d+(?:\.\d+)?$"), "a.b.c"),
 }
 
 

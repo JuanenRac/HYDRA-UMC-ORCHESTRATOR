@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import warnings
 from pathlib import Path
 
 # Split across string concatenation so this module's own source is never
@@ -41,6 +42,72 @@ TRACKING_CODE_REGEX = (
 )
 
 
+# Directories that hold no versioned text: a checkout without Git (a source archive, a copy) has no `.gitignore`
+# to say so, so the fallback below skips them by name.
+_UNVERSIONED_DIRECTORIES = frozenset({
+    ".git", ".venv", "venv", "node_modules", "build", "dist", "target", "__pycache__", ".gradle", ".idea",
+    ".pytest_cache", ".mypy_cache", ".ruff_cache", ".dart_tool", "out",
+})
+
+
+def _is_git_work_tree(root: Path) -> bool:
+    """True when `root` is inside a Git working tree and Git can be run."""
+    try:
+        result = subprocess.run(
+            ("git", "rev-parse", "--is-inside-work-tree"),
+            cwd=root,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+    except OSError:
+        return False
+    return result.returncode == 0 and result.stdout.strip() == "true"
+
+
+def _text_files(root: Path):
+    """The text files under `root` (what `git grep -I` would search) when there is no Git to ask: every file outside
+    the unversioned directories whose first block holds no NUL byte."""
+    for path in sorted(root.rglob("*")):
+        relative = path.relative_to(root)
+        if any(part in _UNVERSIONED_DIRECTORIES for part in relative.parts[:-1]) or not path.is_file():
+            continue
+        try:
+            with open(path, "rb") as handle:
+                head = handle.read(8192)
+        except OSError:
+            continue
+        if b"\0" in head:
+            continue
+        yield path
+
+
+def _boundary_without_git(root: Path) -> str | None:
+    """The same three rules as `check_public_private_boundary`, by reading the files (no Git in the checkout)."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")  # the tracking-code expression contains a bracket pair that looks nested
+        tracking = re.compile(TRACKING_CODE_REGEX)
+    phrases = tuple(phrase.lower() for phrase in PRIVATE_PHRASES)
+    found_marker = found_phrase = found_code = False
+    for path in _text_files(root):
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return "could not check public/private documentation boundary"
+        lowered = text.lower()
+        found_marker = found_marker or any(marker in text for marker in PRIVATE_MARKERS)
+        found_phrase = found_phrase or any(phrase in lowered for phrase in phrases)
+        found_code = found_code or tracking.search(text) is not None
+        if found_marker:
+            return "public files must not reference private documentation"
+    if found_phrase:
+        return "public files must not reference private planning or audit documents"
+    if found_code:
+        return "public files must not carry internal tracking codes"
+    return None
+
+
 def check_public_private_boundary(root: Path) -> str | None:
     """Runs this ecosystem's real, two-part public/private documentation
     boundary check against `root`'s own git-tracked files: no PRIVATE_MARKERS
@@ -49,10 +116,15 @@ def check_public_private_boundary(root: Path) -> str | None:
     ready-to-`fail()` error message on the first violation or check failure,
     or `None` if the boundary genuinely holds.
 
-    `root` must be a real git working tree (this shells out to `git grep`
-    there) - the same boundary this repo and every sibling repo's own CI
+    In a Git working tree this shells out to `git grep` there - the same boundary this repo and every sibling repo's own CI
     already enforced individually before this module existed.
+
+    A checkout that is not a Git working tree (a source archive, a plain
+    copy) or has no Git at hand gets the same three rules by reading its
+    files, skipping the directories that never hold versioned text.
     """
+    if not _is_git_work_tree(root):
+        return _boundary_without_git(root)
     for marker in PRIVATE_MARKERS:
         result = subprocess.run(
             ("git", "grep", "-n", "-I", "--", marker),
