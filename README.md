@@ -165,6 +165,8 @@ jobs; it is not the trade-off this particular "brain" process needs.
 
 For every real `mission-demo`/CLI example (captured from an actual built binary), see [`docs/CLI_REFERENCE.md`](docs/CLI_REFERENCE.md). For the shared `hydra.common.v1` gRPC contract itself - what it defines, why it lives in this repo, and how each language generates its own bindings from it - see [`proto/README.md`](proto/README.md).
 
+**Missions from an Operation.** `POST /missions` also takes the common Operation of the SDK (a body with `operation_id`), which is what the semantic planner hands over: the id of the operation is the id of the mission, and the `priority`, `required_tool`, `location` and `depends_on` of its `params` are the ones of the job. Only an operation in the state `received` is taken, and posting the same operation again is the same mission.
+
 ## 🚀 Quick start
 
 Requires the stable Rust toolchain (edition 2021) with `cargo`.

@@ -136,6 +136,8 @@ flowchart TB
 
 关于每个真实的 mission-demo/CLI 示例（取自实际编译的二进制文件），参见 [`docs/CLI_REFERENCE.md`](docs/CLI_REFERENCE.md)。关于共享的 `hydra.common.v1` gRPC 契约本身——它定义了什么、为何位于本仓库，以及各语言如何生成自己的绑定——参见 [`proto/README.md`](proto/README.md)。
 
+**由 Operation 创建任务。** `POST /missions` 也接受 SDK 通用的 Operation（带有 `operation_id` 的请求体），这正是语义规划器交付的内容：操作的 id 就是任务的 id，其 `params` 中的 `priority`、`required_tool`、`location` 和 `depends_on` 就是作业的对应值。只接受状态为 `received` 的操作，重复提交同一个操作得到的还是同一个任务。
+
 ## 🚀 快速开始
 
 需要稳定版 Rust 工具链（2021 版）及 `cargo`。

@@ -4,6 +4,7 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+- **`POST /missions` takes the common Operation of the SDK:** a body with `operation_id` (what the semantic planner hands over) becomes a mission whose id is the id of the operation, with the `priority`, `required_tool`, `location` and `depends_on` of its `params`; posting it again is the same mission. Only an operation with `schema_version` `1.0` in the state `received` is taken (anything else is a `400`). A plain mission body is read as before.
 - **The notes of the project manifest no longer carry a hand-written test count:** the counts went out of date at every change; the number of tests is stated by the README, which is checked against the code.
 - **README in the universal layout:** the README and its seven translations follow the layout that the four families share (22 sections in a fixed order), with an architecture picture and a repository-structure picture drawn from `docs/architecture.json` and `docs/structure.json`; the CI validator checks both pictures and the file tree.
 

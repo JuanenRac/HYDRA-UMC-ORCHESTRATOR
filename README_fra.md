@@ -166,6 +166,8 @@ et isolées, mais pas à ce processus central.
 
 Pour chaque exemple réel de mission-demo/CLI (capturé depuis un binaire réellement compilé), voir [`docs/CLI_REFERENCE.md`](docs/CLI_REFERENCE.md). Pour le contrat gRPC partagé `hydra.common.v1` lui-même - ce qu'il définit, pourquoi il vit dans ce dépôt et comment chaque langage génère ses propres bindings - voir [`proto/README.md`](proto/README.md).
 
+**Missions à partir d'une Operation.** `POST /missions` accepte aussi l'Operation commune du SDK (un corps avec `operation_id`), ce que transmet le planificateur sémantique : l'identifiant de l'opération est celui de la mission, et la `priority`, le `required_tool`, la `location` et le `depends_on` de ses `params` sont ceux de la tâche. Seule une opération à l'état `received` est acceptée, et renvoyer la même opération donne la même mission.
+
 ## 🚀 Démarrage rapide
 
 Nécessite la chaîne d'outils Rust stable (édition 2021) avec `cargo`.

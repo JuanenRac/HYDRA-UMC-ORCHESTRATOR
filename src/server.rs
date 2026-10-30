@@ -422,7 +422,7 @@ fn fence_status(error: &FenceError) -> u16 {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 struct AddRequest {
     id: String,
     #[serde(default)]
@@ -435,15 +435,76 @@ struct AddRequest {
     depends_on: Vec<String>,
 }
 
+/// Reads the body of `POST /missions` as a mission, or - when it carries an `operation_id` - as the common Operation of the SDK
+/// (`operation.schema.json`), which is what the semantic planner hands over: the id of the operation is the id of the mission and
+/// the `priority`, `required_tool`, `location` and `depends_on` of its `params` are the ones of the job. The operation has to be in
+/// the contract's first state (`received`), and a repeated POST of the same operation is the same mission.
+fn parse_add_request(raw: &str) -> Result<AddRequest, String> {
+    let value: serde_json::Value =
+        serde_json::from_str(raw).map_err(|e| format!("malformed request JSON: {e}"))?;
+    if value.get("operation_id").is_none() {
+        return serde_json::from_value(value).map_err(|e| format!("malformed request JSON: {e}"));
+    }
+    if value.get("schema_version").and_then(|v| v.as_str()) != Some("1.0") {
+        return Err("operation: schema_version must be \"1.0\"".to_string());
+    }
+    if value.get("status").and_then(|v| v.as_str()) != Some("received") {
+        return Err(
+            "operation: only an operation in the state \"received\" can become a mission"
+                .to_string(),
+        );
+    }
+    let id = value
+        .get("operation_id")
+        .and_then(|v| v.as_str())
+        .ok_or("operation: operation_id must be a string")?
+        .to_string();
+    let params = value
+        .get("params")
+        .and_then(|v| v.as_object())
+        .ok_or("operation: params must be an object")?;
+    let text = |key: &str| -> Result<String, String> {
+        match params.get(key) {
+            None => Ok(String::new()),
+            Some(v) => v
+                .as_str()
+                .map(str::to_string)
+                .ok_or_else(|| format!("operation: params.{key} must be a string")),
+        }
+    };
+    let priority = match params.get("priority") {
+        None => 0,
+        Some(v) => v
+            .as_i64()
+            .and_then(|n| i32::try_from(n).ok())
+            .ok_or("operation: params.priority must be an integer")?,
+    };
+    let depends_on = match params.get("depends_on") {
+        None => Vec::new(),
+        Some(v) => v
+            .as_array()
+            .and_then(|items| {
+                items
+                    .iter()
+                    .map(|item| item.as_str().map(str::to_string))
+                    .collect::<Option<Vec<_>>>()
+            })
+            .ok_or("operation: params.depends_on must be a list of strings")?,
+    };
+    Ok(AddRequest {
+        id,
+        priority,
+        required_tool: text("required_tool")?,
+        location: text("location")?,
+        depends_on,
+    })
+}
+
 fn handle_add(request: tiny_http::Request, state: &AppState, raw: &str) {
-    let req: AddRequest = match serde_json::from_str(raw) {
+    let req: AddRequest = match parse_add_request(raw) {
         Ok(r) => r,
         Err(e) => {
-            write_json(
-                request,
-                400,
-                &json!({"error": format!("malformed request JSON: {e}")}),
-            );
+            write_json(request, 400, &json!({"error": e}));
             return;
         }
     };
@@ -1398,6 +1459,64 @@ mod tests {
     }
     fn get(port: u16, path: &str) -> (u16, String) {
         request(port, "GET", path, "")
+    }
+
+    #[test]
+    fn an_operation_of_the_sdk_becomes_a_mission_with_the_spec_of_its_params() {
+        let request = parse_add_request(
+            r#"{"schema_version":"1.0","operation_id":"plan-abc","correlation_id":"c","kind":"execute_plan","target":{"kind":"cell","id":"cell-2"},"status":"received","requested_at_utc":"2024-01-01T00:00:00Z","updated_at_utc":"2024-01-01T00:00:00Z","params":{"priority":4,"required_tool":"Laser","location":"cell-2","depends_on":["prep"],"steps":[]}}"#,
+        )
+        .unwrap();
+        assert_eq!(request.id, "plan-abc");
+        assert_eq!(request.priority, 4);
+        assert_eq!(request.required_tool, "Laser");
+        assert_eq!(request.location, "cell-2");
+        assert_eq!(request.depends_on, vec!["prep".to_string()]);
+        // the keys the planner does not set stay at their defaults
+        let bare = parse_add_request(
+            r#"{"schema_version":"1.0","operation_id":"plan-x","status":"received","params":{}}"#,
+        )
+        .unwrap();
+        assert_eq!((bare.priority, bare.required_tool.as_str(), bare.depends_on.len()), (0, "", 0));
+        // a plain mission is read as before
+        let plain = parse_add_request(r#"{"id":"m1","priority":9}"#).unwrap();
+        assert_eq!((plain.id.as_str(), plain.priority), ("m1", 9));
+    }
+
+    #[test]
+    fn an_operation_that_is_not_new_or_not_well_formed_is_refused() {
+        let with = |schema: &str, status: &str, params: &str| {
+            parse_add_request(&format!(
+                r#"{{"schema_version":"{schema}","operation_id":"plan-x","status":"{status}","params":{params}}}"#
+            ))
+        };
+        assert!(with("1.0", "received", "{}").is_ok());
+        assert!(with("2.0", "received", "{}").unwrap_err().contains("schema_version"));
+        for status in ["authorized", "queued", "sent", "confirmed", "terminated", "rejected"] {
+            assert!(with("1.0", status, "{}").unwrap_err().contains("received"), "{status}");
+        }
+        assert!(with("1.0", "received", "[]").unwrap_err().contains("params"));
+        assert!(with("1.0", "received", r#"{"priority":"high"}"#).unwrap_err().contains("priority"));
+        assert!(with("1.0", "received", r#"{"priority":99999999999}"#).unwrap_err().contains("priority"));
+        assert!(with("1.0", "received", r#"{"required_tool":3}"#).unwrap_err().contains("required_tool"));
+        assert!(with("1.0", "received", r#"{"depends_on":"prep"}"#).unwrap_err().contains("depends_on"));
+        assert!(with("1.0", "received", r#"{"depends_on":["a",1]}"#).unwrap_err().contains("depends_on"));
+        assert!(parse_add_request(r#"{"operation_id":7,"schema_version":"1.0","status":"received","params":{}}"#).is_err());
+        assert!(parse_add_request("not json").unwrap_err().contains("malformed"));
+    }
+
+    #[test]
+    fn post_missions_takes_an_operation_and_posting_it_again_is_the_same_mission() {
+        let port = start_test_server();
+        let operation = r#"{"schema_version":"1.0","operation_id":"plan-abc","status":"received","params":{"priority":3}}"#;
+        let (status, body) = post(port, "/missions", operation);
+        assert_eq!(status, 200, "{body}");
+        assert!(body.contains("\"id\":\"plan-abc\""), "{body}");
+        assert_eq!(post(port, "/missions", operation).0, 200);
+        let (_, list) = get(port, "/missions");
+        assert_eq!(list.matches("plan-abc").count(), 1, "{list}");
+        let sent = r#"{"schema_version":"1.0","operation_id":"plan-def","status":"sent","params":{}}"#;
+        assert_eq!(post(port, "/missions", sent).0, 400);
     }
 
     #[test]

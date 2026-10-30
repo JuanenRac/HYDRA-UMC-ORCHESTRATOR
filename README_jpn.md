@@ -142,6 +142,8 @@ E-STOP を発行し、どのロボットがどのミッションを担当する�
 
 実際にビルドされたバイナリから取得した mission-demo/CLI の実例については [`docs/CLI_REFERENCE.md`](docs/CLI_REFERENCE.md) を参照してください。共有 `hydra.common.v1` gRPC 契約そのもの——その定義内容、このリポジトリに置かれている理由、各言語が自身のバインディングを生成する方法——については [`proto/README.md`](proto/README.md) を参照してください。
 
+**Operation からのミッション。** `POST /missions` は SDK 共通の Operation（`operation_id` を持つボディ）も受け付けます。これはセマンティックプランナーが渡す形で、オペレーションの id がミッションの id になり、`params` の `priority`・`required_tool`・`location`・`depends_on` がジョブの値になります。状態が `received` のオペレーションだけが受け付けられ、同じオペレーションを再送しても同じミッションです。
+
 ## 🚀 クイックスタート
 
 安定版の Rust ツールチェーン（エディション 2021）と `cargo` が必要です。

@@ -92,7 +92,7 @@ Real routes (`src/server.rs`'s own dispatch table):
 
 | Method | Path | Does |
 |---|---|---|
-| `POST` | `/missions` | Add a mission: `{"id": "..."}` (1 to 128 of `A-Z a-z 0-9 . _ -`), optionally `priority`, `requiredTool`, `location` and `dependsOn`, which travel to JOB-DISPATCHER so its tool-aware and multi-stage routing is used. Posting a mission that already exists and is still open submits it again (harmless, and a way to retry a submission that did not get through); one that already ended is `409` and is not sent to JOB-DISPATCHER |
+| `POST` | `/missions` | Add a mission: `{"id": "..."}` (1 to 128 of `A-Z a-z 0-9 . _ -`), optionally `priority`, `requiredTool`, `location` and `dependsOn`, which travel to JOB-DISPATCHER so its tool-aware and multi-stage routing is used. Posting a mission that already exists and is still open submits it again (harmless, and a way to retry a submission that did not get through); one that already ended is `409` and is not sent to JOB-DISPATCHER. The body may instead be the common Operation of the SDK (a body with `operation_id`, which is what the semantic planner hands over): the id of the operation is the id of the mission and `priority`, `required_tool`, `location` and `depends_on` are read from its `params`; only an operation with `schema_version` `1.0` in the state `received` is taken (anything else is a `400`) |
 | `GET` | `/missions` | List every mission; `?state=Pending` narrows by state, `?limit=N&offset=N` pages |
 | `GET` | `/missions/:id` | Get one mission |
 | `POST` | `/missions/:id/dispatch` | Assign the mission to a node (`{"node": "..."}`); the mission's `attempt` goes up by one. Refused with 409 when a job-dispatcher is configured (it owns the assignment): use `auto-dispatch` |
