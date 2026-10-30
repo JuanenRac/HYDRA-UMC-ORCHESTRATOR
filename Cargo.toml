@@ -2,6 +2,7 @@
 name = "hydra-umc-orchestrator"
 version = "0.1.9"
 edition = "2021"
+rust-version = "1.85"
 description = "Distributed system manager for multi-robot swarm coordination across the HYDRA-UMC ecosystem."
 license = "GPL-3.0-or-later"
 authors = ["JuanenRac (Electro Hobby 3D) <electrohobby3d@gmail.com>"]
