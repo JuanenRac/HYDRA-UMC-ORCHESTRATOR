@@ -1477,7 +1477,14 @@ mod tests {
             r#"{"schema_version":"1.0","operation_id":"plan-x","status":"received","params":{}}"#,
         )
         .unwrap();
-        assert_eq!((bare.priority, bare.required_tool.as_str(), bare.depends_on.len()), (0, "", 0));
+        assert_eq!(
+            (
+                bare.priority,
+                bare.required_tool.as_str(),
+                bare.depends_on.len()
+            ),
+            (0, "", 0)
+        );
         // a plain mission is read as before
         let plain = parse_add_request(r#"{"id":"m1","priority":9}"#).unwrap();
         assert_eq!((plain.id.as_str(), plain.priority), ("m1", 9));
@@ -1491,18 +1498,47 @@ mod tests {
             ))
         };
         assert!(with("1.0", "received", "{}").is_ok());
-        assert!(with("2.0", "received", "{}").unwrap_err().contains("schema_version"));
-        for status in ["authorized", "queued", "sent", "confirmed", "terminated", "rejected"] {
-            assert!(with("1.0", status, "{}").unwrap_err().contains("received"), "{status}");
+        assert!(with("2.0", "received", "{}")
+            .unwrap_err()
+            .contains("schema_version"));
+        for status in [
+            "authorized",
+            "queued",
+            "sent",
+            "confirmed",
+            "terminated",
+            "rejected",
+        ] {
+            assert!(
+                with("1.0", status, "{}").unwrap_err().contains("received"),
+                "{status}"
+            );
         }
-        assert!(with("1.0", "received", "[]").unwrap_err().contains("params"));
-        assert!(with("1.0", "received", r#"{"priority":"high"}"#).unwrap_err().contains("priority"));
-        assert!(with("1.0", "received", r#"{"priority":99999999999}"#).unwrap_err().contains("priority"));
-        assert!(with("1.0", "received", r#"{"required_tool":3}"#).unwrap_err().contains("required_tool"));
-        assert!(with("1.0", "received", r#"{"depends_on":"prep"}"#).unwrap_err().contains("depends_on"));
-        assert!(with("1.0", "received", r#"{"depends_on":["a",1]}"#).unwrap_err().contains("depends_on"));
-        assert!(parse_add_request(r#"{"operation_id":7,"schema_version":"1.0","status":"received","params":{}}"#).is_err());
-        assert!(parse_add_request("not json").unwrap_err().contains("malformed"));
+        assert!(with("1.0", "received", "[]")
+            .unwrap_err()
+            .contains("params"));
+        assert!(with("1.0", "received", r#"{"priority":"high"}"#)
+            .unwrap_err()
+            .contains("priority"));
+        assert!(with("1.0", "received", r#"{"priority":99999999999}"#)
+            .unwrap_err()
+            .contains("priority"));
+        assert!(with("1.0", "received", r#"{"required_tool":3}"#)
+            .unwrap_err()
+            .contains("required_tool"));
+        assert!(with("1.0", "received", r#"{"depends_on":"prep"}"#)
+            .unwrap_err()
+            .contains("depends_on"));
+        assert!(with("1.0", "received", r#"{"depends_on":["a",1]}"#)
+            .unwrap_err()
+            .contains("depends_on"));
+        assert!(parse_add_request(
+            r#"{"operation_id":7,"schema_version":"1.0","status":"received","params":{}}"#
+        )
+        .is_err());
+        assert!(parse_add_request("not json")
+            .unwrap_err()
+            .contains("malformed"));
     }
 
     #[test]
@@ -1515,7 +1551,8 @@ mod tests {
         assert_eq!(post(port, "/missions", operation).0, 200);
         let (_, list) = get(port, "/missions");
         assert_eq!(list.matches("plan-abc").count(), 1, "{list}");
-        let sent = r#"{"schema_version":"1.0","operation_id":"plan-def","status":"sent","params":{}}"#;
+        let sent =
+            r#"{"schema_version":"1.0","operation_id":"plan-def","status":"sent","params":{}}"#;
         assert_eq!(post(port, "/missions", sent).0, 400);
     }
 
