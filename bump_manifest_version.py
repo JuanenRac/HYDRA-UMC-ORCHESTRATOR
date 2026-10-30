@@ -54,10 +54,10 @@ def next_version(value: str) -> str:
     return f"{major}.{minor}.{patch}"
 
 
-_THREE_GROUPS = re.compile(r"(\([^()]*\))\\.(\([^()]*\))\\.(\([^()]*\))(?!\(\?:\\.)")
+_THREE_GROUPS = re.compile(r"(\([^()]*\))\\.(\([^()]*\))\\.(\([^()]*\))(?!\(\?:\\[.+])")
 
 
-def with_optional_fourth_group(pattern: str) -> str:
+def with_optional_fourth_group(pattern: str, separator: str = r"\.") -> str:
     """Let a native-version pattern also match a fourth `.N` component.
 
     Patterns are written for `MAJOR.MINOR.PATCH`; the same text with an
@@ -68,17 +68,87 @@ def with_optional_fourth_group(pattern: str) -> str:
     match = _THREE_GROUPS.search(pattern)
     if match is None:
         return pattern
-    return pattern[: match.end()] + r"(?:\." + match.group(3) + ")?" + pattern[match.end() :]
+    return pattern[: match.end()] + "(?:" + separator + match.group(3) + ")?" + pattern[match.end() :]
 
 
-def widen_pattern(pattern: str | dict[str, str]) -> str | dict[str, str]:
-    """The pattern to store once the version has four components."""
-    if isinstance(pattern, dict):
+# Some native files cannot hold a fourth component. The manifest and the changelog always keep all four;
+# the native file receives a fixed translation of them:
+#   plain   a.b.c.d  ->  a.b.c.d        (Python, Go, properties files ...)
+#   cargo   a.b.c.d  ->  a.b.c+d        (Cargo.toml and Cargo.lock: the fourth component is semver build metadata)
+#   pubspec a.b.c.d  ->  a.b.c+N        (pubspec.yaml: the fourth component is not stored; +N is the build number,
+#                                        a plain counter raised by one on every bump)
+# Reading goes the other way, so a cargo file reads back as four components and a pubspec as three.
+def native_style(source: Path) -> str:
+    return {"Cargo.toml": "cargo", "pubspec.yaml": "pubspec"}.get(source.name, "plain")
+
+
+def to_native(version: str, style: str) -> str:
+    parts = version.split(".")
+    if len(parts) < 4 or style == "plain":
+        return version
+    if style == "cargo":
+        return ".".join(parts[:3]) + "+" + parts[3]
+    if style == "pubspec":
+        return ".".join(parts[:3])
+    raise ValueError(f"unknown native version style: {style}")
+
+
+def same_version(native: str, declared: str, style: str) -> bool:
+    """Whether the version read from the native file is the manifest one, as that file can express it."""
+    return to_native(declared, style) == to_native(native, style) if style == "pubspec" else native == declared
+
+
+def style_separator(style: str) -> str:
+    return r"\+" if style == "cargo" else r"\."
+
+
+def bump_pubspec_build(text: str) -> str:
+    """Raise the `+N` build number of `version: a.b.c+N` by one (a monotonic counter, no carry)."""
+    return re.sub(r"(?m)^(version:\s*\d+\.\d+\.\d+\+)(\d+)", lambda m: m.group(1) + str(int(m.group(2)) + 1), text, count=1)
+
+
+def sync_cargo_lock(version: str, cargo_text: str) -> bool:
+    """Carry the package's own entry in Cargo.lock along with Cargo.toml (the lock names the package first)."""
+    lock_path = ROOT / "Cargo.lock"
+    name = re.search(r'(?ms)^\[package\].*?^name\s*=\s*"([^"]+)"', cargo_text)
+    if not lock_path.is_file() or name is None:
+        return False
+    with open(lock_path, encoding="utf-8", newline="") as handle:
+        raw = handle.read()
+    eol = r'\r?\n'
+    pattern = re.compile(r'(?m)(^name = ' + re.escape('"' + name.group(1) + '"') + eol + r'version = ")[^"]*(")')
+    new_raw = pattern.sub(lambda m: m.group(1) + version + m.group(2), raw, count=1)
+    if new_raw == raw:
+        return False
+    lock_path.write_text(new_raw, encoding="utf-8", newline="")
+    return True
+
+
+def sync_app_version_dart(pubspec_text: str) -> bool:
+    """Regenerate lib/app_version.dart (the constants the app shows) from pubspec.yaml, when the app has that file."""
+    target = ROOT / "lib" / "app_version.dart"
+    match = re.search(r"(?m)^version:\s*(\d+\.\d+\.\d+)\+(\d+)", pubspec_text)
+    if not target.is_file() or match is None:
+        return False
+    name, build = match.group(1), match.group(2)
+    old = target.read_text(encoding="utf-8")
+    new = re.sub(r"const String kAppVersion = '[^']*';", f"const String kAppVersion = '{name}';", old)
+    new = re.sub(r"const int kAppBuildNumber = \d+;", f"const int kAppBuildNumber = {build};", new)
+    new = re.sub(r"const String kAppVersionFull = '[^']*';", f"const String kAppVersionFull = '{name}+{build}';", new)
+    if new == old:
+        return False
+    target.write_text(new, encoding="utf-8", newline="")
+    return True
+
+
+def widen_pattern(pattern: str | dict[str, str], style: str = "plain") -> str | dict[str, str]:
+    """The pattern to store once the version has four components (a pubspec keeps three: see above)."""
+    if isinstance(pattern, dict) or style == "pubspec":
         return pattern
-    return with_optional_fourth_group(pattern)
+    return with_optional_fourth_group(pattern, style_separator(style))
 
 
-def read_version(text: str, pattern: str | dict[str, str]) -> str:
+def read_version(text: str, pattern: str | dict[str, str], style: str = "plain") -> str:
     if isinstance(pattern, dict):
         fields: dict[str, str] = {}
         for key in ("major", "minor", "patch"):
@@ -94,7 +164,8 @@ def read_version(text: str, pattern: str | dict[str, str]) -> str:
             if build is not None:
                 version += "." + build.group(1)
         return version
-    match = re.search(with_optional_fourth_group(pattern), text, re.MULTILINE)
+    widened = pattern if style == "pubspec" else with_optional_fourth_group(pattern, style_separator(style))
+    match = re.search(widened, text, re.MULTILINE)
     if match is None or len(match.groups()) < 3:
         raise ValueError("native version was not found")
     parts = [match.group(index) for index in (1, 2, 3)]
@@ -103,7 +174,7 @@ def read_version(text: str, pattern: str | dict[str, str]) -> str:
     return ".".join(parts)
 
 
-def replace_version(text: str, pattern: str | dict[str, str], version: str) -> str:
+def replace_version(text: str, pattern: str | dict[str, str], version: str, style: str = "plain") -> str:
     values = version.split(".")
     if isinstance(pattern, dict):
         keys = ("major", "minor", "patch", "build")[: len(values)]
@@ -121,9 +192,11 @@ def replace_version(text: str, pattern: str | dict[str, str], version: str) -> s
         for start, end, value in sorted(replacements, reverse=True):
             text = text[:start] + value + text[end:]
         return text
-    match = re.search(with_optional_fourth_group(pattern), text, re.MULTILINE)
+    widened = pattern if style == "pubspec" else with_optional_fourth_group(pattern, style_separator(style))
+    match = re.search(widened, text, re.MULTILINE)
     if match is None or len(match.groups()) < 3:
         raise ValueError("native version was not found")
+    version = to_native(version, style)
     last = 4 if len(match.groups()) >= 4 and match.group(4) is not None else 3
     return text[: match.start(1)] + version + text[match.end(last) :]
 
@@ -229,6 +302,14 @@ def sync_version_mirrors(old: str, new: str) -> list[str]:
     return changed
 
 
+def finish(source: Path, style: str, version: str, text: str) -> None:
+    """Everything that follows the native file: the lock file and the generated constants."""
+    if style == "cargo":
+        sync_cargo_lock(to_native(version, style), text)
+    elif style == "pubspec":
+        sync_app_version_dart(text)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -246,56 +327,63 @@ def main() -> int:
             raise ValueError("manifest lacks version or native_version")
         source = ROOT / str(native["file"])
         pattern = native["pattern"]
+        style = native_style(source)
         source_text = source.read_text(encoding="utf-8", errors="replace")
-        current = read_version(source_text, pattern)
+        current = read_version(source_text, pattern, style)
     except (OSError, KeyError, TypeError, json.JSONDecodeError, ValueError) as exc:
         print(f"ERROR: {exc}")
         return 1
 
     if args.sync:
-        if current == declared:
-            added = ensure_changelog_version(current)
+        if same_version(current, declared, style):
+            added = ensure_changelog_version(declared)
             if added:
-                print(f"Changelog synchronized: {current}")
-            sync_package_lock(current)
-            print(f"HYDRA-UMC version: v{current} -> v{current} (already synchronized)")
+                print(f"Changelog synchronized: {declared}")
+            sync_package_lock(declared)
+            finish(source, style, declared, source_text)
+            print(f"HYDRA-UMC version: v{declared} -> v{declared} (already synchronized)")
             return 0
         expected = next_version(declared)
-        if current != expected:
+        if not same_version(current, expected, style):
             if expected != current + ".0":
                 print(f"ERROR: native version {current} is not the next version after manifest {declared}")
                 return 1
             # A per-project bump script produced the last three-part version;
             # the ecosystem rule appends the fourth component.
-            source.write_text(replace_version(source_text, pattern, expected), encoding="utf-8")
-            manifest["native_version"]["pattern"] = widen_pattern(pattern)
+            source_text = replace_version(source_text, pattern, expected, style)
+            source.write_text(source_text, encoding="utf-8")
+            manifest["native_version"]["pattern"] = widen_pattern(pattern, style)
             sync_version_mirrors(current, expected)
-            current = expected
+        current = expected
         manifest["version"] = current
         write_manifest(manifest)
         ensure_changelog_version(current)
         sync_package_lock(current)
+        finish(source, style, current, source_text)
         print(f"HYDRA-UMC version: v{declared} -> v{current}")
         return 0
 
-    if current != declared:
+    if not same_version(current, declared, style):
         print(f"ERROR: native version {current} differs from manifest {declared}; run validation or use --sync after one native bump")
         return 1
-    new = next_version(current)
+    new = next_version(declared)
     try:
-        updated_text = replace_version(source_text, pattern, new)
+        updated_text = replace_version(source_text, pattern, new, style)
     except ValueError as exc:
         print(f"ERROR: cannot write {new}: {exc}")
         return 1
+    if style == "pubspec":
+        updated_text = bump_pubspec_build(updated_text)
     source.write_text(updated_text, encoding="utf-8")
     sync_version_mirrors(current, new)
     if new.count(".") == 3:
-        manifest["native_version"]["pattern"] = widen_pattern(pattern)
+        manifest["native_version"]["pattern"] = widen_pattern(pattern, style)
     manifest["version"] = new
     write_manifest(manifest)
     ensure_changelog_version(new)
     sync_package_lock(new)
-    print(f"HYDRA-UMC version: v{current} -> v{new}")
+    finish(source, style, new, updated_text)
+    print(f"HYDRA-UMC version: v{declared} -> v{new}")
     return 0
 
 

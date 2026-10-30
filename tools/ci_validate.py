@@ -156,7 +156,7 @@ def fail(message: str) -> None:
     raise SystemExit(1)
 
 
-_THREE_GROUPS = re.compile(r"(\([^()]*\))\\\.(\([^()]*\))\\\.(\([^()]*\))(?!\(\?:\\\.)")
+_THREE_GROUPS = re.compile(r"(\([^()]*\))\\\.(\([^()]*\))\\\.(\([^()]*\))(?!\(\?:\\[.+])")
 
 
 def _with_optional_fourth_group(pattern: str) -> str:
@@ -164,7 +164,7 @@ def _with_optional_fourth_group(pattern: str) -> str:
     match = _THREE_GROUPS.search(pattern)
     if match is None:
         return pattern
-    return pattern[: match.end()] + r"(?:\." + match.group(3) + ")?" + pattern[match.end() :]
+    return pattern[: match.end()] + r"(?:[.+]" + match.group(3) + ")?" + pattern[match.end() :]
 
 
 def read_native_version(text: str, pattern: str | dict[str, str]) -> str:
@@ -367,7 +367,12 @@ def main() -> int:
         native_version = read_native_version(native_text, native["pattern"])
     except (KeyError, OSError, TypeError, ValueError, re.error) as exc:
         fail(f"cannot validate native version: {exc}")
-    if native_version != manifest["version"]:
+    if Path(str(native["file"])).name == "pubspec.yaml":
+        # a Flutter version name has three components (the build number follows the plus sign)
+        same = native_version == ".".join(manifest["version"].split(".")[:3])
+    else:
+        same = native_version == manifest["version"]
+    if not same:
         fail(f"native version {native_version} differs from manifest {manifest['version']}")
 
     changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8", errors="replace")

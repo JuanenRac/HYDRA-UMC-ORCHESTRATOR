@@ -41,7 +41,6 @@ import importlib.util
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -116,6 +115,38 @@ def _version_key(value: str) -> tuple[int, ...]:
     return tuple(int(part) for part in value.split("."))
 
 
+# What each toolchain accepts in its own version field. The manifest, the CHANGELOG and the tags always keep the four
+# components from 0.8.0; these files get a fixed translation of them (see bump_manifest_version.py): Cargo
+# "a.b.c+d" (semver build metadata, the same in Cargo.lock) and Flutter "a.b.c+N" (N is the build number).
+_NATIVE_FORMATS = {
+    "Cargo.toml": (re.compile(r'(?m)^version\s*=\s*"([^"]*)"'), re.compile(r"^\d+\.\d+\.\d+(?:\+\d+)?$"), "a.b.c or a.b.c+d"),
+    "pubspec.yaml": (re.compile(r"(?m)^version:\s*(\S+)"), re.compile(r"^\d+\.\d+\.\d+\+\d+$"), "a.b.c+N"),
+}
+
+
+def native_version_problem(root: Path = ROOT) -> str | None:
+    """A message when the version in the native file is one its toolchain would reject, else None.
+
+    Cargo and Flutter do not accept four dotted components; writing one breaks the build without warning, so the bump
+    and `doctor` refuse it with a clear message instead.
+    """
+    try:
+        native = json.loads((root / "hydra-umc.project.json").read_text(encoding="utf-8")).get("native_version") or {}
+        name = Path(str(native.get("file", ""))).name
+    except (OSError, json.JSONDecodeError):
+        return None
+    if name not in _NATIVE_FORMATS:
+        return None
+    finder, accepted, shape = _NATIVE_FORMATS[name]
+    path = root / str(native["file"])
+    match = finder.search(path.read_text(encoding="utf-8", errors="replace")) if path.is_file() else None
+    if match is None:
+        return f"{native['file']} has no version line"
+    if not accepted.match(match.group(1)):
+        return f"{native['file']} holds {match.group(1)!r}, which {name.split('.')[0]} cannot build; it must look like {shape}"
+    return None
+
+
 def bump(root: Path = ROOT, allow_dirty: bool = False, dry_run: bool = False) -> int:
     before = declared_version(root)
     wanted = next_version(root)
@@ -130,17 +161,12 @@ def bump(root: Path = ROOT, allow_dirty: bool = False, dry_run: bool = False) ->
         return 1
     env = {key: value for key, value in os.environ.items() if key != "HYDRA_UMC_CI"}
     own = next((p for p in (root / "bump_version.py", root / "tools" / "bump_version.py") if p.is_file()), None)
-    dart_bump = root / "tool" / "bump_version.dart"
     if own is not None:
         steps = [[sys.executable, str(own)]]
         if wanted is not None:
             steps.append([sys.executable, str(root / "bump_manifest_version.py"), "--sync"])
-    elif dart_bump.is_file():
-        # a Flutter app: its own Dart script moves pubspec.yaml (version and build number), then the manifest follows
-        steps = [[shutil.which("dart") or "dart", "run", "tool/bump_version.dart"]]
-        if wanted is not None:
-            steps.append([sys.executable, str(root / "bump_manifest_version.py"), "--sync"])
     else:
+        # no bump script of its own (a Flutter app too): the shared utility moves the native file and the manifest
         if wanted is None:
             print("PROJECT_TOOL=FAIL this repository has neither bump_version.py nor bump_manifest_version.py", file=sys.stderr)
             return 1
@@ -151,6 +177,10 @@ def bump(root: Path = ROOT, allow_dirty: bool = False, dry_run: bool = False) ->
         if _run(step, root, env) != 0:
             print("PROJECT_TOOL=FAIL the bump step failed; check git status before retrying", file=sys.stderr)
             return 1
+    problem = native_version_problem(root)
+    if problem:
+        print(f"PROJECT_TOOL=FAIL {problem}; restore it with git and report this", file=sys.stderr)
+        return 1
     after = declared_version(root)
     if wanted is not None and after != wanted:
         print(f"PROJECT_TOOL=FAIL expected {wanted} after the bump but the manifest says {after}", file=sys.stderr)
@@ -232,6 +262,9 @@ def doctor_manifest(root: Path, environment: dict[str, str]) -> list[Finding]:
         findings.append((f"name {manifest.get('name')!r} differs from the directory {root.name!r}", "make the manifest name the repository name"))
     if not isinstance(manifest.get("version"), str) or not _VERSION.match(manifest["version"]):
         findings.append((f"version {manifest.get('version')!r} is not MAJOR.MINOR.PATCH", "write the version as numbers separated by dots"))
+    problem = native_version_problem(root)
+    if problem:
+        findings.append((problem, "restore the native version file from git; the toolchain only accepts its own form"))
     for key, allowed in MANIFEST_ENUMS.items():
         if key in manifest and manifest[key] not in allowed:
             findings.append((f"{key} {manifest[key]!r} is not one of {', '.join(allowed)}", f"choose a valid {key}"))
