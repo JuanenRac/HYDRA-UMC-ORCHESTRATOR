@@ -134,7 +134,7 @@ def read_table(text: str) -> tuple[int, list[list[str]]] | None:
                 start = index
     if start is None:
         return None
-    block, first = [], None
+    block = []
     for index in range(start + 1, len(lines)):
         if lines[index].startswith("## "):
             break
@@ -311,7 +311,7 @@ def patch_armor_source(root: Path, wanted: list[str]) -> str | None:
     if len(pairs) != len(wanted):
         fail(f"{source.name}: {len(pairs)} rows in the source but {len(wanted)} in the README")
     out, last = [], 0
-    for match, light in zip(pairs, wanted):
+    for match, light in zip(pairs, wanted, strict=True):
         out.append(block[last:match.start(3)] + WORDS[light])
         last = match.end(3)
     out.append(block[last:])
@@ -353,12 +353,12 @@ def patch_urtc_source(root: Path, wanted: list[str]) -> list[str]:
         marker = text.find("OWN_ROWS")
         parts = re.split(r'(\n    "[a-z]{2}": \[)', text[marker:])
         rebuilt = [text[:marker], parts[0]]
-        for header, chunk in zip(parts[1::2], parts[2::2]):
+        for header, chunk in zip(parts[1::2], parts[2::2], strict=True):
             rows = list(re.finditer(r'(\n        \("(?:[^"\\]|\\.)*", ")([' + "".join(ORDER) + r'])(")', chunk))
             if len(rows) != len(wanted):
                 fail(f"status.py: {len(rows)} rows in a language but {len(wanted)} in the README")
             out, last = [], 0
-            for match, light in zip(rows, wanted):
+            for match, light in zip(rows, wanted, strict=True):
                 out.append(chunk[last:match.start(2)] + light)
                 last = match.end(2)
             out.append(chunk[last:])
@@ -398,7 +398,7 @@ def apply(root: Path, state: dict, allow_raise: bool) -> int:
         touched = ([armor] if armor else []) + patch_urtc_source(root, wanted)
         for path in touched:
             print(f"source updated: {path}")
-        for item, light in zip(state["items"], wanted):
+        for item, light in zip(state["items"], wanted, strict=True):
             if item["light"] != light:
                 print(f"{root.name}: {item['label']}: {WORDS[item['light']]} -> {WORDS[light]} ({item['why']})")
     return changed
