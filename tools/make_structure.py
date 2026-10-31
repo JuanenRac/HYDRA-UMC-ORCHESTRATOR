@@ -295,7 +295,7 @@ def build_svg(spec: dict, lang: str) -> str:
     cv.text(60, 62, EYEBROW[lang], 12.5, colors[1], sans, "600", spacing=4.5 if lang not in ("ja", "zh") else 3, bound=title_bound)
     name_size = min(36.0, 1000 / (len(spec["repo"]) * 0.66))
     cv.text(60, 106, spec["repo"], round(name_size, 1), "#FFFFFF", sans, "700", spacing=0.5, bound=title_bound)
-    add(f'<rect x="60" y="122" width="150" height="2.5" rx="1.25" fill="url(#line)"><animate attributeName="width" values="40;150;150" keyTimes="0;0.4;1" dur="3s" repeatCount="indefinite"/></rect>')
+    add('<rect x="60" y="122" width="150" height="2.5" rx="1.25" fill="url(#line)"><animate attributeName="width" values="40;150;150" keyTimes="0;0.4;1" dur="3s" repeatCount="indefinite"/></rect>')
     tagline = L(spec.get("tagline"), lang) if spec.get("tagline") else TAGLINE[lang]
     cv.text(60, 152, tagline, 13.5, "#8A97A6", bound=title_bound)
 
@@ -416,7 +416,7 @@ def run(root: Path, check: bool, readmes: bool, tree: str | None, langs: list[st
             return 0
         pictures = picture_languages(spec, langs)
         svgs = {lang: build_svg(spec, lang) for lang in pictures}
-        for lang, svg in svgs.items():
+        for svg in svgs.values():
             K.validate_xml(svg)
         trees = {lang: render_tree(spec, lang) for lang in K.LANGUAGES}   # raises when a language lacks a description
     except (SpecError, ValueError) as error:
