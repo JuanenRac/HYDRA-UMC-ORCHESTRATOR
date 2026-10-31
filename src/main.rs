@@ -43,6 +43,8 @@ mod job_dispatcher;
 mod logging;
 mod mission;
 mod outbox;
+mod plan;
+mod replica;
 mod server;
 
 use mission::{CancelOutcome, MissionRegistry, MissionState};

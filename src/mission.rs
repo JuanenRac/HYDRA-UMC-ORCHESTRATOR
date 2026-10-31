@@ -243,6 +243,9 @@ pub struct Mission {
     // which finished missions are the oldest when they are compacted
     #[serde(default, skip_serializing_if = "is_zero_u64")]
     pub finished_at_ms: u64,
+    // the plan this mission is a stage of (see plan.rs); absent for a plain mission
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan: Option<String>,
 }
 
 fn is_zero_u64(value: &u64) -> bool {
@@ -269,6 +272,7 @@ impl Mission {
             remote_close_confirmed: true,
             spec: JobSpec::default(),
             finished_at_ms: 0,
+            plan: None,
         }
     }
 
@@ -666,6 +670,17 @@ impl MissionRegistry {
         self.missions.entry(id.clone()).or_insert_with(|| {
             let mut mission = Mission::new(id);
             mission.spec = spec;
+            mission
+        })
+    }
+
+    /// Like `add_with_spec`, for a stage of `plan`. An existing mission is returned as it is.
+    pub fn add_stage(&mut self, id: impl Into<String>, spec: JobSpec, plan: &str) -> &mut Mission {
+        let id = id.into();
+        self.missions.entry(id.clone()).or_insert_with(|| {
+            let mut mission = Mission::new(id);
+            mission.spec = spec;
+            mission.plan = Some(plan.to_string());
             mission
         })
     }

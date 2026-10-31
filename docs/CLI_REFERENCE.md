@@ -178,3 +178,25 @@ inbound endpoint NODE-HEALING's own `OrchestratorReactor` calls today. What
 remains genuinely unimplemented: no gRPC transport of any kind (every real
 integration above is plain HTTP/JSON, not `hydra.common.v1` gRPC), and no
 outbound call to NODE-HEALING or SWARM-SYNC from this side.
+
+## Multi-stage plans (`POST /plans`)
+
+A plan is a graph of stages: `{"id": "board-7", "stages": [{"id": "mill", "priority": 2, "requiredTool": "Spindle"}, {"id": "drill", "dependsOn": ["mill"]}]}`.
+It is checked once, when it is accepted: the plan id and the stage ids are made of `A-Z a-z 0-9 _ -` (the dot separates them), no stage appears twice, every
+`dependsOn` names a stage of the plan, there is no cycle and there are at most 64 stages; anything else is a `400` and nothing is created. Each stage becomes an
+ordinary mission with the id `<plan>.<stage>` and the full ids of its predecessors as `dependsOn`, so the job-dispatcher releases a stage when the ones before it are
+done; posting the same plan again keeps the stages that exist, and a stage id that already belongs to another mission is a `409`.
+
+`GET /plans/{id}` answers the state of the plan (`pending`, `running`, `completed`, `failed` or `cancelled`) and, for each stage, its state, its `dependsOn`
+and `blocked_by`: the stages that failed or were cancelled and hold it back, directly or through other stages (a pending stage held back shows the state
+`Blocked`). A failed stage does not fail the rest: the stages after it wait, the plan reports `failed`, and nothing after it runs on its own. `GET /plans` lists the plans.
+Without a job-dispatcher, `POST /missions/{id}/dispatch` of a stage answers `409` (`waitingFor`) until every predecessor is completed.
+
+## Replicating the registry (`GET /replica`)
+
+`GET /replica` (`?owner=NAME`, default `orchestrator`) exports every mission as the record HYDRA-UMC-SWARM-SYNC replicates under `mission/<id>`:
+`{"mission_id", "status", "owner", "attempt"}` with the generation `attempt + 1`, which the swarm-sync map compares before the clock, so a newer attempt wins on every node
+whatever the clocks say. The record carries no routing hints: the job-dispatcher holds the jobs. `src/replica.rs` also has the takeover: from the records, a mission that was in flight is put back to
+`Pending` with a higher attempt only when its old holder confirmed that it stopped, and stays `Unknown` otherwise, so it is not dispatched twice. No route runs the takeover yet: the
+confirmation from the robot has no contract.
+

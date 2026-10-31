@@ -355,6 +355,13 @@ fn serve(server: &Server, state: &AppState) {
                 let raw = body_or_reply!(request);
                 handle_fail(request, state, id, &raw);
             }
+            (Method::Get, ["replica"]) => handle_replica(request, state, &url),
+            (Method::Get, ["plans"]) => handle_plan_list(request, state),
+            (Method::Get, ["plans", id]) => handle_plan_get(request, state, id),
+            (Method::Post, ["plans"]) => {
+                let raw = body_or_reply!(request);
+                handle_plan_add(request, state, &raw);
+            }
             (Method::Post, ["nodes", node, "recover"]) => handle_recover(request, state, node),
             (Method::Get, ["stats"]) => handle_stats(request, state),
             _ => write_json(request, 404, &json!({"error": "not found"})),
@@ -566,6 +573,133 @@ fn handle_add(request: tiny_http::Request, state: &AppState, raw: &str) {
     );
 }
 
+/// `POST /plans`: a graph of stages becomes one mission per stage (`<plan>.<stage>`, with the `dependsOn` of the graph). Posting the same
+/// plan again is the same plan: the stages that exist are kept as they are and the submission to the job-dispatcher is repeated.
+fn handle_plan_add(request: tiny_http::Request, state: &AppState, raw: &str) {
+    let plan_request: crate::plan::PlanRequest = match serde_json::from_str(raw) {
+        Ok(r) => r,
+        Err(e) => {
+            write_json(
+                request,
+                400,
+                &json!({"error": format!("malformed request JSON: {e}")}),
+            );
+            return;
+        }
+    };
+    let order = match crate::plan::validate(&plan_request) {
+        Ok(order) => order,
+        Err(e) => {
+            write_json(request, 400, &json!({"error": e}));
+            return;
+        }
+    };
+    let mut specs: Vec<(String, JobSpec)> = Vec::new();
+    {
+        let mut reg = state.registry.lock().unwrap();
+        // a stage id that is already a mission of something else must not be taken over
+        for stage in &plan_request.stages {
+            let id = crate::plan::stage_mission_id(&plan_request.id, &stage.id);
+            if let Some(existing) = reg.get(&id) {
+                if existing.plan.as_deref() != Some(plan_request.id.as_str()) {
+                    drop(reg);
+                    write_json(
+                        request,
+                        409,
+                        &json!({"error": format!("mission {id:?} already exists and is not a stage of this plan")}),
+                    );
+                    return;
+                }
+            }
+        }
+        for &i in &order {
+            let stage = &plan_request.stages[i];
+            let spec = JobSpec {
+                priority: stage.priority,
+                required_tool: stage.required_tool.clone(),
+                location: stage.location.clone(),
+                depends_on: stage
+                    .depends_on
+                    .iter()
+                    .map(|d| crate::plan::stage_mission_id(&plan_request.id, d))
+                    .collect(),
+            };
+            let id = crate::plan::stage_mission_id(&plan_request.id, &stage.id);
+            let mission = reg.add_stage(id.clone(), spec, &plan_request.id);
+            specs.push((id, mission.spec.clone()));
+        }
+        reg.persist();
+    }
+    // Stages are submitted in an order in which every job comes after the jobs it waits for.
+    let submissions: Vec<serde_json::Value> = specs
+        .iter()
+        .map(|(id, spec)| {
+            let mut result = submit_to_job_dispatcher_if_configured(state, id, spec);
+            result["mission"] = json!(id);
+            result
+        })
+        .collect();
+    let view = plan_view(state, &plan_request.id);
+    write_json(
+        request,
+        200,
+        &json!({"plan": view, "jobDispatcher": submissions}),
+    );
+}
+
+/// `GET /replica`: every mission as the record HYDRA-UMC-SWARM-SYNC replicates under `mission/<id>` (see `replica.rs`). `?owner=NAME`
+/// names this orchestrator as the owner of the missions no robot holds (default `orchestrator`).
+fn handle_replica(request: tiny_http::Request, state: &AppState, url: &str) {
+    let owner = url
+        .split_once('?')
+        .map(|(_, q)| q)
+        .unwrap_or("")
+        .split('&')
+        .find_map(|pair| pair.strip_prefix("owner="))
+        .map(percent_decode)
+        .unwrap_or_else(|| "orchestrator".to_string());
+    if owner.trim().is_empty() || owner.len() > 64 || owner.chars().any(char::is_control) {
+        write_json(
+            request,
+            400,
+            &json!({"error": "owner must be 1 to 64 printable characters"}),
+        );
+        return;
+    }
+    let reg = state.registry.lock().unwrap();
+    let records = crate::replica::records(&reg, &owner);
+    write_json(request, 200, &json!({"records": records}));
+}
+
+fn plan_view(state: &AppState, plan: &str) -> Option<crate::plan::PlanView> {
+    let reg = state.registry.lock().unwrap();
+    let stages: Vec<&crate::mission::Mission> = reg
+        .all()
+        .filter(|m| m.plan.as_deref() == Some(plan))
+        .collect();
+    crate::plan::view(plan, &stages)
+}
+
+fn handle_plan_get(request: tiny_http::Request, state: &AppState, id: &str) {
+    match plan_view(state, id) {
+        Some(view) => write_json(request, 200, &serde_json::to_value(view).unwrap()),
+        None => write_json(request, 404, &json!({"error": format!("no plan {id:?}")})),
+    }
+}
+
+fn handle_plan_list(request: tiny_http::Request, state: &AppState) {
+    let ids: std::collections::BTreeSet<String> = {
+        let reg = state.registry.lock().unwrap();
+        reg.all().filter_map(|m| m.plan.clone()).collect()
+    };
+    let plans: Vec<serde_json::Value> = ids
+        .iter()
+        .filter_map(|id| plan_view(state, id))
+        .map(|v| json!({"plan": v.plan, "status": v.status, "stages": v.stages.len()}))
+        .collect();
+    write_json(request, 200, &json!({"plans": plans}));
+}
+
 /// Returns a real, honest status string for the mission's own JSON
 /// response - never silently swallowed, so a caller can tell "queued
 /// for real routing" apart from "Job-Dispatcher wasn't configured/was
@@ -657,6 +791,19 @@ fn handle_dispatch(request: tiny_http::Request, state: &AppState, id: &str, raw:
         }
     };
     let mut reg = state.registry.lock().unwrap();
+    if let Some(stage) = reg.get(id) {
+        if let Some(waiting) =
+            crate::plan::waiting_for(stage, |dep| reg.get(dep).map(|m| m.state.clone()))
+        {
+            drop(reg);
+            write_json(
+                request,
+                409,
+                &json!({"error": format!("this stage waits for {waiting:?}, which is not completed"), "waitingFor": waiting}),
+            );
+            return;
+        }
+    }
     let Some(mission) = reg.get_mut(id) else {
         write_json(
             request,
@@ -2646,5 +2793,160 @@ mod tests {
 
     fn get_url(port: u16, path: &str) -> String {
         request(port, "GET", path, "").1
+    }
+
+    // ---- multi-stage plans (plan.rs) ----
+
+    const PLAN: &str = r#"{"id":"board-7","stages":[
+        {"id":"mill","priority":2,"requiredTool":"Spindle"},
+        {"id":"drill","dependsOn":["mill"]},
+        {"id":"inspect","dependsOn":["drill"]}]}"#;
+
+    fn json_of(body: &str) -> serde_json::Value {
+        serde_json::from_str(body).unwrap()
+    }
+
+    #[test]
+    fn a_plan_becomes_one_mission_per_stage_and_posting_it_again_changes_nothing() {
+        let port = start_test_server();
+        let (status, body) = post(port, "/plans", PLAN);
+        assert_eq!(status, 200, "{body}");
+        let first = json_of(&body);
+        assert_eq!(first["plan"]["status"], "pending");
+        assert_eq!(first["plan"]["stages"].as_array().unwrap().len(), 3);
+        let (_, mission) = get(port, "/missions/board-7.drill");
+        let mission = json_of(&mission);
+        assert_eq!(mission["spec"]["dependsOn"][0], "board-7.mill");
+        assert_eq!(mission["plan"], "board-7");
+        let (_, mill) = get(port, "/missions/board-7.mill");
+        assert_eq!(json_of(&mill)["spec"]["priority"], 2);
+        assert_eq!(post(port, "/plans", PLAN).0, 200);
+        let (_, list) = get(port, "/missions");
+        assert_eq!(json_of(&list)["missions"].as_array().unwrap().len(), 3);
+        let (_, plans) = get(port, "/plans");
+        assert_eq!(json_of(&plans)["plans"][0]["plan"], "board-7");
+        assert_eq!(get(port, "/plans/ghost").0, 404);
+    }
+
+    #[test]
+    fn a_bad_plan_is_a_400_and_creates_nothing() {
+        let port = start_test_server();
+        let cycle =
+            r#"{"id":"p","stages":[{"id":"a","dependsOn":["b"]},{"id":"b","dependsOn":["a"]}]}"#;
+        let (status, body) = post(port, "/plans", cycle);
+        assert_eq!(status, 400);
+        assert!(body.contains("cycle"), "{body}");
+        assert_eq!(post(port, "/plans", "not json").0, 400);
+        assert_eq!(post(port, "/plans", r#"{"id":"p","stages":[]}"#).0, 400);
+        assert_eq!(
+            post(
+                port,
+                "/plans",
+                r#"{"id":"p","stages":[{"id":"a","dependsOn":["x"]}]}"#
+            )
+            .0,
+            400
+        );
+        let (_, list) = get(port, "/missions");
+        assert!(json_of(&list)["missions"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_stage_id_that_belongs_to_another_mission_is_not_taken_over() {
+        let port = start_test_server();
+        post(port, "/missions", r#"{"id":"p.a"}"#);
+        let (status, body) = post(
+            port,
+            "/plans",
+            r#"{"id":"p","stages":[{"id":"a"},{"id":"b"}]}"#,
+        );
+        assert_eq!(status, 409, "{body}");
+        let (_, list) = get(port, "/missions");
+        assert_eq!(json_of(&list)["missions"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn without_a_job_dispatcher_a_stage_is_dispatched_only_after_its_predecessors_completed() {
+        let port = start_test_server();
+        post(port, "/plans", PLAN);
+        let (status, body) = post(port, "/missions/board-7.drill/dispatch", r#"{"node":"n1"}"#);
+        assert_eq!(status, 409, "{body}");
+        assert_eq!(json_of(&body)["waitingFor"], "board-7.mill");
+        assert_eq!(
+            post(port, "/missions/board-7.mill/dispatch", r#"{"node":"n1"}"#).0,
+            200
+        );
+        post(port, "/missions/board-7.mill/start", "");
+        // still running: the next stage keeps waiting
+        assert_eq!(
+            post(port, "/missions/board-7.drill/dispatch", r#"{"node":"n1"}"#).0,
+            409
+        );
+        assert_eq!(post(port, "/missions/board-7.mill/complete", "").0, 200);
+        assert_eq!(
+            post(port, "/missions/board-7.drill/dispatch", r#"{"node":"n1"}"#).0,
+            200
+        );
+        let (_, view) = get(port, "/plans/board-7");
+        let view = json_of(&view);
+        assert_eq!(view["status"], "running");
+    }
+
+    #[test]
+    fn a_failed_stage_holds_back_the_stages_after_it_and_the_plan_reports_failed() {
+        let port = start_test_server();
+        post(port, "/plans", PLAN);
+        post(port, "/missions/board-7.mill/dispatch", r#"{"node":"n1"}"#);
+        post(port, "/missions/board-7.mill/start", "");
+        assert_eq!(
+            post(
+                port,
+                "/missions/board-7.mill/fail",
+                r#"{"reason":"tool broke"}"#
+            )
+            .0,
+            200
+        );
+        let (_, view) = get(port, "/plans/board-7");
+        let view = json_of(&view);
+        assert_eq!(view["status"], "failed");
+        let stage = |name: &str| {
+            view["stages"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|s| s["stage"] == name)
+                .unwrap()
+                .clone()
+        };
+        assert_eq!(stage("drill")["state"], "Blocked");
+        assert_eq!(stage("inspect")["state"], "Blocked");
+        assert_eq!(stage("inspect")["blocked_by"][0], "mill");
+        // nothing after the failed stage can be dispatched
+        assert_eq!(
+            post(port, "/missions/board-7.drill/dispatch", r#"{"node":"n1"}"#).0,
+            409
+        );
+    }
+
+    #[test]
+    fn the_replica_route_exports_one_record_per_mission() {
+        let port = start_test_server();
+        post(port, "/missions", r#"{"id":"m1"}"#);
+        post(port, "/missions", r#"{"id":"m2"}"#);
+        post(port, "/missions/m2/dispatch", r#"{"node":"node-a"}"#);
+        let (status, body) = get(port, "/replica");
+        assert_eq!(status, 200, "{body}");
+        let records = json_of(&body)["records"].clone();
+        assert_eq!(records.as_array().unwrap().len(), 2);
+        assert_eq!(records[0]["key"], "mission/m1");
+        assert!(records[0]["value"]
+            .as_str()
+            .unwrap()
+            .contains(r#""owner":"orchestrator""#));
+        assert_eq!(records[1]["generation"], 2);
+        let (_, named) = get(port, "/replica?owner=orch-b");
+        assert!(named.contains("orch-b"), "{named}");
+        assert_eq!(get(port, "/replica?owner=").0, 400);
     }
 }
