@@ -233,6 +233,7 @@ HYDRA-UMC-ORCHESTRATOR/
 ├── proto/                              用于整个生态系统节点间通信的共享 gRPC 契约
 ├── docs/                               文档与架构指南
 ├── images/                             媒体与图表
+├── tests/                              cli_modes.rs: 标识横幅、任务演示的输出以及 serve 的致命启动拒绝
 ├── systemd/                            服务单元
 ├── .github/                            CI 工作流和 Issue 模板
 ├── Cargo.toml                          Rust 包清单（名称、版本、依赖项）

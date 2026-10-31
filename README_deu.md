@@ -270,6 +270,7 @@ HYDRA-UMC-ORCHESTRATOR/
 ├── proto/                              Gemeinsamer gRPC-Vertrag für Knoten-zu-Knoten-
 ├── docs/                               Dokumentation und Architekturleitfäden
 ├── images/                             Medien und Diagramme
+├── tests/                              cli_modes.rs: das Identitätsbanner, das Protokoll der Missionsdemo und die fatalen Startverweigerungen von serve
 ├── systemd/                            Dienst-Unit
 ├── .github/                            CI-Workflow und Issue-Vorlagen
 ├── Cargo.toml                          Rust-Paketmanifest (Name, Version, Abhängigkeiten)

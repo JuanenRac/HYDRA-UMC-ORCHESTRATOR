@@ -243,6 +243,7 @@ HYDRA-UMC-ORCHESTRATOR/
 ├── proto/                              エコシステム全体のノード間通信のための共有 gRPC
 ├── docs/                               ドキュメントとアーキテクチャガイド
 ├── images/                             メディアと図表
+├── tests/                              cli_modes.rs: 識別バナー、ミッションデモの出力、serve の致命的な起動拒否
 ├── systemd/                            サービスユニット
 ├── .github/                            CI ワークフローと Issue テンプレート
 ├── Cargo.toml                          Rust パッケージマニフェスト（名前、バージョン、依存関係）

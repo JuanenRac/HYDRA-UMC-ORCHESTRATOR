@@ -261,6 +261,7 @@ HYDRA-UMC-ORCHESTRATOR/
 ├── proto/                              Contrato gRPC partilhado para o tráfego nó a nó
 ├── docs/                               Documentação e guias de arquitetura
 ├── images/                             Multimédia e diagramas
+├── tests/                              cli_modes.rs: o rótulo de identidade, a transcrição da demonstração de missões e as recusas fatais de arranque do serve
 ├── systemd/                            unidade de serviço
 ├── .github/                            fluxo de CI e modelos de problemas
 ├── Cargo.toml                          Manifesto do pacote Rust (nome, versão, dependências)

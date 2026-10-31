@@ -313,6 +313,29 @@
           }
         },
         {
+          "name": "tests/",
+          "desc": {
+            "en": "cli_modes.rs: the identity banner, the mission d",
+            "es": "cli_modes.rs: el rótulo de identidad, la transcr",
+            "de": "cli_modes.rs: das Identitätsbanner, das Protokol",
+            "fr": "cli_modes.rs : la bannière d'identité, la transc",
+            "it": "cli_modes.rs: il banner di identità, la trascriz",
+            "ja": "cli_modes.rs: 識別バナー、ミッションデモの出力、serve の致命的な起動拒否",
+            "zh": "cli_modes.rs: 标识横幅、任务演示的输出以及 serve 的致命启动拒绝",
+            "pt": "cli_modes.rs: o rótulo de identidade, a transcri"
+          },
+          "tree_desc": {
+            "en": "cli_modes.rs: the identity banner, the mission demo transcript and the fatal start-up refusals of serve",
+            "es": "cli_modes.rs: el rótulo de identidad, la transcripción de la demo de misiones y los rechazos fatales de arranque de serve",
+            "de": "cli_modes.rs: das Identitätsbanner, das Protokoll der Missionsdemo und die fatalen Startverweigerungen von serve",
+            "fr": "cli_modes.rs : la bannière d'identité, la transcription de la démo de missions et les refus fatals de démarrage de serve",
+            "it": "cli_modes.rs: il banner di identità, la trascrizione della demo delle missioni e i rifiuti fatali di avvio di serve",
+            "ja": "cli_modes.rs: 識別バナー、ミッションデモの出力、serve の致命的な起動拒否",
+            "zh": "cli_modes.rs: 标识横幅、任务演示的输出以及 serve 的致命启动拒绝",
+            "pt": "cli_modes.rs: o rótulo de identidade, a transcrição da demonstração de missões e as recusas fatais de arranque do serve"
+          }
+        },
+        {
           "name": "systemd/",
           "desc": {
             "en": "service unit",
