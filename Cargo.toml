@@ -1,6 +1,6 @@
 [package]
 name = "hydra-umc-orchestrator"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 rust-version = "1.85"
 description = "Distributed system manager for multi-robot swarm coordination across the HYDRA-UMC ecosystem."

@@ -4,6 +4,10 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## [0.2.2] - The locked dependencies build with the Rust of the CM5
+
+- **The locked dependencies build with the Rust of the CM5:** the lock file picks, for every library, the newest release that still builds with Rust 1.85 (the version declared by the project), so the service builds and installs on the CM5 again; the address-parsing library keeps its patched release.
+
 ## [0.2.1] - Multi-stage plans, the registry as replicable records and an updated address-parsing library
 
 - **The address-parsing library is updated:** the URL library moves to its patched release inside the same major version, which brings the maintained internationalised-domain-name library in place of the one with a reported weakness; only the lock file changes.
