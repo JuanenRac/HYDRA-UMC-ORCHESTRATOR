@@ -4,6 +4,8 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## [0.2.1] - Multi-stage plans, the registry as replicable records and an updated address-parsing library
+
 - **The address-parsing library is updated:** the URL library moves to its patched release inside the same major version, which brings the maintained internationalised-domain-name library in place of the one with a reported weakness; only the lock file changes.
 - **Multi-stage plans.** `POST /plans` takes a graph of stages and turns each one into a mission `<plan>.<stage>` whose `dependsOn` names the stages before it, after checking it once (ids, no repeated stage, every predecessor exists, no cycle, at most 64 stages). `GET /plans/{id}` shows every stage, the stages that a failed or cancelled one holds back (`Blocked`) and the state of the plan; a failed stage does not fail the rest, and without a job-dispatcher a stage cannot be dispatched by hand until its predecessors completed (`src/plan.rs`).
 - **The registry as replicable records.** `GET /replica` exports every mission as the `mission/<id>` record of HYDRA-UMC-SWARM-SYNC (status, owner, attempt, with the generation `attempt + 1`), and `src/replica.rs` rebuilds missions from such records for a node that takes over: a mission that was in flight goes back to `Pending` with a higher attempt only when its old holder confirmed it stopped, and stays `Unknown` otherwise. No route runs the takeover yet.
