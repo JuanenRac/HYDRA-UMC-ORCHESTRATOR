@@ -4,6 +4,8 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## [0.2.4] - GET /metrics in the Prometheus text format, healer leases so that only the holder of the lease of a cell may ask for a recovery and the mission registry can be pushed to SWARM-SYNC
+
 - **`GET /metrics` in the text format of Prometheus:** the version, the uptime, the responses by class of status (2xx to 5xx) and the health, the aggregate of the checks of the service (the mission registry is readable); only numbers about the service, never a mission, a node, a path, an address or a token. Behind the token when the service has one (`401` without it). The code is the canonical `service_metrics.rs` of HYDRA-UMC-SDK, copied byte for byte.
 
 - **Healer leases: only the holder of the lease of a cell may ask for a recovery.** `POST /leases/{name}/acquire`, `renew` and `release` and `GET /leases` keep named leases (one holder at a time, a time limit, and a token that is higher than every token handed out before, never lower than the clock in milliseconds). A recovery request (`POST /nodes/{node}/recover`) that shows a lease (`X-Healer-Lease`, `X-Healer-Id`, `X-Healer-Token`) is accepted only from its current holder; a request without a lease is refused with `409` while any healer lease is held, and always with `--require-healer-lease` (or `ORCHESTRATOR_REQUIRE_HEALER_LEASE=1`). Without any lease held, a recovery without one works as before. `--lease-max-ttl-ms` caps the lease time a caller may ask for.
