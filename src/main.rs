@@ -47,6 +47,7 @@ mod outbox;
 mod plan;
 mod replica;
 mod server;
+mod service_metrics;
 mod swarm_push;
 
 use mission::{CancelOutcome, MissionRegistry, MissionState};

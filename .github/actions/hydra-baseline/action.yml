@@ -10,6 +10,8 @@
 # the secret policy (tools/ci_validate.py), compile every Python source without running the build scripts (those change versions), and then, for the files the
 # repository has, the checks of its language: Python tests, lint and type check, Node, Rust, Go, Flutter, Android and firmware. The workflow of the repository
 # checks the repository out first (a local action needs the files), keeps what is its own after this step, and says in the inputs which variant it needs.
+# A repository whose Node checks need steps of their own between the setup of Node.js and its validation (other repositories to clone, environment variables,
+# a download to verify) passes node-checks: none, and sets up Node.js and runs those checks itself after this action.
 # Caches: pip, npm, Cargo (target directory and registry), Gradle and the Flutter SDK; Go caches its modules by itself.
 # The versions of ruff and mypy are written here once (the same ones as the ARMOR family); the check of the sync script finds any other pin in a workflow.
 name: Repository baseline
@@ -24,6 +26,10 @@ inputs:
     description: The version of Node.js for the repositories that have a package.json
     required: false
     default: "20"
+  node-checks:
+    description: "full (set up Node.js and run its checks) or none (the workflow of the repository sets up Node.js and runs its own checks, after this action, with steps of its own in between)"
+    required: false
+    default: full
   python-tests:
     description: "none, editable (pip install -e .[dev] and pytest tests/) or src-path (pip install .[dev] and pytest with PYTHONPATH=src)"
     required: false
@@ -126,13 +132,13 @@ runs:
         PYTHONPATH: clients/python/src
       run: python -m unittest discover -s clients/python/tests -v
     - name: Set up Node.js
-      if: ${{ hashFiles('package.json') != '' }}
+      if: ${{ hashFiles('package.json') != '' && inputs.node-checks != 'none' }}
       uses: actions/setup-node@v5
       with:
         node-version: ${{ inputs.node-version }}
         cache: npm
     - name: Validate Node.js or TypeScript project
-      if: ${{ hashFiles('package.json') != '' }}
+      if: ${{ hashFiles('package.json') != '' && inputs.node-checks != 'none' }}
       shell: bash
       run: |
         npm ci --ignore-scripts

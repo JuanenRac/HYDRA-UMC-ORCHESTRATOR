@@ -168,7 +168,12 @@ fn json_header() -> Header {
     Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..]).unwrap()
 }
 
+/// The numbers of this service for `GET /metrics` (see `service_metrics.rs`).
+static METRICS: crate::service_metrics::ServiceMetrics =
+    crate::service_metrics::ServiceMetrics::new("hydra-umc-orchestrator");
+
 fn write_json(request: tiny_http::Request, status: u16, body: &serde_json::Value) {
+    METRICS.count(status);
     let text = body.to_string();
     let response = Response::from_string(text)
         .with_status_code(status)
@@ -263,6 +268,7 @@ pub fn run(
     registry: MissionRegistry,
     options: ServerOptions,
 ) {
+    METRICS.start();
     let keep_finished = options.keep_finished;
     let state = Arc::new(AppState {
         registry: Arc::new(Mutex::new(registry)),
@@ -336,6 +342,14 @@ fn serve(server: &Server, state: &AppState) {
         let method = request.method().clone();
         let decoded = segments(&path);
         let parts: Vec<&str> = decoded.iter().map(String::as_str).collect();
+
+        // the numbers of the service: the token when one is set, 401 without it (numbers only, never a mission, a node or a token)
+        if crate::service_metrics::is_metrics_request(&request) {
+            let allowed = authorized(&request, &state.token);
+            let checks = [("registry", !state.registry.is_poisoned())];
+            METRICS.respond(request, env!("CARGO_PKG_VERSION"), allowed, &checks);
+            continue;
+        }
 
         // liveness stays open so a watchdog can probe it without a credential
         let is_health = matches!((&method, parts.as_slice()), (Method::Get, ["health"]));
@@ -2626,6 +2640,43 @@ mod tests {
         let port = start_test_server();
         assert_eq!(get(port, "/missions").0, 200);
         assert_eq!(get(port, "/health").0, 200);
+    }
+
+    #[test]
+    fn the_metrics_are_prometheus_text_with_numbers_only() {
+        let _guard = net_test_lock();
+        let port = start_test_server();
+        post(port, "/missions", r#"{"id":"secret-mission-name"}"#);
+        get(port, "/missions/unknown");
+        let (status, text) = get(port, "/metrics");
+        assert_eq!(status, 200, "{text}");
+        assert!(text.contains("# TYPE hydra_umc_service_info gauge"));
+        assert!(
+            text.contains("hydra_umc_service_info{service=\"hydra-umc-orchestrator\",version=\"")
+        );
+        assert!(text.contains("hydra_umc_service_health{service=\"hydra-umc-orchestrator\"} 1"));
+        assert!(text.contains("check=\"registry\"} 1"));
+        assert!(text.contains("class=\"4xx\"}"));
+        assert!(!text.contains("secret-mission-name"));
+        assert!(!text.contains("/missions"));
+    }
+
+    #[test]
+    fn the_metrics_ask_for_the_token_when_one_is_set() {
+        let _guard = net_test_lock();
+        let port = start_test_server_with(
+            None,
+            ServerOptions {
+                token: Some("s3cret-token".to_string()),
+                ..Default::default()
+            },
+        );
+        assert_eq!(get(port, "/metrics").0, 401);
+        let (status, _) = request_with_auth(port, "GET", "/metrics", "", Some("wrong-token"));
+        assert_eq!(status, 401);
+        let (status, text) = request_with_auth(port, "GET", "/metrics", "", Some("s3cret-token"));
+        assert_eq!(status, 200);
+        assert!(!text.contains("s3cret-token"));
     }
 
     #[test]
