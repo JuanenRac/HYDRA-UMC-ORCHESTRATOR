@@ -19,7 +19,7 @@ GPL-3.0-or-later - see LICENSE
   <img src="https://img.shields.io/badge/Language-Rust-orange.svg" alt="Language">
   <img src="https://img.shields.io/badge/Architecture-Distributed%20Edge-blue.svg" alt="Architecture">
   <img src="https://img.shields.io/badge/Sync-JSON%2FHTTP-yellow.svg" alt="Sync">
-  <img src="https://img.shields.io/badge/Tests-144%20passing-2ea44f.svg" alt="Tests">
+  <img src="https://img.shields.io/badge/Tests-176%20passing-2ea44f.svg" alt="Tests">
   <img src="https://img.shields.io/badge/Version-0.2.3-0f6cbd.svg" alt="Version">
   <img src="https://img.shields.io/badge/Maturity-functional-0F6CBD.svg" alt="Maturity">
 </p>
@@ -40,7 +40,7 @@ GPL-3.0-or-later - see LICENSE
 |---|---|
 | バージョン | `0.2.3` |
 | 成熟度 | 機能する |
-| テスト | 144 (`cargo test`) |
+| テスト | 176 (`cargo test`) |
 | 技術 | Rust / tiny_http / ureq / JSON/HTTP |
 | 対象 | HYDRA-UMC セルの Raspberry Pi CM5 |
 | 実機での確認 | まだです：このバージョンについて実機での動作記録はありません |
@@ -56,7 +56,7 @@ GPL-3.0-or-later - see LICENSE
 | 領域 | 状態 | ここでの意味 |
 |---|---|---|
 | ソフトウェア | 🟡 | 主な目的では動作します。足りない点は上の正直さの確認に書かれています |
-| テスト | 🟢 | 自動テスト 144 件。変更のたびに実行されます |
+| テスト | 🟢 | 自動テスト 176 件。変更のたびに実行されます |
 | 実機 | 🔴 | まだです：このバージョンについて実機での動作記録はありません |
 | ドキュメント | 🟢 | 8 言語の README。変更のたびにマニフェストと照合されます |
 
@@ -156,7 +156,7 @@ cargo test
 
 ## 🧪 テスト
 
-`cargo test` で自動テスト 144 件を実行します。 ハードウェアも、このマシンの外にあるものも必要ありません。
+`cargo test` で自動テスト 176 件を実行します。 ハードウェアも、このマシンの外にあるものも必要ありません。
 
 CI は `HYDRA_UMC_CI=1 python tools/ci_validate.py` を実行し、マニフェスト、文書、8 つの README、図を検査します。
 
@@ -205,7 +205,7 @@ run.bat mission-demo
 ```
 
 ```bash
-cargo test   # 144 件のテスト：mission.rs の全状態遷移・不正な遷移の拒否・
+cargo test   # 176 件のテスト：mission.rs の全状態遷移・不正な遷移の拒否・
              # 冪等なキャンセル・ノード障害後のリカバリーに加え、
              # outbox.rs のクラッシュに強い永続化、job_dispatcher.rs の
              # 実際のHTTPクライアント、server.rs のHTTPハンドラー
