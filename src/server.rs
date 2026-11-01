@@ -71,6 +71,12 @@ pub struct AppState {
     pub require_attempt: bool,
     /// `POST /replica/takeover` exists only when this is set
     pub takeover: bool,
+    /// the healer leases (see `lease.rs`)
+    pub leases: Mutex<crate::lease::LeaseTable>,
+    /// when set, a recovery request must carry a lease it holds
+    pub require_healer_lease: bool,
+    /// the longest lease a caller may ask for
+    pub lease_max_ttl_ms: u64,
 }
 
 /// How the HTTP surface is protected. The default - no token, attempt
@@ -91,6 +97,13 @@ pub struct ServerOptions {
     pub keep_finished: usize,
     /// when set, `POST /replica/takeover` takes a replicated registry over (off by default: the route answers like an unknown one)
     pub takeover: bool,
+    /// when set, `POST /nodes/{node}/recover` is only accepted from the holder of a healer lease (off by default: a recovery without a lease
+    /// is still accepted while no healer lease is held)
+    pub require_healer_lease: bool,
+    /// the longest lease time a caller may ask for, in milliseconds (0 means the default of 60000)
+    pub lease_max_ttl_ms: u64,
+    /// when set, the mission registry is pushed to this swarm-sync node (see `swarm_push.rs`)
+    pub swarm_push: Option<crate::swarm_push::PushConfig>,
 }
 
 /// Request bodies here are a few dozen bytes; anything past this is refused
@@ -258,7 +271,18 @@ pub fn run(
         token: options.token.filter(|t| !t.is_empty()),
         require_attempt: options.require_attempt,
         takeover: options.takeover,
+        leases: Mutex::new(crate::lease::LeaseTable::new()),
+        require_healer_lease: options.require_healer_lease,
+        lease_max_ttl_ms: if options.lease_max_ttl_ms == 0 {
+            60_000
+        } else {
+            options.lease_max_ttl_ms
+        },
     });
+
+    if let Some(config) = options.swarm_push.clone() {
+        crate::swarm_push::spawn(Arc::clone(&state.registry), config);
+    }
 
     if keep_finished > 0 {
         let registry = Arc::clone(&state.registry);
@@ -375,7 +399,17 @@ fn serve(server: &Server, state: &AppState) {
                 let raw = body_or_reply!(request);
                 handle_plan_add(request, state, &raw);
             }
-            (Method::Post, ["nodes", node, "recover"]) => handle_recover(request, state, node),
+            (Method::Get, ["leases"]) => handle_lease_list(request, state),
+            (Method::Post, ["leases", name, action])
+                if matches!(*action, "acquire" | "renew" | "release") =>
+            {
+                let raw = body_or_reply!(request);
+                handle_lease(request, state, name, action, &raw);
+            }
+            (Method::Post, ["nodes", node, "recover"]) => {
+                let claim = lease_claim(&request);
+                handle_recover(request, state, node, claim)
+            }
             (Method::Get, ["stats"]) => handle_stats(request, state),
             _ => write_json(request, 404, &json!({"error": "not found"})),
         }
@@ -1364,7 +1398,185 @@ fn handle_fail(request: tiny_http::Request, state: &AppState, id: &str, raw: &st
     }
 }
 
-fn handle_recover(request: tiny_http::Request, state: &AppState, node: &str) {
+/// What a healer shows with a recovery request: the lease it holds, who it is and the token of the grant.
+struct LeaseClaim {
+    name: String,
+    holder: String,
+    token: Option<u64>,
+}
+
+fn header_text(request: &tiny_http::Request, field: &'static str) -> Option<String> {
+    request
+        .headers()
+        .iter()
+        .find(|h| h.field.equiv(field))
+        .map(|h| h.value.as_str().trim().to_string())
+        .filter(|v| !v.is_empty())
+}
+
+/// The lease named in `X-Healer-Lease`, with `X-Healer-Id` and `X-Healer-Token`.
+fn lease_claim(request: &tiny_http::Request) -> Option<LeaseClaim> {
+    let name = header_text(request, "X-Healer-Lease")?;
+    Some(LeaseClaim {
+        name,
+        holder: header_text(request, "X-Healer-Id").unwrap_or_default(),
+        token: header_text(request, "X-Healer-Token").and_then(|t| t.parse().ok()),
+    })
+}
+
+fn lease_json(name: &str, lease: &crate::lease::Lease, now: u64) -> serde_json::Value {
+    json!({
+        "lease": name,
+        "holder": lease.holder,
+        "token": lease.token,
+        "expiresAtMs": lease.expires_at_ms,
+        "expiresInMs": lease.expires_at_ms.saturating_sub(now),
+    })
+}
+
+/// `GET /leases`: the leases that have not expired.
+fn handle_lease_list(request: tiny_http::Request, state: &AppState) {
+    let now = crate::logging::now_ms();
+    let active = state.leases.lock().unwrap().active(now);
+    let list: Vec<serde_json::Value> = active.iter().map(|(n, l)| lease_json(n, l, now)).collect();
+    write_json(
+        request,
+        200,
+        &json!({"leases": list, "requireHealerLease": state.require_healer_lease}),
+    );
+}
+
+/// `POST /leases/{name}/acquire|renew|release` with `{"holder": "...", "token": N, "ttlMs": N}` (the token is for renew and release).
+fn handle_lease(
+    request: tiny_http::Request,
+    state: &AppState,
+    name: &str,
+    action: &str,
+    raw: &str,
+) {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Body {
+        holder: String,
+        #[serde(default)]
+        token: Option<u64>,
+        #[serde(default, rename = "ttlMs")]
+        ttl_ms: Option<u64>,
+    }
+    let body: Body = match serde_json::from_str(raw) {
+        Ok(b) => b,
+        Err(e) => {
+            write_json(
+                request,
+                400,
+                &json!({"error": format!("invalid lease request: {e}")}),
+            );
+            return;
+        }
+    };
+    let now = crate::logging::now_ms();
+    let max = state.lease_max_ttl_ms;
+    let result = {
+        let mut table = state.leases.lock().unwrap();
+        match action {
+            "acquire" => table
+                .acquire(name, &body.holder, body.ttl_ms, max, now)
+                .map(Some),
+            "renew" => match body.token {
+                Some(token) => table
+                    .renew(name, &body.holder, token, body.ttl_ms, max, now)
+                    .map(Some),
+                None => Err(crate::lease::LeaseError::Invalid(
+                    "renew needs the token of the grant".into(),
+                )),
+            },
+            _ => match body.token {
+                Some(token) => table.release(name, &body.holder, token, now).map(|_| None),
+                None => Err(crate::lease::LeaseError::Invalid(
+                    "release needs the token of the grant".into(),
+                )),
+            },
+        }
+    };
+    match result {
+        Ok(Some(lease)) => {
+            if action == "acquire" {
+                crate::log_line!(
+                    "lease {name} granted to {} (token {})",
+                    lease.holder,
+                    lease.token
+                );
+            }
+            write_json(request, 200, &lease_json(name, &lease, now));
+        }
+        Ok(None) => {
+            crate::log_line!("lease {name} released by {}", body.holder);
+            write_json(request, 200, &json!({"lease": name, "released": true}));
+        }
+        Err(crate::lease::LeaseError::Held {
+            holder,
+            expires_at_ms,
+        }) => write_json(
+            request,
+            409,
+            &json!({"error": format!("the lease is held by {holder}"), "holder": holder, "expiresAtMs": expires_at_ms}),
+        ),
+        Err(crate::lease::LeaseError::NotHolder(why)) => {
+            write_json(request, 409, &json!({"error": why}))
+        }
+        Err(crate::lease::LeaseError::Full) => {
+            write_json(request, 503, &json!({"error": "too many leases are held"}))
+        }
+        Err(e) => write_json(request, 400, &json!({"error": e.to_string()})),
+    }
+}
+
+/// Why this recovery request must be refused for lack of the lease, or `None` when it may go on. A healer shows the lease it holds; a
+/// request with no lease is accepted only while no healer lease is held and the lease is not required.
+fn recover_lease_problem(state: &AppState, claim: &Option<LeaseClaim>) -> Option<String> {
+    let now = crate::logging::now_ms();
+    let table = state.leases.lock().unwrap();
+    match claim {
+        Some(c) => {
+            if !c.name.starts_with(crate::lease::HEALER_PREFIX) {
+                return Some(format!(
+                    "the lease of a healer is named {}<cell>",
+                    crate::lease::HEALER_PREFIX
+                ));
+            }
+            let Some(token) = c.token else {
+                return Some("X-Healer-Token is missing or is not a number".into());
+            };
+            table
+                .check(&c.name, &c.holder, token, now)
+                .err()
+                .map(|e| e.to_string())
+        }
+        None if state.require_healer_lease => {
+            Some("a recovery needs the lease of a healer (X-Healer-Lease)".into())
+        }
+        None if table.healer_lease_active(now) => Some(
+            "a healer holds the lease of its cell: a recovery without the lease is refused".into(),
+        ),
+        None => None,
+    }
+}
+
+fn handle_recover(
+    request: tiny_http::Request,
+    state: &AppState,
+    node: &str,
+    claim: Option<LeaseClaim>,
+) {
+    if let Some(problem) = recover_lease_problem(state, &claim) {
+        crate::log_line!("recovery of {node} refused: {problem}");
+        write_json(
+            request,
+            409,
+            &json!({"error": problem, "rejected": "not_lease_holder"}),
+        );
+        return;
+    }
     let requeued: Vec<(String, JobSpec)> = {
         let mut reg = state.registry.lock().unwrap();
         let ids = reg.recover_node_unavailable(node);
@@ -2386,6 +2598,7 @@ mod tests {
                 require_attempt: false,
                 keep_finished: 0,
                 takeover: false,
+                ..Default::default()
             },
         );
         for (method, path) in [
@@ -2490,6 +2703,7 @@ mod tests {
                 require_attempt: true,
                 keep_finished: 0,
                 takeover: false,
+                ..Default::default()
             },
         );
         post(strict, "/missions", r#"{"id":"m2"}"#);
@@ -3075,5 +3289,172 @@ mod tests {
             400
         );
         assert_eq!(post(port, "/replica/takeover", r#"{"records":[],"confirmed_stopped":[{"owner":"a","mission_id":"m","attempt":1,"x":2}]}"#).0, 400);
+    }
+
+    /// A POST with extra header lines (each ends in CRLF), to show a lease the way a healer does.
+    fn post_with_headers(port: u16, path: &str, body: &str, headers: &str) -> (u16, String) {
+        let mut stream = TcpStream::connect(("127.0.0.1", port)).expect("connect must succeed");
+        let raw_request = format!(
+            "POST {path} HTTP/1.1\r\nHost: 127.0.0.1\r\n{headers}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        stream.write_all(raw_request.as_bytes()).unwrap();
+        let mut raw = String::new();
+        stream.read_to_string(&mut raw).unwrap();
+        let (head, resp_body) = raw.split_once("\r\n\r\n").unwrap_or((raw.as_str(), ""));
+        let status: u16 = head
+            .lines()
+            .next()
+            .unwrap_or("")
+            .split_whitespace()
+            .nth(1)
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
+        (status, resp_body.to_string())
+    }
+
+    /// The header lines with which a healer shows the lease it holds.
+    fn claim(lease: &str, id: &str, token: u64) -> String {
+        format!("X-Healer-Lease: {lease}\r\nX-Healer-Id: {id}\r\nX-Healer-Token: {token}\r\n")
+    }
+
+    fn lease_token(body: &str) -> u64 {
+        serde_json::from_str::<serde_json::Value>(body).unwrap()["token"]
+            .as_u64()
+            .unwrap()
+    }
+
+    #[test]
+    fn a_recovery_without_any_lease_still_works_while_no_healer_holds_one() {
+        let _guard = net_test_lock();
+        let port = start_test_server();
+        assert_eq!(post(port, "/nodes/node-a/recover", "").0, 200);
+    }
+
+    #[test]
+    fn only_the_holder_of_the_healer_lease_may_recover_a_node() {
+        let _guard = net_test_lock();
+        let port = start_test_server();
+        let (status, body) = post(
+            port,
+            "/leases/healer-of-cell-1/acquire",
+            r#"{"holder":"cm5","ttlMs":30000}"#,
+        );
+        assert_eq!(status, 200, "{body}");
+        let token = lease_token(&body);
+        // a second healer is told who holds it
+        let (status, body) = post(
+            port,
+            "/leases/healer-of-cell-1/acquire",
+            r#"{"holder":"devhost"}"#,
+        );
+        assert_eq!(status, 409);
+        assert!(body.contains("cm5"));
+        // a recovery with no lease is refused while a healer holds the lease
+        let (status, body) = post(port, "/nodes/node-a/recover", "");
+        assert_eq!(status, 409);
+        assert!(body.contains("not_lease_holder"));
+        // the other healer, with a made-up token, is refused too
+        let wrong = claim("healer-of-cell-1", "devhost", token);
+        assert_eq!(
+            post_with_headers(port, "/nodes/node-a/recover", "", &wrong).0,
+            409
+        );
+        // the holder recovers
+        let right = claim("healer-of-cell-1", "cm5", token);
+        assert_eq!(
+            post_with_headers(port, "/nodes/node-a/recover", "", &right).0,
+            200
+        );
+        // after the release the lease is gone and the next healer can take it
+        let release = format!(r#"{{"holder":"cm5","token":{token}}}"#);
+        assert_eq!(
+            post(port, "/leases/healer-of-cell-1/release", &release).0,
+            200
+        );
+        assert_eq!(
+            post_with_headers(port, "/nodes/node-a/recover", "", &right).0,
+            409
+        );
+        assert_eq!(
+            post(
+                port,
+                "/leases/healer-of-cell-1/acquire",
+                r#"{"holder":"devhost"}"#
+            )
+            .0,
+            200
+        );
+    }
+
+    #[test]
+    fn with_the_lease_required_a_recovery_without_one_is_refused() {
+        let _guard = net_test_lock();
+        let port = start_test_server_with(
+            None,
+            ServerOptions {
+                require_healer_lease: true,
+                ..ServerOptions::default()
+            },
+        );
+        assert_eq!(post(port, "/nodes/node-a/recover", "").0, 409);
+        let (_, body) = post(port, "/leases/healer-of-c/acquire", r#"{"holder":"h"}"#);
+        let token = lease_token(&body);
+        let own_claim = claim("healer-of-c", "h", token);
+        assert_eq!(
+            post_with_headers(port, "/nodes/node-a/recover", "", &own_claim).0,
+            200
+        );
+        // a lease that is not a healer lease does not open the door
+        let (_, other) = post(port, "/leases/other/acquire", r#"{"holder":"h"}"#);
+        let other_claim = claim("other", "h", lease_token(&other));
+        assert_eq!(
+            post_with_headers(port, "/nodes/node-a/recover", "", &other_claim).0,
+            409
+        );
+    }
+
+    #[test]
+    fn the_lease_routes_refuse_what_they_cannot_read_and_list_the_active_leases() {
+        let _guard = net_test_lock();
+        let port = start_test_server();
+        assert_eq!(post(port, "/leases/healer-of-c/acquire", "{").0, 400);
+        assert_eq!(
+            post(
+                port,
+                "/leases/healer-of-c/acquire",
+                r#"{"holder":"h","extra":1}"#
+            )
+            .0,
+            400
+        );
+        assert_eq!(
+            post(port, "/leases/healer-of-c/renew", r#"{"holder":"h"}"#).0,
+            400
+        );
+        assert_eq!(
+            post(port, "/leases/bad%20name/acquire", r#"{"holder":"h"}"#).0,
+            400
+        );
+        let (_, body) = post(port, "/leases/healer-of-c/acquire", r#"{"holder":"h"}"#);
+        let token = lease_token(&body);
+        let (status, renewed) = post(
+            port,
+            "/leases/healer-of-c/renew",
+            &format!(r#"{{"holder":"h","token":{token}}}"#),
+        );
+        assert_eq!(status, 200, "{renewed}");
+        assert_eq!(
+            post(
+                port,
+                "/leases/healer-of-c/renew",
+                &format!(r#"{{"holder":"x","token":{token}}}"#)
+            )
+            .0,
+            409
+        );
+        let (status, listed) = get(port, "/leases");
+        assert_eq!(status, 200);
+        assert!(listed.contains("healer-of-c"));
     }
 }

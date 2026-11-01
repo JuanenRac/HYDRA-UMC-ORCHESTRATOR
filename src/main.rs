@@ -40,12 +40,14 @@
 // already made for real reachable from here, not a new one.
 
 mod job_dispatcher;
+mod lease;
 mod logging;
 mod mission;
 mod outbox;
 mod plan;
 mod replica;
 mod server;
+mod swarm_push;
 
 use mission::{CancelOutcome, MissionRegistry, MissionState};
 
@@ -167,6 +169,57 @@ fn run_serve(args: &[String]) -> bool {
     let require_attempt = args.iter().any(|a| a == "--require-attempt");
     // Taking over the replicated registry of another orchestrator (POST /replica/takeover) is off unless asked for.
     let takeover = args.iter().any(|a| a == "--takeover");
+    // A recovery request is accepted only from the holder of a healer lease (see lease.rs); off unless asked for or ORCHESTRATOR_REQUIRE_HEALER_LEASE=1.
+    let require_healer_lease = args.iter().any(|a| a == "--require-healer-lease")
+        || std::env::var("ORCHESTRATOR_REQUIRE_HEALER_LEASE").is_ok_and(|v| v.trim() == "1");
+    // Replicating the registry: pushed to a swarm-sync node every few seconds, only with --swarm-sync-url.
+    let swarm_push = match find_flag(args, "--swarm-sync-url").filter(|u| !u.is_empty()) {
+        None => None,
+        Some(url) => {
+            if !(url.starts_with("http://") || url.starts_with("https://")) {
+                crate::log_line!(
+                    "fatal: --swarm-sync-url must start with http:// or https://, not {url:?}"
+                );
+                return false;
+            }
+            let interval_s = match find_flag(args, "--swarm-sync-interval-s") {
+                None => swarm_push::DEFAULT_INTERVAL_S,
+                Some(value) => match value.parse::<u64>() {
+                    Ok(n) if (1..=3600).contains(&n) => n,
+                    _ => {
+                        crate::log_line!("fatal: --swarm-sync-interval-s must be a whole number from 1 to 3600, not {value:?}");
+                        return false;
+                    }
+                },
+            };
+            let owner = find_flag(args, "--orchestrator-name")
+                .or_else(|| std::env::var("ORCHESTRATOR_NAME").ok())
+                .filter(|n| !n.is_empty())
+                .unwrap_or_else(|| "orchestrator".to_string());
+            if !mission::is_valid_mission_id(&owner) {
+                crate::log_line!("fatal: --orchestrator-name must be a plain name (letters, digits, - _ .), not {owner:?}");
+                return false;
+            }
+            Some(swarm_push::PushConfig {
+                url,
+                token: find_flag(args, "--swarm-sync-token")
+                    .or_else(|| std::env::var("SWARM_SYNC_TOKEN").ok())
+                    .filter(|t| !t.is_empty()),
+                owner,
+                interval: std::time::Duration::from_secs(interval_s),
+            })
+        }
+    };
+    let lease_max_ttl_ms = match find_flag(args, "--lease-max-ttl-ms") {
+        None => 0,
+        Some(value) => match value.parse::<u64>() {
+            Ok(n) if n >= lease::MIN_TTL_MS => n,
+            _ => {
+                crate::log_line!("fatal: --lease-max-ttl-ms must be a whole number of at least {} milliseconds, not {value:?}", lease::MIN_TTL_MS);
+                return false;
+            }
+        },
+    };
     let log_format = find_flag(args, "--log-format")
         .or_else(|| std::env::var("ORCHESTRATOR_LOG_FORMAT").ok())
         .unwrap_or_else(|| "text".to_string());
@@ -277,6 +330,9 @@ fn run_serve(args: &[String]) -> bool {
                     require_attempt,
                     keep_finished,
                     takeover,
+                    require_healer_lease,
+                    lease_max_ttl_ms,
+                    swarm_push,
                 },
             );
             true

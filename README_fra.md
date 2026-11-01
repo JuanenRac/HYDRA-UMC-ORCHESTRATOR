@@ -19,14 +19,14 @@ GPL-3.0-or-later - see LICENSE
   <img src="https://img.shields.io/badge/Language-Rust-orange.svg" alt="Language">
   <img src="https://img.shields.io/badge/Architecture-Distributed%20Edge-blue.svg" alt="Architecture">
   <img src="https://img.shields.io/badge/Sync-JSON%2FHTTP-yellow.svg" alt="Sync">
-  <img src="https://img.shields.io/badge/Tests-176%20passing-2ea44f.svg" alt="Tests">
+  <img src="https://img.shields.io/badge/Tests-197%20passing-2ea44f.svg" alt="Tests">
   <img src="https://img.shields.io/badge/Version-0.2.3-0f6cbd.svg" alt="Version">
   <img src="https://img.shields.io/badge/Maturity-functional-0F6CBD.svg" alt="Maturity">
 </p>
 
 ---
 
-**Vérification d'honnêteté - ce qui fonctionne réellement aujourd'hui :** la machine à états des missions (`src/mission.rs` : `Mission`/`MissionRegistry`, chaque transition `Pending -> Dispatched -> InProgress -> Completed`/`Cancelled`/`Failed`, annulation idempotente, récupération après défaillance de nœud), sa propre persistance sur disque (`MissionRegistry::load`/`persist`, `data/missions.json`), l'outbox durable des fermetures distantes en attente (`src/outbox.rs`), le client HTTP réel vers HYDRA-UMC-JOB-DISPATCHER (`src/job_dispatcher.rs`) et le serveur JSON/HTTP simple qui expose tout cela (`src/server.rs`, `tiny_http`, sans runtime async) sont réels et testés (176 tests, `cargo test`). La sous-commande CLI `mission-demo` exécute un scénario réel de bout en bout contre ce même `MissionRegistry` - pas un mock. Ce qui reste aspirationnel : les « couches internes prévues » de la section 3 ci-dessous (couche API, dispatch synchronisé par PTP, agrégation de la santé de la flotte en tant que service permanent) décrivent une intention de conception, pas du code existant ; il n'y a aucun câblage gRPC de ce dépôt vers un JOB-DISPATCHER ou NODE-HEALING réel en fonctionnement, aucune intégration avec PATH-PLANNER-3D/SWARM-SYNC, et aucune flotte multi-nœuds réelle n'a jamais tourné avec ce binaire - `docker-compose.yml` construit et démarre les 3 services frères ensemble, mais cela n'a pas été testé sur du matériel robotique réel. Voir `CHANGELOG.md` pour ce qui a déjà été livré exactement, et la feuille de route (ROADMAP) ci-dessous pour ce qui reste ouvert.
+**Vérification d'honnêteté - ce qui fonctionne réellement aujourd'hui :** la machine à états des missions (`src/mission.rs` : `Mission`/`MissionRegistry`, chaque transition `Pending -> Dispatched -> InProgress -> Completed`/`Cancelled`/`Failed`, annulation idempotente, récupération après défaillance de nœud), sa propre persistance sur disque (`MissionRegistry::load`/`persist`, `data/missions.json`), l'outbox durable des fermetures distantes en attente (`src/outbox.rs`), le client HTTP réel vers HYDRA-UMC-JOB-DISPATCHER (`src/job_dispatcher.rs`) et le serveur JSON/HTTP simple qui expose tout cela (`src/server.rs`, `tiny_http`, sans runtime async) sont réels et testés (197 tests, `cargo test`). La sous-commande CLI `mission-demo` exécute un scénario réel de bout en bout contre ce même `MissionRegistry` - pas un mock. Ce qui reste aspirationnel : les « couches internes prévues » de la section 3 ci-dessous (couche API, dispatch synchronisé par PTP, agrégation de la santé de la flotte en tant que service permanent) décrivent une intention de conception, pas du code existant ; il n'y a aucun câblage gRPC de ce dépôt vers un JOB-DISPATCHER ou NODE-HEALING réel en fonctionnement, aucune intégration avec PATH-PLANNER-3D/SWARM-SYNC, et aucune flotte multi-nœuds réelle n'a jamais tourné avec ce binaire - `docker-compose.yml` construit et démarre les 3 services frères ensemble, mais cela n'a pas été testé sur du matériel robotique réel. Voir `CHANGELOG.md` pour ce qui a déjà été livré exactement, et la feuille de route (ROADMAP) ci-dessous pour ce qui reste ouvert.
 
 ---
 
@@ -40,7 +40,7 @@ GPL-3.0-or-later - see LICENSE
 |---|---|
 | Version | `0.2.3` |
 | Maturité | Fonctionnel |
-| Tests | 176 (`cargo test`) |
+| Tests | 197 (`cargo test`) |
 | Technologie | Rust / tiny_http / ureq / JSON/HTTP |
 | Cible | Le Raspberry Pi CM5 d'une cellule HYDRA-UMC |
 | Sur matériel réel | Pas encore : aucune exécution sur du matériel réel n'est consignée pour cette version |
@@ -56,7 +56,7 @@ Chaque ligne est une partie de ce dépôt et le feu dit où elle en est aujourd'
 | Domaine | État | Ce que cela veut dire ici |
 |---|---|---|
 | Logiciel | 🟡 | Fonctionne pour son usage principal ; la vérification d'honnêteté ci-dessus liste ce qui manque encore |
-| Tests | 🟢 | 176 tests automatiques, exécutés à chaque modification |
+| Tests | 🟢 | 197 tests automatiques, exécutés à chaque modification |
 | Matériel réel | 🔴 | Pas encore : aucune exécution sur du matériel réel n'est consignée pour cette version |
 | Documentation | 🟢 | README en huit langues, vérifié par rapport au manifeste à chaque modification |
 
@@ -76,6 +76,7 @@ Prévu : planification globale des missions, répartition de la charge sur la fl
 * 🧩 **Réel v0 - Machine à états de mission :** `mission.rs` suit chaque mission via `Pending -> Dispatched -> InProgress -> Completed` (plus les états terminaux `Cancelled`/`Failed`), avec une annulation idempotente et une vraie récupération quand un nœud est signalé injoignable/invalide - voir `mission-demo` ci-dessous. Logique pure en mémoire - aucun pair gRPC en direct avec JOB-DISPATCHER/NODE-HEALING nécessaire pour l'exécuter ou la tester.
 * 🧱 **Sûr par défaut, et un rapport tardif ne peut pas écraser un transfert (v0) :** l'API écoute sur `127.0.0.1:8114` sauf indication contraire ; une autre adresse exige un jeton bearer (`--token` / `ORCHESTRATOR_TOKEN` ; toutes les routes sauf `GET /health` l'exigent alors) ou un `--allow-anonymous` explicite, et les corps de requête de plus de 64 Ko sont refusés avec `413`. Chaque dispatch incrémente l'`attempt` de la mission ; un `start`/`complete`/`fail` portant un `attempt` périmé (ou le nom d'un nœud qui ne détient plus la mission) est refusé avec `409` sans toucher à la mission, de sorte qu'un nœud déclaré indisponible qui revient d'une partition réseau ne peut pas écraser le nœud auquel la mission a été confiée (`--require-attempt` rend le champ obligatoire). Le registre des missions et la boîte d'envoi sont forcés sur le disque avant de remplacer le fichier précédent, l'unité systemd fournie donne désormais au processus un répertoire d'état inscriptible (auparavant `ProtectSystem=strict` rendait le répertoire `data` par défaut en lecture seule et rien ne survivait à un redémarrage), et `docker-compose.yml` démarre désormais de vrais services (commandes `serve`, contrôles de santé, jetons obligatoires, images épinglées, seul l'orchestrateur est publié et uniquement sur le loopback de l'hôte). *(implémenté)*
 * 🔭 **Exploitation lisible (optionnelle) :** `GET /stats` indique aussi l'ancienneté de la plus vieille clôture non confirmée (`oldestPendingCloseAgeSeconds`) et le dernier succès et le dernier échec des appels à JOB-DISPATCHER ; `--log-format json` écrit un objet JSON par ligne de journal ; `--keep-finished N` oublie les plus anciennes missions terminées dont la clôture a été confirmée, pour que `missions.json` ne grossisse pas indéfiniment ; le fichier porte un `schema_version` et celui qu'écrit une version plus récente est refusé ; une clôture indique à JOB-DISPATCHER quelle tentative elle clôt. Tout est désactivé ou inchangé par défaut. *(implémenté)*
+* 🔐 **Baux pour le soigneur et registre répliqué (optionnel) :** `POST /leases/{name}/acquire|renew|release` tient un bail par cellule (`healer-of-<cellule>`) avec un jeton qui ne fait que monter, et une demande de reprise n'est acceptée que du titulaire (`--require-healer-lease` refuse toute autre) ; `--swarm-sync-url` envoie les enregistrements de `GET /replica` à HYDRA-UMC-SWARM-SYNC toutes les quelques secondes pour qu'un second orchestrateur puisse reprendre le registre. Non essayé avec deux machines.
 
 ## 🧩 Rôle dans HYDRA-UMC
 
@@ -180,7 +181,7 @@ cargo test
 
 ## 🧪 Tests
 
-176 tests automatiques s'exécutent avec `cargo test`. Ils n'ont besoin ni de matériel ni de rien en dehors de cette machine.
+197 tests automatiques s'exécutent avec `cargo test`. Ils n'ont besoin ni de matériel ni de rien en dehors de cette machine.
 
 La CI exécute `HYDRA_UMC_CI=1 python tools/ci_validate.py`, qui vérifie le manifeste, les documents, les huit README et les images.
 
@@ -229,7 +230,7 @@ résultant.
 ```
 
 ```bash
-cargo test   # 176 tests : les transitions/rejets de transition invalide/
+cargo test   # 197 tests : les transitions/rejets de transition invalide/
              # annulation idempotente/récupération après défaillance de
              # nœud de mission.rs, plus la persistance à l'épreuve des
              # pannes d'outbox.rs, le client HTTP réel de

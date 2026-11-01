@@ -71,7 +71,7 @@ Notable real behavior this demo exercises:
 ### `serve`
 
 The real HTTP API — a genuine `tiny_http` server, not a demo. Started with
-`hydra-umc-orchestrator serve [--addr HOST] [--port PORT] [--job-dispatcher-url URL] [--data-dir DIR] [--token TOKEN] [--allow-anonymous] [--require-attempt] [--job-dispatcher-token TOKEN] [--log-format text|json] [--keep-finished N] [--takeover]`
+`hydra-umc-orchestrator serve [--addr HOST] [--port PORT] [--job-dispatcher-url URL] [--data-dir DIR] [--token TOKEN] [--allow-anonymous] [--require-attempt] [--job-dispatcher-token TOKEN] [--log-format text|json] [--keep-finished N] [--takeover] [--require-healer-lease] [--lease-max-ttl-ms MS] [--swarm-sync-url URL] [--swarm-sync-token TOKEN] [--swarm-sync-interval-s SECONDS] [--orchestrator-name NAME]`
 (`--addr` defaults to `127.0.0.1`, `--port` to `8114`, `--data-dir` to `./data`;
 `--job-dispatcher-url` is optional — omitted, missions stay local-only and
 `auto-dispatch` reports `503`). The access options are described under
@@ -197,6 +197,21 @@ Without a job-dispatcher, `POST /missions/{id}/dispatch` of a stage answers `409
 `GET /replica` (`?owner=NAME`, default `orchestrator`) exports every mission as the record HYDRA-UMC-SWARM-SYNC replicates under `mission/<id>`:
 `{"mission_id", "status", "owner", "attempt"}` with the generation `attempt + 1`, which the swarm-sync map compares before the clock, so a newer attempt wins on every node
 whatever the clocks say. The record carries no routing hints: the job-dispatcher holds the jobs.
+
+## Healer leases (`/leases`)
+
+Two watchdogs on the same cell would both ask for the recovery of the same node. A watchdog takes the lease `healer-of-<cell>` first and shows it with every recovery request.
+
+* `POST /leases/{name}/acquire` with `{"holder": "cm5", "ttlMs": 15000}` answers `200` with `{"lease", "holder", "token", "expiresAtMs", "expiresInMs"}`, or `409` with the holder and the expiry when someone else holds it. The holder asking again keeps its token and gets a longer lease. A name and a holder are 1 to 128 letters, digits or `. _ : -`; the time is kept between 1 second and `--lease-max-ttl-ms` (60000 by default).
+* `POST /leases/{name}/renew` and `/release` take `{"holder", "token"}`; a wrong holder, a wrong token or an expired lease is `409`. A release frees the lease at once, so the next watchdog does not wait for it to expire.
+* `GET /leases` lists the leases that have not expired. The table is in memory on purpose (a lease lasts seconds; after a restart the watchdogs acquire it again), and a new token is never lower than the clock in milliseconds, so it cannot go back.
+* `POST /nodes/{node}/recover` with the headers `X-Healer-Lease: healer-of-<cell>`, `X-Healer-Id` and `X-Healer-Token` is accepted only from the current holder (`409`, `rejected: not_lease_holder`, otherwise). Without the headers the request is refused while any healer lease is held, and always when the process starts with `--require-healer-lease` (or `ORCHESTRATOR_REQUIRE_HEALER_LEASE=1`); with no lease held and the option off, a recovery works as it always did.
+
+HYDRA-UMC-NODE-HEALING takes and renews the lease with `--healer-cell`.
+
+## Pushing the registry to swarm-sync (`--swarm-sync-url`)
+
+Off unless `--swarm-sync-url` is given. Every `--swarm-sync-interval-s` seconds (5 by default) the records of `GET /replica` that differ from what was pushed last go out in one `POST /reconcile` of the swarm-sync node (one cell named after `--orchestrator-name`, a writer number taken from that name). The token is `--swarm-sync-token` or `SWARM_SYNC_TOKEN`. The clock of the writes starts past the newest time in the map (`GET /state?full=1`) and goes up with each write; the generation is `attempt + 1`, which decides which side wins. A push that fails is logged once and tried again with the same records. The second orchestrator reads the map and takes the registry over with `POST /replica/takeover`, which still needs the proof that the robot stopped.
 
 ## Taking the registry over (`POST /replica/takeover`)
 
