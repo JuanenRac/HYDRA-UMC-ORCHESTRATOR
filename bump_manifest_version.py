@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 # =============================================================================
-# HYDRA-UMC - Manifest-backed build version utility
+# Manifest-backed build version utility
 # Copyright (C) 2026 JuanenRac (Electro Hobby 3D) <electrohobby3d@gmail.com>
 # GPL-3.0-or-later - see LICENSE
 # =============================================================================
 """Increment or synchronize a repository-native version and its manifest.
 
-This file is intentionally copied to each HYDRA-UMC/URTC repository root so
+This file is intentionally copied to each repository root of the HYDRA-UMC and URTC families so
 its build scripts work from a normal standalone checkout.  It reads only the
-repository's own ``hydra-umc.project.json``; there is no project catalogue or
+repository's own manifest (``hydra-umc.project.json`` or ``urtc.project.json``); there is no project catalogue or
 per-project conditional logic in this utility.
 """
 
@@ -21,7 +21,10 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parent
-MANIFEST_PATH = ROOT / "hydra-umc.project.json"
+# The manifest names the family: hydra-umc.project.json or urtc.project.json (the first one that exists).
+MANIFEST_NAMES = ("hydra-umc.project.json", "urtc.project.json")
+MANIFEST_PATH = next((ROOT / name for name in MANIFEST_NAMES if (ROOT / name).is_file()), ROOT / MANIFEST_NAMES[0])
+FAMILY = MANIFEST_PATH.name.split(".")[0].upper()
 CHANGELOG_PATH = ROOT / "CHANGELOG.md"
 
 
@@ -269,7 +272,7 @@ def ensure_changelog_version(version: str) -> bool:
 
     entry = (
         f"## [{version}]\n\n"
-        "- Build version synchronized with `hydra-umc.project.json` and the "
+        "- Build version synchronized with `" + MANIFEST_PATH.name + "` and the "
         "repository-native version source.\n\n"
     )
     previous = re.search(r"(?m)^##+\s+\[?\d+\.\d+\.\d+", text)
@@ -347,7 +350,7 @@ def main() -> int:
                 print(f"Changelog synchronized: {declared}")
             sync_package_lock(declared)
             finish(source, style, declared, source_text)
-            print(f"HYDRA-UMC version: v{declared} -> v{declared} (already synchronized)")
+            print(f"{FAMILY} version: v{declared} -> v{declared} (already synchronized)")
             return 0
         expected = next_version(declared)
         if not same_version(current, expected, style):
@@ -366,7 +369,7 @@ def main() -> int:
         ensure_changelog_version(current)
         sync_package_lock(current)
         finish(source, style, current, source_text)
-        print(f"HYDRA-UMC version: v{declared} -> v{current}")
+        print(f"{FAMILY} version: v{declared} -> v{current}")
         return 0
 
     if not same_version(current, declared, style):
@@ -389,7 +392,7 @@ def main() -> int:
     ensure_changelog_version(new)
     sync_package_lock(new)
     finish(source, style, new, updated_text)
-    print(f"HYDRA-UMC version: v{declared} -> v{new}")
+    print(f"{FAMILY} version: v{declared} -> v{new}")
     return 0
 
 
