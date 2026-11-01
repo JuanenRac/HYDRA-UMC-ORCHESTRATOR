@@ -50,14 +50,15 @@ cd "$(dirname "$0")"
 # the extension-less (Linux/macOS) and .exe (Windows, e.g. under WSL/Git
 # Bash) binary names are checked since this same script is meant to work
 # in both environments.
+TARGET_DIR="${CARGO_TARGET_DIR:-target}"
 if [ -x build/hydra-umc-orchestrator ]; then
     exec build/hydra-umc-orchestrator "$@"
-elif [ -x target/release/hydra-umc-orchestrator ]; then
-    exec target/release/hydra-umc-orchestrator "$@"
+elif [ -x "$TARGET_DIR/release/hydra-umc-orchestrator" ]; then
+    exec "$TARGET_DIR/release/hydra-umc-orchestrator" "$@"
 elif [ -x build/hydra-umc-orchestrator.exe ]; then
     exec build/hydra-umc-orchestrator.exe "$@"
-elif [ -x target/release/hydra-umc-orchestrator.exe ]; then
-    exec target/release/hydra-umc-orchestrator.exe "$@"
+elif [ -x "$TARGET_DIR/release/hydra-umc-orchestrator.exe" ]; then
+    exec "$TARGET_DIR/release/hydra-umc-orchestrator.exe" "$@"
 else
     echo "No compiled binary found. Run build.sh first." >&2
     exit 1

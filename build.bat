@@ -62,7 +62,9 @@ if errorlevel 1 (
 )
 
 if not exist build mkdir build
-copy /Y target\release\hydra-umc-orchestrator.exe build\hydra-umc-orchestrator.exe >nul
+set "TARGET_DIR=target"
+if defined CARGO_TARGET_DIR set "TARGET_DIR=%CARGO_TARGET_DIR%"
+copy /Y "%TARGET_DIR%\release\hydra-umc-orchestrator.exe" build\hydra-umc-orchestrator.exe >nul
 
 echo Build OK: build\hydra-umc-orchestrator.exe
 echo Built v%HYDRA_UMC_VERSION_BUILT%. Building never changes the version; to raise it run: python tools\hydra_project_tool.py bump

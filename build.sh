@@ -58,9 +58,10 @@ echo
 
 cargo build --release
 
+TARGET_DIR="${CARGO_TARGET_DIR:-target}"
 mkdir -p build
-cp -f target/release/hydra-umc-orchestrator build/hydra-umc-orchestrator 2>/dev/null || \
-    cp -f target/release/hydra-umc-orchestrator.exe build/hydra-umc-orchestrator.exe
+cp -f "$TARGET_DIR/release/hydra-umc-orchestrator" build/hydra-umc-orchestrator 2>/dev/null || \
+    cp -f "$TARGET_DIR/release/hydra-umc-orchestrator.exe" build/hydra-umc-orchestrator.exe
 
 echo "Build OK: build/hydra-umc-orchestrator"
 printf '%s\n' "Built v${HYDRA_UMC_VERSION_BUILT:-unknown}. Building never changes the version; to raise it run: python tools/hydra_project_tool.py bump"
