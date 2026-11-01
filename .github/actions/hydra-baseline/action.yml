@@ -1,0 +1,248 @@
+# =============================================================================
+# HYDRA-UMC - the baseline steps of every workflow (composite action)
+# Copyright (C) 2026 JuanenRac (Electro Hobby 3D) <electrohobby3d@gmail.com>
+# GPL-3.0-or-later - see LICENSE
+# =============================================================================
+# CANONICAL COPY: it is written once, in tools/canonical/ of the SDK repository, and put into every repository as .github/actions/hydra-baseline/action.yml by
+# tools/sync_repo_tools.py (the check of the same script finds a copy that was edited or left behind). Edit it in the SDK and sync; do not hand-edit a copy.
+#
+# What every repository ran first, in the same words, written once: set up Python (with the pip cache), validate the manifest, the version, the documentation and
+# the secret policy (tools/ci_validate.py), compile every Python source without running the build scripts (those change versions), and then, for the files the
+# repository has, the checks of its language: Python tests, lint and type check, Node, Rust, Go, Flutter, Android and firmware. The workflow of the repository
+# checks the repository out first (a local action needs the files), keeps what is its own after this step, and says in the inputs which variant it needs.
+# Caches: pip, npm, Cargo (target directory and registry), Gradle and the Flutter SDK; Go caches its modules by itself.
+# The versions of ruff and mypy are written here once (the same ones as the ARMOR family); the check of the sync script finds any other pin in a workflow.
+name: Repository baseline
+description: Set up Python, validate the project baseline and run the checks of the languages the repository uses
+
+inputs:
+  python-version:
+    description: The version of Python the workflow of the repository uses
+    required: false
+    default: "3.12"
+  node-version:
+    description: The version of Node.js for the repositories that have a package.json
+    required: false
+    default: "20"
+  python-tests:
+    description: "none, editable (pip install -e .[dev] and pytest tests/) or src-path (pip install .[dev] and pytest with PYTHONPATH=src)"
+    required: false
+    default: none
+  lint:
+    description: "none, full (ruff over src, tests and tools, and mypy over src) or mypy (only the type check of src)"
+    required: false
+    default: none
+  lint-requirements:
+    description: Extra pip requirements the lint step installs besides ruff and mypy (for example the Python client of the SDK)
+    required: false
+    default: ""
+  go-checks:
+    description: "basic (vet, test, build), strict (vet, staticcheck, govulncheck, tidy, test, build) or strict-race (the same with -race and no tidy)"
+    required: false
+    default: basic
+  android-tasks:
+    description: The Gradle tasks of the Android or Wear OS projects
+    required: false
+    default: test
+  arm-packages:
+    description: Packages installed besides the ARM GNU toolchain for the firmware projects
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Python with the pip cache
+      if: ${{ hashFiles('**/requirements*.txt', '**/pyproject.toml') != '' }}
+      uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+      with:
+        python-version: ${{ inputs.python-version }}
+        cache: pip
+        cache-dependency-path: |
+          **/requirements*.txt
+          **/pyproject.toml
+    - name: Set up Python
+      if: ${{ hashFiles('**/requirements*.txt', '**/pyproject.toml') == '' }}
+      uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+      with:
+        python-version: ${{ inputs.python-version }}
+    - name: Validate manifest, version, documentation and secret policy
+      shell: bash
+      run: python tools/ci_validate.py
+    - name: Compile Python sources without running versioning build scripts
+      shell: bash
+      run: |
+        python - <<'PY'
+        from pathlib import Path
+        import py_compile
+
+        excluded = {".git", ".venv", "node_modules", "dist", "build", "target", "__pycache__"}
+        files = [path for path in Path(".").rglob("*.py") if not any(part in excluded for part in path.parts)]
+        for path in files:
+            py_compile.compile(str(path), doraise=True)
+        print(f"PYTHON_SYNTAX=PASS files={len(files)}")
+        PY
+    - name: Install and run the real Python test suite
+      if: ${{ inputs.python-tests == 'editable' }}
+      shell: bash
+      run: |
+        python -m pip install -e ".[dev]"
+        if [ -d tests ]; then
+          python -m pytest tests/ -q
+        else
+          echo "PYTHON_TESTS=SKIPPED no tests/ directory"
+        fi
+    - name: Install and run the real Python test suite with the source path
+      if: ${{ inputs.python-tests == 'src-path' }}
+      shell: bash
+      run: |
+        python -m pip install ".[dev]"
+        if [ -d tests ]; then
+          PYTHONPATH=src python -m pytest tests -q
+        else
+          echo "PYTHON_TESTS=SKIPPED no tests/ directory"
+        fi
+    - name: Lint and type-check
+      if: ${{ inputs.lint == 'full' }}
+      shell: bash
+      env:
+        LINT_REQUIREMENTS: ${{ inputs.lint-requirements }}
+      run: |
+        python -m pip install ruff==0.17.1 mypy==2.4.0 $LINT_REQUIREMENTS
+        python -m ruff check src tests tools
+        python -m mypy src
+    - name: Type-check
+      if: ${{ inputs.lint == 'mypy' }}
+      shell: bash
+      env:
+        LINT_REQUIREMENTS: ${{ inputs.lint-requirements }}
+      run: |
+        python -m pip install mypy==2.4.0 $LINT_REQUIREMENTS
+        python -m mypy src
+    - name: Validate v1 SDK contract fixtures
+      if: ${{ hashFiles('clients/python/tests/test_validation.py') != '' }}
+      shell: bash
+      env:
+        PYTHONPATH: clients/python/src
+      run: python -m unittest discover -s clients/python/tests -v
+    - name: Set up Node.js
+      if: ${{ hashFiles('package.json') != '' }}
+      uses: actions/setup-node@v5
+      with:
+        node-version: ${{ inputs.node-version }}
+        cache: npm
+    - name: Validate Node.js or TypeScript project
+      if: ${{ hashFiles('package.json') != '' }}
+      shell: bash
+      run: |
+        npm ci --ignore-scripts
+        npm run typecheck --if-present
+        npm test --if-present
+        npm run lint --if-present
+    - name: Set up Rust
+      if: ${{ hashFiles('Cargo.toml') != '' }}
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: rustfmt, clippy
+    - name: Cache the Cargo registry and the build directory
+      if: ${{ hashFiles('Cargo.toml') != '' }}
+      uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+    - name: Validate Rust project
+      if: ${{ hashFiles('Cargo.toml') != '' }}
+      shell: bash
+      run: |
+        cargo fmt --check
+        cargo clippy --all-targets -- -D warnings
+        cargo test --all-targets
+    - name: Set up Go
+      if: ${{ hashFiles('go.mod') != '' || hashFiles('src/go.mod') != '' }}
+      uses: actions/setup-go@v5
+      with:
+        go-version: stable
+    - name: Validate Go project
+      if: ${{ (hashFiles('go.mod') != '' || hashFiles('src/go.mod') != '') && inputs.go-checks == 'basic' }}
+      shell: bash
+      run: |
+        module_dir="$(dirname "$(find . -name go.mod -not -path '*/.git/*' -print -quit)")"
+        test -n "$module_dir"
+        cd "$module_dir"
+        go vet ./...
+        go test ./...
+        go build ./...
+    - name: Validate Go project with static analysis and the module tidy check
+      if: ${{ (hashFiles('go.mod') != '' || hashFiles('src/go.mod') != '') && inputs.go-checks == 'strict' }}
+      shell: bash
+      run: |
+        module_dir="$(dirname "$(find . -name go.mod -not -path '*/.git/*' -print -quit)")"
+        test -n "$module_dir"
+        cd "$module_dir"
+        go vet ./...
+        go install honnef.co/go/tools/cmd/staticcheck@2026.2.2
+        "$(go env GOPATH)/bin/staticcheck" ./...
+        # known vulnerabilities of the libraries that the code uses: it only warns (the standard library of the Go of the runner can have some that are not ours)
+        go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
+        "$(go env GOPATH)/bin/govulncheck" ./... || echo "::warning::govulncheck found known vulnerabilities; see the log"
+        go mod tidy
+        git diff --exit-code -- go.mod go.sum
+        go test ./...
+        go build ./...
+    - name: Validate Go project with static analysis and the race detector
+      if: ${{ (hashFiles('go.mod') != '' || hashFiles('src/go.mod') != '') && inputs.go-checks == 'strict-race' }}
+      shell: bash
+      run: |
+        module_dir="$(dirname "$(find . -name go.mod -not -path '*/.git/*' -print -quit)")"
+        test -n "$module_dir"
+        cd "$module_dir"
+        go vet ./...
+        go install honnef.co/go/tools/cmd/staticcheck@2026.2.2
+        "$(go env GOPATH)/bin/staticcheck" ./...
+        # known vulnerabilities of the libraries that the code uses: it only warns (the standard library of the Go of the runner can have some that are not ours)
+        go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
+        "$(go env GOPATH)/bin/govulncheck" ./... || echo "::warning::govulncheck found known vulnerabilities; see the log"
+        go test -race ./...
+        go build ./...
+    - name: Set up Flutter
+      if: ${{ hashFiles('pubspec.yaml') != '' }}
+      uses: subosito/flutter-action@v2
+      with:
+        channel: stable
+        cache: true
+    - name: Validate Flutter project
+      if: ${{ hashFiles('pubspec.yaml') != '' }}
+      shell: bash
+      run: |
+        flutter pub get
+        flutter analyze
+        flutter test
+    - name: Set up Java for Android or Wear OS
+      if: ${{ hashFiles('gradlew') != '' }}
+      uses: actions/setup-java@v4
+      with:
+        distribution: temurin
+        java-version: "21"
+        cache: gradle
+    - name: Validate Android or Wear OS project without a version bump
+      if: ${{ hashFiles('gradlew') != '' }}
+      env:
+        HYDRA_UMC_CI: "1"
+        ANDROID_TASKS: ${{ inputs.android-tasks }}
+      shell: bash
+      run: |
+        chmod +x gradlew
+        ./gradlew $ANDROID_TASKS
+    - name: Install ARM GNU Toolchain for firmware projects
+      if: ${{ hashFiles('build_firmware.sh') != '' }}
+      env:
+        ARM_PACKAGES: ${{ inputs.arm-packages }}
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install --yes gcc-arm-none-eabi binutils-arm-none-eabi $ARM_PACKAGES
+    - name: Compile firmware without a version bump
+      if: ${{ hashFiles('build_firmware.sh') != '' }}
+      env:
+        HYDRA_UMC_CI: "1"
+      shell: bash
+      run: |
+        chmod +x build_firmware.sh
+        ./build_firmware.sh
