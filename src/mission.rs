@@ -685,6 +685,15 @@ impl MissionRegistry {
         })
     }
 
+    /// Takes in a mission rebuilt from a replicated record. A mission this registry already holds is never overwritten: `false`.
+    pub fn insert_adopted(&mut self, mission: Mission) -> bool {
+        if self.missions.contains_key(&mission.id) {
+            return false;
+        }
+        self.missions.insert(mission.id.clone(), mission);
+        true
+    }
+
     /// Persists the current snapshot - call after mutating a `Mission`
     /// obtained from `get_mut()`/`add()` (a direct `&mut Mission` method
     /// call, e.g. `.dispatch(...)`, bypasses this registry's own methods

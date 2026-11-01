@@ -4,6 +4,8 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+- **A second orchestrator can take the registry over, with the stop confirmed, off by default:** `POST /replica/takeover` (only with `--takeover`) takes the records of `GET /replica` into the registry. A mission that was in flight goes back to `Pending` with its attempt raised only if the request proves, with the holder, the mission and the attempt, that the robot stopped it (its acknowledgement of the stop request of the job-dispatcher); without a proof it stays `Unknown` and is not dispatched again. A mission already held is never overwritten, and a body with an unknown field or more than 5000 records is refused.
+
 ## [0.2.2] - The locked dependencies build with the Rust of the CM5
 
 - **The locked dependencies build with the Rust of the CM5:** the lock file picks, for every library, the newest release that still builds with Rust 1.85 (the version declared by the project), so the service builds and installs on the CM5 again; the address-parsing library keeps its patched release.

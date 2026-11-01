@@ -165,6 +165,8 @@ fn run_serve(args: &[String]) -> bool {
         .filter(|t| !t.is_empty());
     let allow_anonymous = args.iter().any(|a| a == "--allow-anonymous");
     let require_attempt = args.iter().any(|a| a == "--require-attempt");
+    // Taking over the replicated registry of another orchestrator (POST /replica/takeover) is off unless asked for.
+    let takeover = args.iter().any(|a| a == "--takeover");
     let log_format = find_flag(args, "--log-format")
         .or_else(|| std::env::var("ORCHESTRATOR_LOG_FORMAT").ok())
         .unwrap_or_else(|| "text".to_string());
@@ -274,6 +276,7 @@ fn run_serve(args: &[String]) -> bool {
                     token,
                     require_attempt,
                     keep_finished,
+                    takeover,
                 },
             );
             true

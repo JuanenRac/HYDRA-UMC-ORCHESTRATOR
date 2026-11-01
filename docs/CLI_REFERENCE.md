@@ -71,7 +71,7 @@ Notable real behavior this demo exercises:
 ### `serve`
 
 The real HTTP API — a genuine `tiny_http` server, not a demo. Started with
-`hydra-umc-orchestrator serve [--addr HOST] [--port PORT] [--job-dispatcher-url URL] [--data-dir DIR] [--token TOKEN] [--allow-anonymous] [--require-attempt] [--job-dispatcher-token TOKEN] [--log-format text|json] [--keep-finished N]`
+`hydra-umc-orchestrator serve [--addr HOST] [--port PORT] [--job-dispatcher-url URL] [--data-dir DIR] [--token TOKEN] [--allow-anonymous] [--require-attempt] [--job-dispatcher-token TOKEN] [--log-format text|json] [--keep-finished N] [--takeover]`
 (`--addr` defaults to `127.0.0.1`, `--port` to `8114`, `--data-dir` to `./data`;
 `--job-dispatcher-url` is optional — omitted, missions stay local-only and
 `auto-dispatch` reports `503`). The access options are described under
@@ -196,7 +196,15 @@ Without a job-dispatcher, `POST /missions/{id}/dispatch` of a stage answers `409
 
 `GET /replica` (`?owner=NAME`, default `orchestrator`) exports every mission as the record HYDRA-UMC-SWARM-SYNC replicates under `mission/<id>`:
 `{"mission_id", "status", "owner", "attempt"}` with the generation `attempt + 1`, which the swarm-sync map compares before the clock, so a newer attempt wins on every node
-whatever the clocks say. The record carries no routing hints: the job-dispatcher holds the jobs. `src/replica.rs` also has the takeover: from the records, a mission that was in flight is put back to
-`Pending` with a higher attempt only when its old holder confirmed that it stopped, and stays `Unknown` otherwise, so it is not dispatched twice. No route runs the takeover yet: the
-confirmation from the robot has no contract.
+whatever the clocks say. The record carries no routing hints: the job-dispatcher holds the jobs.
+
+## Taking the registry over (`POST /replica/takeover`)
+
+Off by default: the route exists only when the process starts with `--takeover`; otherwise it answers the same `404` as any unknown path.
+The body is `{"records": [...], "confirmed_stopped": [{"owner": "node-a", "mission_id": "m1", "attempt": 0}]}` (the records exactly as `GET /replica` of the other orchestrator
+gave them; at most 5000 records and 5000 proofs; an unknown field is a `400`). A mission that was in flight goes back to `Pending` with its attempt raised only when a proof
+names its holder, its id and the attempt it had; with no such proof it stays `Unknown`, so it is not dispatched a second time while it may still be running. The proof is the
+acknowledgement that the robot gave to the stop request of the job-dispatcher (`POST /jobs/stop-ack`, delivered by HYDRA-UMC-SERVER, see its `docs/JOB_STOP_RELAY.md`);
+nothing else counts. A mission this registry already holds is never overwritten. The answer lists `adopted`, `requeued`, `unconfirmed`, `existing` and `rejected`.
+The records carry no routing hints, so a taken-over mission is not resubmitted to the job-dispatcher by this route.
 

@@ -17,7 +17,7 @@
 //! that is no longer current. If nobody confirms, the mission stays `Unknown`: it is not dispatched a second time while it may still be
 //! running somewhere.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::mission::{Mission, MissionRegistry, MissionState};
 
@@ -33,7 +33,7 @@ struct RecordValue<'a> {
 }
 
 /// One mission as the swarm-sync map holds it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReplicaRecord {
     pub key: String,
     /// The JSON text of the record (the map holds strings).
@@ -86,9 +86,6 @@ pub fn records(registry: &MissionRegistry, default_owner: &str) -> Vec<ReplicaRe
         .collect()
 }
 
-// No route takes a registry over yet: that needs the robot to confirm that it stopped, which has no contract. The function is complete and
-// tested; it is what the takeover will call.
-#[allow(dead_code)]
 #[derive(Debug, Default)]
 pub struct Adoption {
     pub missions: Vec<Mission>,
@@ -100,7 +97,6 @@ pub struct Adoption {
     pub rejected: Vec<String>,
 }
 
-#[allow(dead_code)]
 #[derive(serde::Deserialize)]
 struct ParsedValue {
     mission_id: String,
@@ -111,7 +107,6 @@ struct ParsedValue {
 
 /// Rebuilds missions from replicated records. `confirm_stopped(owner, mission_id, attempt)` asks the robot that held an in-flight mission
 /// whether it stopped working on it.
-#[allow(dead_code)]
 pub fn adopt(
     records: &[ReplicaRecord],
     confirm_stopped: impl Fn(&str, &str, u32) -> bool,
@@ -171,6 +166,66 @@ pub fn adopt(
         out.missions.push(mission);
     }
     out
+}
+
+/// The proof that a robot stopped working on a mission: the holder, the mission and the attempt it was working on. It comes from the
+/// acknowledgement that the robot (through its server) gave to the job-dispatcher's stop request; nothing else counts as proof.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StopEvidence {
+    pub owner: String,
+    pub mission_id: String,
+    pub attempt: u32,
+}
+
+/// What a takeover did, mission by mission.
+#[derive(Debug, Default, Serialize)]
+pub struct TakeoverReport {
+    /// Missions taken into the registry.
+    pub adopted: Vec<String>,
+    /// In flight and proven stopped: back to `Pending` with the attempt raised.
+    pub requeued: Vec<String>,
+    /// In flight with no proof: kept as `Unknown`, not to be dispatched again.
+    pub unconfirmed: Vec<String>,
+    /// Missions this registry already holds: left exactly as they are.
+    pub existing: Vec<String>,
+    /// Records that could not be read.
+    pub rejected: Vec<String>,
+}
+
+/// Takes `records` into `registry`. A mission that was in flight goes back to `Pending` only if `evidence` names its holder, its id and
+/// the attempt it had; with no such proof it stays `Unknown`. A mission the registry already holds is never touched.
+pub fn takeover(
+    registry: &mut MissionRegistry,
+    records: &[ReplicaRecord],
+    evidence: &[StopEvidence],
+) -> TakeoverReport {
+    let adoption = adopt(records, |owner, mission_id, attempt| {
+        evidence
+            .iter()
+            .any(|e| e.owner == owner && e.mission_id == mission_id && e.attempt == attempt)
+    });
+    let mut report = TakeoverReport {
+        rejected: adoption.rejected,
+        ..TakeoverReport::default()
+    };
+    for mission in adoption.missions {
+        let id = mission.id.clone();
+        if registry.insert_adopted(mission) {
+            report.adopted.push(id.clone());
+            if adoption.requeued.contains(&id) {
+                report.requeued.push(id);
+            } else if adoption.unconfirmed.contains(&id) {
+                report.unconfirmed.push(id);
+            }
+        } else {
+            report.existing.push(id);
+        }
+    }
+    if !report.adopted.is_empty() {
+        registry.persist();
+    }
+    report
 }
 
 #[cfg(test)]
@@ -313,5 +368,80 @@ mod tests {
         );
         assert_eq!(adoption.missions.len(), 1);
         assert_eq!(adoption.rejected.len(), 4);
+    }
+
+    fn proof(owner: &str, mission_id: &str, attempt: u32) -> StopEvidence {
+        StopEvidence {
+            owner: owner.into(),
+            mission_id: mission_id.into(),
+            attempt,
+        }
+    }
+
+    #[test]
+    fn a_takeover_requeues_only_on_a_proof_that_names_the_holder_the_mission_and_the_attempt() {
+        let mut held = dispatched("held", "node-a");
+        held.start().unwrap();
+        let records = vec![
+            record_of(&held, "orch"),
+            record_of(&dispatched("m2", "node-b"), "orch"),
+            record_of(&dispatched("m3", "node-c"), "orch"),
+            record_of(&dispatched("m4", "node-d"), "orch"),
+        ];
+        let evidence = vec![
+            proof("node-a", "held", 1),
+            proof("node-b", "m2", 7), // another attempt: not a proof
+            proof("node-x", "m3", 1), // another holder: not a proof
+        ];
+        let mut registry = MissionRegistry::new();
+        let report = takeover(&mut registry, &records, &evidence);
+        assert_eq!(report.adopted.len(), 4);
+        assert_eq!(report.requeued, vec!["held"]);
+        assert_eq!(report.unconfirmed, vec!["m2", "m3", "m4"]);
+        assert!(matches!(
+            registry.get("held").unwrap().state,
+            MissionState::Pending
+        ));
+        assert_eq!(registry.get("held").unwrap().attempt, 2);
+        assert!(matches!(
+            registry.get("m2").unwrap().state,
+            MissionState::Unknown { .. }
+        ));
+    }
+
+    #[test]
+    fn a_takeover_never_overwrites_a_mission_the_registry_holds() {
+        let mut registry = MissionRegistry::new();
+        registry.add("mine").dispatch("node-z").unwrap();
+        let records = vec![
+            record_of(&dispatched("mine", "node-a"), "orch"),
+            record_of(&Mission::new("new"), "orch"),
+        ];
+        let report = takeover(&mut registry, &records, &[proof("node-a", "mine", 1)]);
+        assert_eq!(report.existing, vec!["mine"]);
+        assert_eq!(report.adopted, vec!["new"]);
+        assert!(
+            report.requeued.is_empty(),
+            "a mission left as it was is not reported as requeued"
+        );
+        assert!(
+            matches!(registry.get("mine").unwrap().state, MissionState::Dispatched { ref node } if node == "node-z")
+        );
+    }
+
+    #[test]
+    fn a_takeover_with_no_proofs_requeues_nothing() {
+        let records = vec![
+            record_of(&dispatched("m1", "node-a"), "orch"),
+            record_of(&Mission::new("m2"), "orch"),
+        ];
+        let mut registry = MissionRegistry::new();
+        let report = takeover(&mut registry, &records, &[]);
+        assert!(report.requeued.is_empty());
+        assert_eq!(report.unconfirmed, vec!["m1"]);
+        assert!(matches!(
+            registry.get("m2").unwrap().state,
+            MissionState::Pending
+        ));
     }
 }

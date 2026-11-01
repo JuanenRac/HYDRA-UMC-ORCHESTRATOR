@@ -69,6 +69,8 @@ pub struct AppState {
     pub close_outbox: SharedOutbox,
     pub token: Option<String>,
     pub require_attempt: bool,
+    /// `POST /replica/takeover` exists only when this is set
+    pub takeover: bool,
 }
 
 /// How the HTTP surface is protected. The default - no token, attempt
@@ -87,6 +89,8 @@ pub struct ServerOptions {
     /// confirmed are kept in `missions.json`, the oldest are forgotten; 0 (the
     /// default) keeps every mission, as before
     pub keep_finished: usize,
+    /// when set, `POST /replica/takeover` takes a replicated registry over (off by default: the route answers like an unknown one)
+    pub takeover: bool,
 }
 
 /// Request bodies here are a few dozen bytes; anything past this is refused
@@ -253,6 +257,7 @@ pub fn run(
         close_outbox: Arc::new(close_outbox),
         token: options.token.filter(|t| !t.is_empty()),
         require_attempt: options.require_attempt,
+        takeover: options.takeover,
     });
 
     if keep_finished > 0 {
@@ -356,6 +361,14 @@ fn serve(server: &Server, state: &AppState) {
                 handle_fail(request, state, id, &raw);
             }
             (Method::Get, ["replica"]) => handle_replica(request, state, &url),
+            (Method::Post, ["replica", "takeover"]) => {
+                if !state.takeover {
+                    write_json(request, 404, &json!({"error": "not found"}));
+                    continue;
+                }
+                let raw = body_or_reply!(request);
+                handle_takeover(request, state, &raw);
+            }
             (Method::Get, ["plans"]) => handle_plan_list(request, state),
             (Method::Get, ["plans", id]) => handle_plan_get(request, state, id),
             (Method::Post, ["plans"]) => {
@@ -669,6 +682,55 @@ fn handle_replica(request: tiny_http::Request, state: &AppState, url: &str) {
     let reg = state.registry.lock().unwrap();
     let records = crate::replica::records(&reg, &owner);
     write_json(request, 200, &json!({"records": records}));
+}
+
+/// The most records or proofs one takeover may carry.
+const TAKEOVER_MAX_ITEMS: usize = 5000;
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TakeoverRequest {
+    records: Vec<crate::replica::ReplicaRecord>,
+    #[serde(default)]
+    confirmed_stopped: Vec<crate::replica::StopEvidence>,
+}
+
+/// `POST /replica/takeover` (only with `--takeover`): takes the records of another orchestrator into this registry. A mission that was in
+/// flight goes back to `Pending` with its attempt raised only if `confirmed_stopped` proves its holder stopped it (holder, mission and
+/// attempt must all match); otherwise it stays `Unknown`. A mission already held here is never overwritten.
+fn handle_takeover(request: tiny_http::Request, state: &AppState, raw: &str) {
+    let req: TakeoverRequest = match serde_json::from_str(raw) {
+        Ok(r) => r,
+        Err(e) => {
+            write_json(
+                request,
+                400,
+                &json!({"error": format!("invalid takeover request: {e}")}),
+            );
+            return;
+        }
+    };
+    if req.records.len() > TAKEOVER_MAX_ITEMS || req.confirmed_stopped.len() > TAKEOVER_MAX_ITEMS {
+        write_json(
+            request,
+            400,
+            &json!({"error": format!("at most {TAKEOVER_MAX_ITEMS} records and {TAKEOVER_MAX_ITEMS} proofs per takeover")}),
+        );
+        return;
+    }
+    let report = {
+        let mut reg = state.registry.lock().unwrap();
+        crate::replica::takeover(&mut reg, &req.records, &req.confirmed_stopped)
+    };
+    crate::log_line!(
+        "takeover: {} adopted ({} requeued on proof, {} unconfirmed), {} already held, {} rejected",
+        report.adopted.len(),
+        report.requeued.len(),
+        report.unconfirmed.len(),
+        report.existing.len(),
+        report.rejected.len()
+    );
+    write_json(request, 200, &serde_json::to_value(report).unwrap());
 }
 
 fn plan_view(state: &AppState, plan: &str) -> Option<crate::plan::PlanView> {
@@ -2323,6 +2385,7 @@ mod tests {
                 token: Some("s3cret-token".to_string()),
                 require_attempt: false,
                 keep_finished: 0,
+                takeover: false,
             },
         );
         for (method, path) in [
@@ -2426,6 +2489,7 @@ mod tests {
                 token: None,
                 require_attempt: true,
                 keep_finished: 0,
+                takeover: false,
             },
         );
         post(strict, "/missions", r#"{"id":"m2"}"#);
@@ -2948,5 +3012,68 @@ mod tests {
         let (_, named) = get(port, "/replica?owner=orch-b");
         assert!(named.contains("orch-b"), "{named}");
         assert_eq!(get(port, "/replica?owner=").0, 400);
+    }
+
+    fn takeover_body(proofs: &str) -> String {
+        let value = r#"{"mission_id":"m1","status":"running","owner":"node-a","attempt":0}"#;
+        format!(
+            r#"{{"records":[{{"key":"mission/m1","value":{},"generation":1}}],"confirmed_stopped":{proofs}}}"#,
+            serde_json::to_string(value).unwrap()
+        )
+    }
+
+    #[test]
+    fn the_takeover_route_does_not_exist_unless_it_is_switched_on() {
+        let port = start_test_server();
+        let (status, body) = post(port, "/replica/takeover", &takeover_body("[]"));
+        assert_eq!(status, 404, "{body}");
+        assert_eq!(get(port, "/missions/m1").0, 404, "nothing was adopted");
+    }
+
+    #[test]
+    fn the_takeover_route_requeues_on_a_proof_and_keeps_the_mission_unknown_without_one() {
+        let _guard = net_test_lock();
+        let on = ServerOptions {
+            takeover: true,
+            ..ServerOptions::default()
+        };
+        let port = start_test_server_with(None, on.clone());
+        let (status, body) = post(port, "/replica/takeover", &takeover_body("[]"));
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(json_of(&body)["unconfirmed"][0], "m1");
+        assert_eq!(
+            json_of(&get(port, "/missions/m1").1)["state"]["Unknown"]["last_node"],
+            "node-a"
+        );
+
+        let port = start_test_server_with(None, on);
+        let proofs = r#"[{"owner":"node-a","mission_id":"m1","attempt":0}]"#;
+        let (status, body) = post(port, "/replica/takeover", &takeover_body(proofs));
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(json_of(&body)["requeued"][0], "m1");
+        let mission = json_of(&get(port, "/missions/m1").1);
+        assert_eq!(mission["state"], "Pending");
+        assert_eq!(mission["attempt"], 1);
+        // posting it again changes nothing: the mission is held now
+        let (_, again) = post(port, "/replica/takeover", &takeover_body(proofs));
+        assert_eq!(json_of(&again)["existing"][0], "m1");
+    }
+
+    #[test]
+    fn the_takeover_route_refuses_what_it_cannot_read() {
+        let _guard = net_test_lock();
+        let port = start_test_server_with(
+            None,
+            ServerOptions {
+                takeover: true,
+                ..ServerOptions::default()
+            },
+        );
+        assert_eq!(post(port, "/replica/takeover", "{").0, 400);
+        assert_eq!(
+            post(port, "/replica/takeover", r#"{"records":[],"extra":1}"#).0,
+            400
+        );
+        assert_eq!(post(port, "/replica/takeover", r#"{"records":[],"confirmed_stopped":[{"owner":"a","mission_id":"m","attempt":1,"x":2}]}"#).0, 400);
     }
 }
