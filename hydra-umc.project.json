@@ -25,6 +25,8 @@
   "service": {
     "port": 8114,
     "systemd_unit": "hydra-umc-orchestrator.service",
-    "health_path": "/health"
+    "health_path": "/health",
+    "grpc_port": 50114,
+    "grpc_service": "hydra.common.v1.HealthService"
   }
 }
