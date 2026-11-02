@@ -33,13 +33,17 @@
 // run one real scheduling pass (its own tool-aware/fairness routing -
 // mission.rs never had any of its own) and transitions this mission's
 // local state using whichever robot it actually assigned. Still no real
-// gRPC wiring and no real E-STOP-sending code - this is the mission-
+// gRPC wiring - this is the mission-
 // queue integration named above, not the PTP-synced dispatch or
 // fleet-wide health aggregation, and it grants no new physical
 // authority: it makes the exact same routing decision Job-Dispatcher
 // already made for real reachable from here, not a new one.
 
+mod config;
+mod estop;
+mod hmac;
 mod job_dispatcher;
+mod job_events;
 mod lease;
 mod logging;
 mod mission;
@@ -279,6 +283,27 @@ fn run_serve(args: &[String]) -> bool {
     // real request - mirroring how the outbox's own reconciliation runs
     // immediately at startup rather than waiting for its first retry
     // interval.
+    // the optional configuration file: the global stop (always on, this only tunes it) and the signed events of Job-Dispatcher (off)
+    let file_config = match find_flag(args, "--config")
+        .or_else(|| std::env::var("ORCHESTRATOR_CONFIG").ok())
+        .filter(|p| !p.is_empty())
+    {
+        None => config::FileConfig::default(),
+        Some(path) => match config::load(&path) {
+            Ok(file) => file,
+            Err(e) => {
+                crate::log_line!("fatal: {e}");
+                return false;
+            }
+        },
+    };
+    let (estop_config, job_events_config) = match config::build(&file_config, &data_dir) {
+        Ok(built) => built,
+        Err(e) => {
+            crate::log_line!("fatal: {e}");
+            return false;
+        }
+    };
     let missions_path = std::path::PathBuf::from(&data_dir).join("missions.json");
     let mut registry = match MissionRegistry::load(missions_path.clone()) {
         Ok(registry) => registry,
@@ -307,6 +332,12 @@ fn run_serve(args: &[String]) -> bool {
                 "POST /missions/:id/{{dispatch,auto-dispatch,start,complete,cancel,fail}},"
             );
             crate::log_line!("POST /nodes/:node/recover, GET /stats, GET /health");
+            crate::log_line!("POST /estop (the global stop, always available), GET /estop, POST /estop/release (administrator)");
+            if job_events_config.is_some() {
+                crate::log_line!(
+                    "POST /events/job-dispatcher accepts the signed events of job-dispatcher"
+                );
+            }
             if token.is_some() {
                 crate::log_line!("bearer token required on every route except GET /health");
             } else if !server::is_loopback_addr(&addr) {
@@ -334,6 +365,8 @@ fn run_serve(args: &[String]) -> bool {
                     require_healer_lease,
                     lease_max_ttl_ms,
                     swarm_push,
+                    estop: Some(estop_config),
+                    job_events: job_events_config,
                 },
             );
             true

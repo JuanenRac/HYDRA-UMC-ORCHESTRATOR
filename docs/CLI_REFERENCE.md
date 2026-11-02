@@ -102,6 +102,10 @@ Real routes (`src/server.rs`'s own dispatch table):
 | `POST` | `/missions/:id/cancel` | Idempotent cancel, confirming to JOB-DISPATCHER on a fresh (non-repeat) cancellation: a job nobody was given is withdrawn there (`/jobs/cancel`), one a robot holds is closed as failed (`/jobs/complete`) |
 | `POST` | `/missions/:id/fail` | `{"reason": "...", "attempt": n, "node": "..."}` (the last two optional), confirming to JOB-DISPATCHER the same way `cancel` does |
 | `POST` | `/nodes/:node/recover` | HYDRA-UMC-NODE-HEALING's own real caller — requeues every mission dispatched to `node` (see that project's own `OrchestratorReactor`) and asks JOB-DISPATCHER (`/jobs/requeue`) to take those jobs off that robot and hold it unavailable until it reports in again. `%XX` escapes in `:node` are decoded. The node name must be the robot id JOB-DISPATCHER assigned |
+| `GET` | `/estop` | The state of the global stop (see below); always answers |
+| `POST` | `/estop` | Engage the global stop (see below); always available, idempotent, audited |
+| `POST` | `/estop/release` | End the global stop; only an administrator |
+| `POST` | `/events/job-dispatcher` | A signed event of the job-dispatcher (only with the `job_events` section of the configuration file; otherwise `404`) |
 | `GET` | `/stats` | `{"missionCount": ..., "missionsByState": {...}, "pendingRemoteCloses": n, "oldestPendingCloseAgeSeconds": n or null, "jobDispatcherUrl": ..., "jobDispatcher": {"lastOkAtMs": ..., "lastError": ..., "lastErrorAtMs": ...}}` |
 | `GET` | `/health` | `{"status": "ok", "name": "HYDRA-UMC-ORCHESTRATOR", "version": ...}`; the only route that never asks for the token, so a watchdog can probe it |
 
@@ -223,3 +227,28 @@ acknowledgement that the robot gave to the stop request of the job-dispatcher (`
 nothing else counts. A mission this registry already holds is never overwritten. The answer lists `adopted`, `requeued`, `unconfirmed`, `existing` and `rejected`.
 The records carry no routing hints, so a taken-over mission is not resubmitted to the job-dispatcher by this route.
 
+## The global stop (`/estop`)
+
+`POST /estop` stops the dispatching of the whole fleet from the orchestrator. It is a safety function and is built so that nothing gets in its way:
+
+* **It is never switched off and never waits.** The latch is an atomic flag set before anything else happens; the list of the missions that were moving is read with `try_lock` (a busy registry does not delay the stop; the list is then `null`); a body that is empty, not JSON or has strange fields still engages it; the call to the server has its own thread and a short timeout.
+* **Who may.** The general bearer token (an operator) or the administrator token. No confirmation is asked: a stop is safe. `POST /estop/release` needs the administrator token (`estop.admin_token_env`); with a single token, or none (a loopback laboratory), that one is the administrator. A release by an operator is a `403` and is written to the audit.
+* **What it does.** It engages the latch, forwards the stop to HYDRA-UMC-SERVER (`POST <estop.server_url>/api/stop-all`, with the bearer token of `estop.server_token_env`), which stops every robot and, when its own option is on, announces the retained stop on the MQTT bridge; the answer says `server`: `confirmed`, `failed: <why>`, `already_confirmed` or `not_configured`. A repeat retries the call only while it was not confirmed. The answer also lists `affected_missions`.
+* **While it is engaged** `POST /missions/:id/dispatch`, `auto-dispatch` and `start` answer `423`, and an `assigned` event of the job-dispatcher is not applied. Cancelling, completing, failing and recovering stay possible.
+* **Idempotent and audited.** Engaging it again changes nothing (`already_engaged`, the first author is kept). Every stop, repeat, release and refused release is one JSON line in `data/estop_audit.jsonl` and in the log.
+* **It does not clear by itself.** The latch is saved to `data/estop.json` and survives a restart; a saved state that exists but cannot be read counts as engaged. Only `POST /estop/release` ends it. Releasing here does not release the stop of the server: that one is rearmed explicitly on its own side.
+* **What it is not.** It is software on the network. The controller and the actuator keep the last word, and the MQTT announcement depends on the option of the server and on the broker. Marking the moving missions as paused is not done: the registry has no such state yet.
+
+## Configuration file (`--config`)
+
+`--config FILE` (or `ORCHESTRATOR_CONFIG`) reads the tuned values of the global stop and of the events of the job-dispatcher. An unknown key stops the start. Secrets are never in the file: each one is named by an environment variable.
+
+```json
+{
+  "estop": {"server_url": "http://127.0.0.1:18080", "server_token_env": "ORCHESTRATOR_ESTOP_SERVER_TOKEN", "fanout_timeout_seconds": 3, "admin_token_env": "ORCHESTRATOR_ADMIN_TOKEN"},
+  "job_events": {"enabled": true, "secret_env": "ORCHESTRATOR_JD_WEBHOOK_SECRET", "max_skew_seconds": 300}
+}
+```
+
+* **`estop`:** where the stop is forwarded and who administers it. Without the section the stop still works, kept in `data/estop.json`, and is not forwarded.
+* **`job_events`:** off unless `enabled` is `true`. `POST /events/job-dispatcher` accepts an event only when `X-Hydra-Signature` is `sha256=` plus the HMAC-SHA256 of `"<X-Hydra-Timestamp>.<body>"` with the secret (the one the job-dispatcher signs with, `events.webhooks[].secret_env` there), compared in constant time, and the timestamp is within `max_skew_seconds` (1 to 86400, default 300) of the clock of this machine. The bearer token of the API is not what lets an event in. An `assigned` event moves a `Pending` mission to `Dispatched` on the robot it names (the same step as `auto-dispatch`); `done`, `failed` and `unknown` are only counted, because the outcome of a mission is decided by what its node reports. `GET /stats` shows the counters under `jobEvents`.

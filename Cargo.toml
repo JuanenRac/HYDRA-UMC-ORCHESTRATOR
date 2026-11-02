@@ -22,9 +22,9 @@ lto = true
 # caller-supplied commands. server.rs exposes the exact same
 # MissionRegistry over a real HTTP API - still purely in-memory
 # bookkeeping (dispatch/start/complete/cancel/fail/recover), no real
-# gRPC wiring to NODE-HEALING and no real E-STOP-sending code anywhere
-# in this repo - main.rs's own module docs already say both remain real
-# future work, this does not add either.
+# gRPC wiring to NODE-HEALING. The only stop it sends is estop.rs: a latch
+# plus a request to HYDRA-UMC-SERVER; main.rs's own module docs say the
+# gRPC wiring remains real future work, this does not add it.
 #
 # ureq (new) - a real, minimal, blocking HTTP *client* (tiny_http above
 # is server-only) so this repo can now call out to

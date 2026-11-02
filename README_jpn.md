@@ -19,7 +19,7 @@ GPL-3.0-or-later - see LICENSE
   <img src="https://img.shields.io/badge/Language-Rust-orange.svg" alt="Language">
   <img src="https://img.shields.io/badge/Architecture-Distributed%20Edge-blue.svg" alt="Architecture">
   <img src="https://img.shields.io/badge/Sync-JSON%2FHTTP-yellow.svg" alt="Sync">
-  <img src="https://img.shields.io/badge/Tests-197%20passing-2ea44f.svg" alt="Tests">
+  <img src="https://img.shields.io/badge/Tests-234%20passing-2ea44f.svg" alt="Tests">
   <img src="https://img.shields.io/badge/Version-0.2.4-0f6cbd.svg" alt="Version">
   <img src="https://img.shields.io/badge/Maturity-functional-0F6CBD.svg" alt="Maturity">
 </p>
@@ -40,7 +40,7 @@ GPL-3.0-or-later - see LICENSE
 |---|---|
 | バージョン | `0.2.4` |
 | 成熟度 | 機能する |
-| テスト | 197 (`cargo test`) |
+| テスト | 234 (`cargo test`) |
 | 技術 | Rust / tiny_http / ureq / JSON/HTTP |
 | 対象 | HYDRA-UMC セルの Raspberry Pi CM5 |
 | 実機での確認 | まだです：このバージョンについて実機での動作記録はありません |
@@ -56,7 +56,7 @@ GPL-3.0-or-later - see LICENSE
 | 領域 | 状態 | ここでの意味 |
 |---|---|---|
 | ソフトウェア | 🟡 | 主な目的では動作します。足りない点は上の正直さの確認に書かれています |
-| テスト | 🟢 | 自動テスト 197 件。変更のたびに実行されます |
+| テスト | 🟢 | 自動テスト 234 件。変更のたびに実行されます |
 | 実機 | 🔴 | まだです：このバージョンについて実機での動作記録はありません |
 | インターフェースとプロトコル | 🟡 | 提供するルートやメッセージは文書化され、クライアントで試験済みです。すべてのクライアントがまだ使ったわけではありません |
 | 連携 | 🟠 | CM5 のテストベンチで他のサービスと一緒に動作し、メッセージは SDK の共通契約に従います |
@@ -78,12 +78,14 @@ GPL-3.0-or-later - see LICENSE
 * 📜 **job-dispatcher との文書化された契約を、実際の 2 つのプロセスで検証:** `docs/JOB_DISPATCHER_CONTRACT.md` は、何を誰が持つか(dispatcher はロボットへの作業の割り当て、このオーケストレーターはミッション:そのライフサイクル、終了処理、復旧)と、双方が互いに何を約束するかを手順ごとに定めます。`tools/verify_dispatcher_contract.py` は実際の dispatcher(Go、隣のチェックアウトから)と実際のオーケストレーターを起動し、ミッションを通します。ミッションは保留中のジョブであり、手動の割り当ては拒否され、dispatcher がロボットを選び、完了と失敗はジョブを閉じ、ノードの復旧はその作業を取り戻して失われた試行の遅れた報告を遮断します。Go、dispatcher、またはビルド済みのオーケストレーターがなければスキップします(終了コード 0)。*(実装済み、23 項目の検証)*
 * 🕸️ **スウォーム調整：** 複数のコントローラーにまたがる最大 32 台以上の独立したロボットアームをオーケストレートします。 *（計画中）*
 * ⚖️ **負荷分散：** 最も空いている、または最適な装備を持つロボットに自動的にミッションを割り当てます。
-* 🛡️ **集中安全管理：** グローバル E-STOP 管理とフリート全体の健全性監視。 *（計画中）*
+* 🛡️ **集中安全管理：** フリート全体の健全性監視 *（計画中）*。グローバル停止（`POST /estop`）はすでにあります。下記を参照。
 * 📡 **統一 API：** アプリと Studio が工場全体とやり取りするための単一のエントリポイントを提供します。 *（計画中）*
 * 🧩 **実装済み v0 —— ミッション状態機械：** `mission.rs` が各ミッションを `Pending -> Dispatched -> InProgress -> Completed`（および終端状態の `Cancelled`/`Failed`）を通じて追跡し、冪等なキャンセルと、ノードが到達不能/無効と報告された場合の実際のリカバリーを備えています——下記の `mission-demo` を参照してください。純粋なインメモリロジックであり、実行やテストに JOB-DISPATCHER/NODE-HEALING とのライブ gRPC ピアは不要です。
 * 🧱 **デフォルトで安全。遅れて届いた報告は引き継ぎを上書きできません（v0）：** API は指定がなければ `127.0.0.1:8114` で待ち受け、別のアドレスにはベアラートークン（`--token` / `ORCHESTRATOR_TOKEN`。設定すると `GET /health` 以外のすべてのルートが要求します）か、明示的な `--allow-anonymous` が必要です。64 KB を超えるリクエストボディは `413` で拒否されます。ディスパッチのたびにミッションの `attempt` が増え、古い `attempt`（またはもうそのミッションを保持していないノードの名前）を持つ `start`/`complete`/`fail` は、ミッションに触れずに `409` で拒否されます。利用不可と宣言されたノードがネットワーク分断から戻ってきても、ミッションの引き継ぎ先ノードを上書きできません（`--require-attempt` でこのフィールドを必須にできます）。ミッションレジストリとアウトボックスは、前のファイルを置き換える前にディスクへ強制書き込みされ、同梱の systemd ユニットはプロセスに書き込み可能な状態ディレクトリを与えます（以前は `ProtectSystem=strict` により既定の `data` ディレクトリが読み取り専用になり、再起動で何も残りませんでした）。また `docker-compose.yml` は実際にサービスを起動します（`serve` コマンド、ヘルスチェック、必須トークン、固定イメージ、公開されるのはオーケストレーターのみでホストのループバックだけ）。*（実装済み）*
 * 🔭 **読みやすい運用(任意):** `GET /stats` は、確認されていない最も古いクローズの経過時間(`oldestPendingCloseAgeSeconds`)と、JOB-DISPATCHER への呼び出しの最後の成功と最後の失敗も示します。`--log-format json` はログ 1 行につき JSON オブジェクト 1 つを書き出します。`--keep-finished N` はクローズが確認済みの最も古い完了ミッションを忘れ、`missions.json` が際限なく増えないようにします。ファイルには `schema_version` があり、より新しいバージョンが書いたものは拒否されます。クローズは、どの試行を閉じるかを JOB-DISPATCHER に伝えます。すべて既定では無効または変更なしです。 *(実装済み)*
 * 🔐 **ヒーラーのリースと複製されたレジストリ（任意）：** `POST /leases/{name}/acquire|renew|release` はセルごとのリース（`healer-of-<セル>`）を、上がるだけのトークンとともに保持し、復旧要求は保持者からのものだけが受け付けられます（`--require-healer-lease` はそれ以外をすべて拒否）。`--swarm-sync-url` は `GET /replica` のレコードを数秒ごとに HYDRA-UMC-SWARM-SYNC へ送り、2 台目のオーケストレーターがレジストリを引き継げるようにします。2 台のマシンでは未検証です。
+* 🛑 **常に使えるグローバル停止：** `POST /estop`（オペレーターまたは管理者、確認なし）は、何よりも先にラッチを掛け、停止を HYDRA-UMC-SERVER（`/api/stop-all`）へ転送し、動いていたミッションを一覧にします。繰り返しても何も変わらず、すべての停止と解除は監査ファイルに記録され、ラッチは再起動後も残り（読み取れない保存状態は掛かっているものとして扱います）、解除できるのは管理者の `POST /estop/release` だけです。掛かっている間、ミッションの割り当て、自動割り当て、開始は `423` を返し、ミッションを閉じることはできます。これはソフトウェアであり、最終的な判断はコントローラーとアクチュエーターにあります。
+* 📥 **ジョブディスパッチャーの署名付きイベント（既定はオフ）：** 設定ファイルの `job_events` セクションを有効にすると、`POST /events/job-dispatcher` が HYDRA-UMC-JOB-DISPATCHER のイベントを受け取ります（タイムスタンプと本文に対する HMAC-SHA256、シークレットは環境変数、時計のずれに上限、定数時間の比較）。`assigned` イベントは待機中のミッションを割り当て済みにするので、ここで誰も要求していないパスによる割り当ても見逃されません。ほかの種類は `GET /stats` で数えるだけです。
 
 ## 🧩 HYDRA-UMC での役割
 
@@ -164,7 +166,7 @@ cargo test
 
 ## 🧪 テスト
 
-`cargo test` で自動テスト 197 件を実行します。 ハードウェアも、このマシンの外にあるものも必要ありません。
+`cargo test` で自動テスト 234 件を実行します。 ハードウェアも、このマシンの外にあるものも必要ありません。
 
 CI は `HYDRA_UMC_CI=1 python tools/ci_validate.py` を実行し、マニフェスト、文書、8 つの README、図を検査します。
 
@@ -213,7 +215,7 @@ run.bat mission-demo
 ```
 
 ```bash
-cargo test   # 197 件のテスト：mission.rs の全状態遷移・不正な遷移の拒否・
+cargo test   # 234 件のテスト：mission.rs の全状態遷移・不正な遷移の拒否・
              # 冪等なキャンセル・ノード障害後のリカバリーに加え、
              # outbox.rs のクラッシュに強い永続化、job_dispatcher.rs の
              # 実際のHTTPクライアント、server.rs のHTTPハンドラー

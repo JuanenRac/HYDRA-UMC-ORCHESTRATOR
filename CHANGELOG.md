@@ -4,6 +4,10 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+- **A global stop that is always available:** `POST /estop` (an operator or an administrator, no confirmation) engages a latch before anything else, forwards the stop to HYDRA-UMC-SERVER (`/api/stop-all`) and lists the missions that were moving. It never waits for the registry, answers even to a body it cannot read, is idempotent, writes every stop and release to an audit file, survives a restart (a saved state that cannot be read counts as engaged) and does not clear by itself: only `POST /estop/release` by an administrator does. While it is engaged dispatching, auto-dispatching and starting a mission answer `423`. `GET /estop` and `GET /stats` show its state. 15 new tests.
+
+- **Signed events of the job-dispatcher, off by default:** with the `job_events` section of the new configuration file (`--config`), `POST /events/job-dispatcher` accepts the events of the job dispatcher when the HMAC-SHA256 signature and the timestamp are right; an `assigned` event moves a pending mission to dispatched, so an assignment made by a pass nobody here asked for is not missed. The secret is read from an environment variable and the signature is checked with a small HMAC-SHA256 written for this and tested against the published vectors. The bearer token of the API is not what lets an event in. 17 new tests.
+
 ## [0.2.4] - GET /metrics in the Prometheus text format, healer leases so that only the holder of the lease of a cell may ask for a recovery and the mission registry can be pushed to SWARM-SYNC
 
 - **`GET /metrics` in the text format of Prometheus:** the version, the uptime, the responses by class of status (2xx to 5xx) and the health, the aggregate of the checks of the service (the mission registry is readable); only numbers about the service, never a mission, a node, a path, an address or a token. Behind the token when the service has one (`401` without it). The code is the canonical `service_metrics.rs` of HYDRA-UMC-SDK, copied byte for byte.

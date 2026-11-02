@@ -19,14 +19,14 @@ GPL-3.0-or-later - see LICENSE
   <img src="https://img.shields.io/badge/Language-Rust-orange.svg" alt="Language">
   <img src="https://img.shields.io/badge/Architecture-Distributed%20Edge-blue.svg" alt="Architecture">
   <img src="https://img.shields.io/badge/Sync-JSON%2FHTTP-yellow.svg" alt="Sync">
-  <img src="https://img.shields.io/badge/Tests-197%20passing-2ea44f.svg" alt="Tests">
+  <img src="https://img.shields.io/badge/Tests-234%20passing-2ea44f.svg" alt="Tests">
   <img src="https://img.shields.io/badge/Version-0.2.4-0f6cbd.svg" alt="Version">
   <img src="https://img.shields.io/badge/Maturity-functional-0F6CBD.svg" alt="Maturity">
 </p>
 
 ---
 
-**诚实核查——今天真正能跑起来的部分：** 任务状态机（`src/mission.rs`：`Mission`/`MissionRegistry`，每一次 `Pending -> Dispatched -> InProgress -> Completed`/`Cancelled`/`Failed` 转换、幂等取消、节点故障恢复）、它自己的磁盘持久化（`MissionRegistry::load`/`persist`，`data/missions.json`）、持久化的远程关闭待办outbox（`src/outbox.rs`）、指向 HYDRA-UMC-JOB-DISPATCHER 的真实 HTTP 客户端（`src/job_dispatcher.rs`），以及把这一切暴露出来的简单 JSON/HTTP 服务器（`src/server.rs`，`tiny_http`，没有异步运行时）都是真实且经过测试的（197 个测试，`cargo test`）。`mission-demo` CLI 子命令针对同一个 `MissionRegistry` 运行一个真实的端到端场景——不是模拟（mock）。仍然只是设想、尚未实现的部分：下面第 3 节中的"计划中的内部层"（API 层、PTP 同步调度、作为常驻服务的舰队健康聚合）描述的是设计意图，不是已经存在的代码；本仓库目前没有到真实运行中的 JOB-DISPATCHER 或 NODE-HEALING 进程的 gRPC 连接，没有与 PATH-PLANNER-3D/SWARM-SYNC 的集成，也从未有过真实的多节点舰队跑在这个二进制文件上——`docker-compose.yml` 会一起构建并启动这 3 个兄弟服务，但这从未在真实机器人硬件上验证过。已交付的具体内容见 `CHANGELOG.md`，尚未完成的部分见下面的 ROADMAP。
+**诚实核查——今天真正能跑起来的部分：** 任务状态机（`src/mission.rs`：`Mission`/`MissionRegistry`，每一次 `Pending -> Dispatched -> InProgress -> Completed`/`Cancelled`/`Failed` 转换、幂等取消、节点故障恢复）、它自己的磁盘持久化（`MissionRegistry::load`/`persist`，`data/missions.json`）、持久化的远程关闭待办outbox（`src/outbox.rs`）、指向 HYDRA-UMC-JOB-DISPATCHER 的真实 HTTP 客户端（`src/job_dispatcher.rs`），以及把这一切暴露出来的简单 JSON/HTTP 服务器（`src/server.rs`，`tiny_http`，没有异步运行时）都是真实且经过测试的（234 个测试，`cargo test`）。`mission-demo` CLI 子命令针对同一个 `MissionRegistry` 运行一个真实的端到端场景——不是模拟（mock）。仍然只是设想、尚未实现的部分：下面第 3 节中的"计划中的内部层"（API 层、PTP 同步调度、作为常驻服务的舰队健康聚合）描述的是设计意图，不是已经存在的代码；本仓库目前没有到真实运行中的 JOB-DISPATCHER 或 NODE-HEALING 进程的 gRPC 连接，没有与 PATH-PLANNER-3D/SWARM-SYNC 的集成，也从未有过真实的多节点舰队跑在这个二进制文件上——`docker-compose.yml` 会一起构建并启动这 3 个兄弟服务，但这从未在真实机器人硬件上验证过。已交付的具体内容见 `CHANGELOG.md`，尚未完成的部分见下面的 ROADMAP。
 
 ---
 
@@ -40,7 +40,7 @@ GPL-3.0-or-later - see LICENSE
 |---|---|
 | 版本 | `0.2.4` |
 | 成熟度 | 可用 |
-| 测试 | 197 (`cargo test`) |
+| 测试 | 234 (`cargo test`) |
 | 技术栈 | Rust / tiny_http / ureq / JSON/HTTP |
 | 目标 | HYDRA-UMC 工作单元的 Raspberry Pi CM5 |
 | 真实硬件 | 尚未：此版本没有在真实硬件上运行的记录 |
@@ -56,7 +56,7 @@ GPL-3.0-or-later - see LICENSE
 | 领域 | 状态 | 在这里的含义 |
 |---|---|---|
 | 软件 | 🟡 | 主要用途可用；上面的诚实性检查列出了仍然缺少的内容 |
-| 测试 | 🟢 | 197 项自动测试，每次变更都会运行 |
+| 测试 | 🟢 | 234 项自动测试，每次变更都会运行 |
 | 真实硬件 | 🔴 | 尚未：此版本没有在真实硬件上运行的记录 |
 | 接口与协议 | 🟡 | 提供的路由或消息已有文档，并用客户端测试过；尚未被所有客户端使用 |
 | 集成 | 🟠 | 在 CM5 测试台上与其他服务一起运行，其消息遵循 SDK 的共享契约 |
@@ -78,12 +78,14 @@ GPL-3.0-or-later - see LICENSE
 * 📜 **与 job-dispatcher 的书面契约,用两个真实进程核验:** `docs/JOB_DISPATCHER_CONTRACT.md` 写明谁拥有什么(dispatcher 拥有把工作分配给机器人;本编排器拥有任务:其生命周期、收尾和恢复)以及双方逐步向对方承诺什么。`tools/verify_dispatcher_contract.py` 启动真实的 dispatcher(Go,来自相邻的检出目录)和真实的编排器,并让任务经过它们:任务是一个待处理的作业,手动指派被拒绝,由 dispatcher 选择机器人,完成和失败会关闭作业,而恢复节点会收回它的工作并拦截丢失尝试的迟到报告。缺少 Go、dispatcher 或已构建的编排器时跳过(退出码 0)。*(已实现,23 项检查)*
 * 🕸️ **集群协调：** 跨多个控制器编排最多 32+ 台独立机械臂。 *（计划中）*
 * ⚖️ **负载均衡：** 自动将任务分配给最空闲或最适合的机器人。
-* 🛡️ **集中式安全：** 全局 E-STOP 管理与全车队健康监控。 *（计划中）*
+* 🛡️ **集中式安全：** 全车队健康监控 *（计划中）*；全局急停（`POST /estop`）已经存在，见下文。
 * 📡 **统一 API：** 为应用程序和 Studio 与整个工厂交互提供单一入口点。 *（计划中）*
 * 🧩 **真实 v0 —— 任务状态机：** `mission.rs` 通过 `Pending -> Dispatched -> InProgress -> Completed`（外加 `Cancelled`/`Failed` 两个终止状态）跟踪每个任务，具备幂等取消和节点被报告为不可达/无效时的真实恢复——见下方 `mission-demo`。纯内存逻辑——运行或测试都不需要与 JOB-DISPATCHER/NODE-HEALING 的实时 gRPC 对端。
 * 🧱 **默认安全，迟到的报告无法覆盖交接结果（v0）：** API 默认只监听 `127.0.0.1:8114`，使用其他地址需要 bearer 令牌（`--token` / `ORCHESTRATOR_TOKEN`；设置后除 `GET /health` 外的所有路由都要求它）或显式的 `--allow-anonymous`；超过 64 KB 的请求体会被以 `413` 拒绝。每次派发都会让任务的 `attempt` 加一；携带过期 `attempt`（或已不再持有该任务的节点名称）的 `start`/`complete`/`fail` 会被以 `409` 拒绝，且不会改动任务，因此被宣告不可用、之后从网络分区中恢复的节点无法覆盖任务被交接到的节点（`--require-attempt` 可将该字段设为必填）。任务注册表和发件箱在替换旧文件之前会被强制写入磁盘；随附的 systemd 单元现在为进程提供可写的状态目录（此前 `ProtectSystem=strict` 使默认的 `data` 目录只读，重启后什么都保留不下来）；`docker-compose.yml` 现在启动真正的服务（`serve` 命令、健康检查、必填令牌、固定镜像，只发布编排器，且只绑定宿主机回环地址）。*（已实现）*
 * 🔭 **可读的运维（可选）：** `GET /stats` 还显示最旧的未确认关闭已等待多久（`oldestPendingCloseAgeSeconds`），以及对 JOB-DISPATCHER 调用的最近一次成功与失败；`--log-format json` 每行日志写一个 JSON 对象；`--keep-finished N` 会忘记关闭已确认的最旧的已结束任务，使 `missions.json` 不会无限增长；文件带有 `schema_version`，由更新版本写入的文件会被拒绝；关闭时会告诉 JOB-DISPATCHER 正在关闭哪一次尝试。全部默认关闭或保持不变。 *(已实现)*
 * 🔐 **愈合者租约与复制的注册表（可选）：** `POST /leases/{name}/acquire|renew|release` 为每个单元维护一个租约（`healer-of-<单元>`），令牌只增不减，恢复请求只接受持有者发出的（`--require-healer-lease` 拒绝其余所有请求）；`--swarm-sync-url` 每隔几秒把 `GET /replica` 的记录推送到 HYDRA-UMC-SWARM-SYNC，使第二个编排器可以接管注册表。尚未在两台机器上试过。
+* 🛑 **始终可用的全局急停：** `POST /estop`（操作员或管理员，无需确认）先于一切锁定闩锁，把停止转发给 HYDRA-UMC-SERVER（`/api/stop-all`），并列出当时在运动的任务。重复调用不会改变任何东西，每次停止和解除都写入审计文件，闩锁在重启后依然保持（无法读取的已保存状态按已锁定处理），只有管理员的 `POST /estop/release` 才能解除。锁定期间，分派、自动分派和启动任务都返回 `423`；仍可结束任务。这是软件：最终决定权在控制器和执行器手中。
+* 📥 **作业调度器的带签名事件（默认关闭）：** 在配置文件的 `job_events` 段开启后，`POST /events/job-dispatcher` 接收 HYDRA-UMC-JOB-DISPATCHER 的事件（对时间戳和正文做 HMAC-SHA256，密钥取自环境变量，时钟偏差有限，恒定时间比较）：`assigned` 事件把待处理任务置为已分派，因此这里没人发起的某次调度所做的分配不再被漏掉；其他类型只在 `GET /stats` 中计数。
 
 ## 🧩 在 HYDRA-UMC 中的角色
 
@@ -158,7 +160,7 @@ cargo test
 
 ## 🧪 测试
 
-运行 `cargo test` 会执行 197 个自动测试。 不需要硬件，也不需要这台机器以外的任何东西。
+运行 `cargo test` 会执行 234 个自动测试。 不需要硬件，也不需要这台机器以外的任何东西。
 
 CI 运行 `HYDRA_UMC_CI=1 python tools/ci_validate.py`，检查清单、文档、八个 README 和图片。
 
@@ -205,7 +207,7 @@ run.bat mission-demo
 ```
 
 ```bash
-cargo test   # 197 个测试：mission.rs 的每一次状态转换、每一次非法转换的
+cargo test   # 234 个测试：mission.rs 的每一次状态转换、每一次非法转换的
              # 拒绝、幂等取消、节点故障后的恢复，加上 outbox.rs 的
              # 抗崩溃持久化、job_dispatcher.rs 的真实 HTTP 客户端，
              # 以及 server.rs 的 HTTP 处理器

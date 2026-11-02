@@ -19,14 +19,14 @@ GPL-3.0-or-later - see LICENSE
   <img src="https://img.shields.io/badge/Language-Rust-orange.svg" alt="Language">
   <img src="https://img.shields.io/badge/Architecture-Distributed%20Edge-blue.svg" alt="Architecture">
   <img src="https://img.shields.io/badge/Sync-JSON%2FHTTP-yellow.svg" alt="Sync">
-  <img src="https://img.shields.io/badge/Tests-197%20passing-2ea44f.svg" alt="Tests">
+  <img src="https://img.shields.io/badge/Tests-234%20passing-2ea44f.svg" alt="Tests">
   <img src="https://img.shields.io/badge/Version-0.2.4-0f6cbd.svg" alt="Version">
   <img src="https://img.shields.io/badge/Maturity-functional-0F6CBD.svg" alt="Maturity">
 </p>
 
 ---
 
-**Verificación de honestidad - qué funciona de verdad hoy:** la máquina de estados de misiones (`src/mission.rs`: `Mission`/`MissionRegistry`, cada transición `Pending -> Dispatched -> InProgress -> Completed`/`Cancelled`/`Failed`, cancelación idempotente, recuperación ante fallo de nodo), su propia persistencia en disco (`MissionRegistry::load`/`persist`, `data/missions.json`), el outbox duradero de cierres remotos pendientes (`src/outbox.rs`), el cliente HTTP real hacia HYDRA-UMC-JOB-DISPATCHER (`src/job_dispatcher.rs`) y el servidor JSON/HTTP plano que expone todo esto (`src/server.rs`, `tiny_http`, sin runtime async) son reales y están probados (197 tests, `cargo test`). El subcomando de CLI `mission-demo` ejecuta un escenario real de principio a fin contra ese mismo `MissionRegistry` - no es un mock. Lo que sigue siendo aspiracional: las "capas internas planeadas" de la sección 3 más abajo (capa de API, despacho sincronizado por PTP, agregación de salud de la flota como servicio permanente) describen intención de diseño, no código que ya exista; no hay cableado gRPC de este repo hacia un JOB-DISPATCHER o NODE-HEALING real en ejecución, no hay integración con PATH-PLANNER-3D/SWARM-SYNC, y nunca se ha ejecutado una flota multi-nodo real contra este binario - `docker-compose.yml` construye y arranca los 3 servicios hermanos juntos, pero eso no se ha probado contra hardware real de robots. Ver `CHANGELOG.md` para lo que ya se ha entregado exactamente, y el ROADMAP más abajo para lo que sigue abierto.
+**Verificación de honestidad - qué funciona de verdad hoy:** la máquina de estados de misiones (`src/mission.rs`: `Mission`/`MissionRegistry`, cada transición `Pending -> Dispatched -> InProgress -> Completed`/`Cancelled`/`Failed`, cancelación idempotente, recuperación ante fallo de nodo), su propia persistencia en disco (`MissionRegistry::load`/`persist`, `data/missions.json`), el outbox duradero de cierres remotos pendientes (`src/outbox.rs`), el cliente HTTP real hacia HYDRA-UMC-JOB-DISPATCHER (`src/job_dispatcher.rs`) y el servidor JSON/HTTP plano que expone todo esto (`src/server.rs`, `tiny_http`, sin runtime async) son reales y están probados (234 tests, `cargo test`). El subcomando de CLI `mission-demo` ejecuta un escenario real de principio a fin contra ese mismo `MissionRegistry` - no es un mock. Lo que sigue siendo aspiracional: las "capas internas planeadas" de la sección 3 más abajo (capa de API, despacho sincronizado por PTP, agregación de salud de la flota como servicio permanente) describen intención de diseño, no código que ya exista; no hay cableado gRPC de este repo hacia un JOB-DISPATCHER o NODE-HEALING real en ejecución, no hay integración con PATH-PLANNER-3D/SWARM-SYNC, y nunca se ha ejecutado una flota multi-nodo real contra este binario - `docker-compose.yml` construye y arranca los 3 servicios hermanos juntos, pero eso no se ha probado contra hardware real de robots. Ver `CHANGELOG.md` para lo que ya se ha entregado exactamente, y el ROADMAP más abajo para lo que sigue abierto.
 
 ---
 
@@ -40,7 +40,7 @@ GPL-3.0-or-later - see LICENSE
 |---|---|
 | Versión | `0.2.4` |
 | Madurez | Funcional |
-| Tests | 197 (`cargo test`) |
+| Tests | 234 (`cargo test`) |
 | Tecnología | Rust / tiny_http / ureq / JSON/HTTP |
 | Destino | La Raspberry Pi CM5 de una celda HYDRA-UMC |
 | En hardware real | Todavía no: no consta ninguna ejecución en hardware real para esta versión |
@@ -56,7 +56,7 @@ Cada línea es una parte de este repositorio y la luz dice hasta dónde llega ho
 | Área | Estado | Qué significa aquí |
 |---|---|---|
 | Software | 🟡 | Funciona para su propósito principal; la comprobación de honestidad de arriba lista lo que aún falta |
-| Pruebas | 🟢 | 197 pruebas automáticas, ejecutadas en cada cambio |
+| Pruebas | 🟢 | 234 pruebas automáticas, ejecutadas en cada cambio |
 | Hardware real | 🔴 | Todavía no: no consta ninguna ejecución en hardware real para esta versión |
 | Interfaz y protocolos | 🟡 | Las rutas o los mensajes que ofrece están documentados y probados con un cliente; aún no los han usado todos los clientes |
 | Integración | 🟠 | Funciona junto con los demás servicios en el banco de pruebas de la CM5 y sus mensajes siguen los contratos compartidos del SDK |
@@ -78,12 +78,14 @@ Previsto: planificación global de misiones, balanceo de carga en toda la flota 
 * 📜 **Un contrato escrito con el job-dispatcher, comprobado con los dos procesos reales:** `docs/JOB_DISPATCHER_CONTRACT.md` dice quién es dueño de qué (el dispatcher, de la asignación del trabajo a los robots; este orquestador, de la misión: su ciclo de vida, su cierre y su recuperación) y qué se promete cada parte, paso a paso. `tools/verify_dispatcher_contract.py` arranca el dispatcher real (Go, de su checkout hermano) y el orquestador real y pasa misiones por ellos: una misión es un trabajo pendiente, una asignación manual se rechaza, el dispatcher elige el robot, completar y fallar cierran el trabajo, y recuperar un nodo le quita su trabajo y bloquea un informe tardío del intento perdido. Se omite (salida 0) si falta Go, el dispatcher o el orquestador compilado. *(implementado, 23 comprobaciones)*
 * 🕸️ **Coordinación de Enjambres:** Orquesta hasta 32+ brazos robóticos independientes a través de múltiples controladores. *(previsto)*
 * ⚖️ **Balanceo de Carga:** Asigna misiones automáticamente al robot más disponible o mejor equipado.
-* 🛡️ **Seguridad Centralizada:** Gestión global de E-STOP y monitorización de salud de toda la flota. *(previsto)*
+* 🛡️ **Seguridad Centralizada:** Monitorización de salud de toda la flota *(previsto)*; la parada global (`POST /estop`) ya existe, ver abajo.
 * 📡 **API Unificada:** Proporciona un único punto de entrada para que las Apps y Studios interactúen con toda la fábrica. *(previsto)*
 * 🧩 **Real v0 - Máquina de Estados de Misión:** `mission.rs` sigue cada misión a través de `Pending -> Dispatched -> InProgress -> Completed` (más los estados terminales `Cancelled`/`Failed`), con cancelación idempotente y recuperación real cuando un nodo se reporta inalcanzable/inválido - ver `mission-demo` más abajo. Lógica pura en memoria - no necesita un par gRPC en vivo con JOB-DISPATCHER/NODE-HEALING para ejecutarse ni testearse.
 * 🧱 **Seguro por defecto, y un informe tardío no puede deshacer un traspaso (v0):** la API escucha en `127.0.0.1:8114` salvo que se indique otra cosa; otra dirección exige un token bearer (`--token` / `ORCHESTRATOR_TOKEN`; entonces todas las rutas salvo `GET /health` lo piden) o un `--allow-anonymous` explícito, y los cuerpos de petición de más de 64 KB se rechazan con `413`. Cada despacho sube el `attempt` de la misión; un `start`/`complete`/`fail` con un `attempt` caducado (o con el nombre de un nodo que ya no tiene la misión) se rechaza con `409` sin tocar la misión, de modo que un nodo declarado no disponible que vuelve de una partición de red no puede pisar al nodo al que se traspasó la misión (`--require-attempt` hace el campo obligatorio). El registro de misiones y el buzón de salida se fuerzan a disco antes de reemplazar el fichero anterior, la unidad systemd incluida ahora da al proceso un directorio de estado escribible (antes `ProtectSystem=strict` dejaba el directorio `data` por defecto en solo lectura y nada sobrevivía a un reinicio) y `docker-compose.yml` ahora arranca servicios de verdad (comandos `serve`, comprobaciones de salud, tokens obligatorios, imágenes fijadas, y solo el orquestador publicado y solo en el loopback del host). *(implementado)*
 * 🔭 **Operación legible (opcional):** `GET /stats` muestra además la antigüedad del cierre sin confirmar más viejo (`oldestPendingCloseAgeSeconds`) y el último éxito y el último fallo de las llamadas a JOB-DISPATCHER; `--log-format json` escribe un objeto JSON por línea de registro; `--keep-finished N` olvida las misiones terminadas más antiguas cuyo cierre se confirmó, para que `missions.json` no crezca sin fin; el fichero lleva un `schema_version` y uno escrito por una versión más nueva se rechaza; un cierre le dice a JOB-DISPATCHER qué intento está cerrando. Todo desactivado o sin cambios por defecto. *(implementado)*
 * 🔐 **Arrendamientos para el sanador y un registro replicado (opcional):** `POST /leases/{name}/acquire|renew|release` mantiene un arrendamiento por celda (`healer-of-<celda>`) con un token que solo sube, y una petición de recuperación solo se acepta del titular (`--require-healer-lease` rechaza cualquier otra); `--swarm-sync-url` envía los registros de `GET /replica` a HYDRA-UMC-SWARM-SYNC cada pocos segundos para que un segundo orquestador pueda tomar el registro. No probado con dos máquinas.
+* 🛑 **Parada global, siempre disponible:** `POST /estop` (un operador o un administrador, sin confirmación) activa un cerrojo antes que nada, reenvía la parada a HYDRA-UMC-SERVER (`/api/stop-all`) y lista las misiones que se movían. Repetirla no cambia nada, cada parada y cada liberación va a un fichero de auditoría, el cerrojo sobrevive a un reinicio (un estado guardado que no se puede leer cuenta como activado) y solo `POST /estop/release` de un administrador lo termina. Mientras está activado, despachar, autodespachar e iniciar una misión responden `423`; cerrar una misión sigue siendo posible. Es software: el controlador y el actuador tienen la última palabra.
+* 📥 **Eventos firmados del despachador de trabajos (apagado por defecto):** con la sección `job_events` del fichero de configuración, `POST /events/job-dispatcher` recibe los eventos de HYDRA-UMC-JOB-DISPATCHER (HMAC-SHA256 sobre la marca de tiempo y el cuerpo, secreto de una variable de entorno, desfase de reloj limitado, comparación en tiempo constante): un evento `assigned` pasa una misión pendiente a despachada, de modo que una asignación hecha por una pasada que nadie pidió aquí ya no se pierde; los demás tipos solo se cuentan en `GET /stats`.
 
 ## 🧩 Papel en HYDRA-UMC
 
@@ -188,7 +190,7 @@ cargo test
 
 ## 🧪 Pruebas
 
-197 pruebas automáticas se ejecutan con `cargo test`. No necesitan hardware ni nada fuera de esta máquina.
+234 pruebas automáticas se ejecutan con `cargo test`. No necesitan hardware ni nada fuera de esta máquina.
 
 El CI ejecuta `HYDRA_UMC_CI=1 python tools/ci_validate.py`, que comprueba el manifiesto, los documentos, los ocho README y las imágenes.
 
@@ -237,7 +239,7 @@ resultante.
 ```
 
 ```bash
-cargo test   # 197 tests: las transiciones/rechazos de transición inválida/
+cargo test   # 234 tests: las transiciones/rechazos de transición inválida/
              # cancelación idempotente/recuperación tras fallo de nodo de
              # mission.rs, más la persistencia a prueba de caídas de
              # outbox.rs, el cliente HTTP real de job_dispatcher.rs y los

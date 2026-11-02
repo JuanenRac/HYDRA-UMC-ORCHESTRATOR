@@ -19,9 +19,10 @@
 //! listener, so a slow client or a slow Job-Dispatcher call holds one
 //! worker, not the whole API (`GET /health` keeps answering).
 //!
-//! There is no real E-STOP-sending code anywhere in this repository to
-//! expose - this server does not grant any new physical authority, it
-//! makes the mission state machine reachable over a real API.
+//! The only stop this server sends is `POST /estop` (see `estop.rs`): a
+//! latch that refuses new dispatches and starts, and a request to
+//! HYDRA-UMC-SERVER to stop the robots. Everything else makes the mission
+//! state machine reachable over a real API and grants no physical authority.
 
 use std::collections::HashMap;
 use std::io::Read;
@@ -77,6 +78,11 @@ pub struct AppState {
     pub require_healer_lease: bool,
     /// the longest lease a caller may ask for
     pub lease_max_ttl_ms: u64,
+    /// the global stop (see `estop.rs`); always present, the stop is never switched off
+    pub estop: crate::estop::Estop,
+    /// the receiving end of the events of Job-Dispatcher; `None` leaves the route unknown
+    pub job_events: Option<crate::job_events::JobEventsConfig>,
+    pub job_event_counters: crate::job_events::JobEventCounters,
 }
 
 /// How the HTTP surface is protected. The default - no token, attempt
@@ -104,6 +110,10 @@ pub struct ServerOptions {
     pub lease_max_ttl_ms: u64,
     /// when set, the mission registry is pushed to this swarm-sync node (see `swarm_push.rs`)
     pub swarm_push: Option<crate::swarm_push::PushConfig>,
+    /// where the global stop is saved, audited and forwarded; `None` keeps it in memory with no forwarding
+    pub estop: Option<crate::estop::EstopConfig>,
+    /// the signed events of Job-Dispatcher are accepted at `POST /events/job-dispatcher` only with this (off by default)
+    pub job_events: Option<crate::job_events::JobEventsConfig>,
 }
 
 /// Request bodies here are a few dozen bytes; anything past this is refused
@@ -284,6 +294,9 @@ pub fn run(
         } else {
             options.lease_max_ttl_ms
         },
+        estop: crate::estop::Estop::new(options.estop.clone().unwrap_or_default()),
+        job_events: options.job_events.clone(),
+        job_event_counters: crate::job_events::JobEventCounters::default(),
     });
 
     if let Some(config) = options.swarm_push.clone() {
@@ -342,6 +355,27 @@ fn serve(server: &Server, state: &AppState) {
         let method = request.method().clone();
         let decoded = segments(&path);
         let parts: Vec<&str> = decoded.iter().map(String::as_str).collect();
+
+        // The global stop and the signed events of Job-Dispatcher have their own checks (a stop is never held up by the
+        // general ones), so they are answered before the common token check.
+        match (&method, parts.as_slice()) {
+            (Method::Get, ["estop"])
+            | (Method::Post, ["estop"])
+            | (Method::Post, ["estop", "release"]) => {
+                handle_estop(request, state, &method, &parts);
+                continue;
+            }
+            (Method::Post, ["events", "job-dispatcher"]) => {
+                if state.job_events.is_none() {
+                    write_json(request, 404, &json!({"error": "not found"}));
+                    continue;
+                }
+                let raw = body_or_reply!(request);
+                handle_job_event(request, state, &raw);
+                continue;
+            }
+            _ => {}
+        }
 
         // the numbers of the service: the token when one is set, 401 without it (numbers only, never a mission, a node or a token)
         if crate::service_metrics::is_metrics_request(&request) {
@@ -430,6 +464,178 @@ fn serve(server: &Server, state: &AppState) {
     }
 }
 
+/// Who is asking for the global stop: the general token makes an operator, the administrator token (when one is configured) an
+/// administrator. With a single token, or none (a loopback lab), the requester is an administrator: there is only one role.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+enum Role {
+    Operator,
+    Admin,
+}
+
+fn bearer(request: &tiny_http::Request) -> Option<String> {
+    request
+        .headers()
+        .iter()
+        .find(|h| h.field.equiv("Authorization"))
+        .and_then(|h| h.value.as_str().strip_prefix("Bearer "))
+        .map(str::to_string)
+}
+
+fn estop_role(request: &tiny_http::Request, state: &AppState) -> Option<Role> {
+    let admin = state.estop.admin_token().filter(|t| !t.is_empty());
+    if state.token.is_none() && admin.is_none() {
+        return Some(Role::Admin);
+    }
+    let given = bearer(request).unwrap_or_default();
+    if admin.is_some_and(|a| crate::hmac::constant_time_eq(given.as_bytes(), a.as_bytes())) {
+        return Some(Role::Admin);
+    }
+    if state
+        .token
+        .as_deref()
+        .is_some_and(|t| crate::hmac::constant_time_eq(given.as_bytes(), t.as_bytes()))
+    {
+        return Some(if admin.is_some() {
+            Role::Operator
+        } else {
+            Role::Admin
+        });
+    }
+    None
+}
+
+#[derive(Deserialize, Default)]
+struct EstopRequest {
+    #[serde(default)]
+    by: String,
+    #[serde(default)]
+    reason: String,
+}
+
+/// The ids of the missions that were moving when the stop came. Only looked at with `try_lock`: a busy registry never delays a stop.
+fn moving_missions(state: &AppState) -> Option<Vec<String>> {
+    let reg = state.registry.try_lock().ok()?;
+    Some(
+        reg.all()
+            .filter(|m| matches!(m.state_label(), "Dispatched" | "InProgress"))
+            .map(|m| m.id.clone())
+            .collect(),
+    )
+}
+
+/// GET /estop (state), POST /estop (engage; an operator or an administrator, no confirmation) and POST /estop/release (administrator only).
+/// A bad or missing body never prevents a stop.
+fn handle_estop(request: tiny_http::Request, state: &AppState, method: &Method, parts: &[&str]) {
+    let mut request = request;
+    let Some(role) = estop_role(&request, state) else {
+        write_json(
+            request,
+            401,
+            &json!({"error": "missing or wrong bearer token"}),
+        );
+        return;
+    };
+    if *method == Method::Get {
+        write_json(request, 200, &state.estop.status());
+        return;
+    }
+    let raw = read_body(&mut request).unwrap_or_default();
+    let body: EstopRequest = serde_json::from_str(&raw).unwrap_or_default();
+    if parts.len() == 2 {
+        if role != Role::Admin {
+            state.estop.audit_refused_release(&body.by);
+            write_json(
+                request,
+                403,
+                &json!({"error": "only an administrator may release the global stop", "engaged": state.estop.engaged()}),
+            );
+            return;
+        }
+        let out = state.estop.release(&body.by);
+        write_json(request, 200, &out);
+        return;
+    }
+    let affected = moving_missions(state);
+    let out = state.estop.trigger(&body.by, &body.reason, affected);
+    write_json(request, 200, &out);
+}
+
+fn now_seconds() -> u64 {
+    crate::logging::now_ms() / 1000
+}
+
+/// POST /events/job-dispatcher: one signed event. Only `assigned` changes a mission (Pending -> Dispatched).
+fn handle_job_event(request: tiny_http::Request, state: &AppState, raw: &str) {
+    let Some(config) = &state.job_events else {
+        write_json(request, 404, &json!({"error": "not found"}));
+        return;
+    };
+    let timestamp = header_text(&request, "X-Hydra-Timestamp");
+    let signature = header_text(&request, "X-Hydra-Signature");
+    let event = match crate::job_events::verify(
+        config,
+        timestamp.as_deref(),
+        signature.as_deref(),
+        raw,
+        now_seconds(),
+    ) {
+        Ok(event) => event,
+        Err(refusal) => {
+            state
+                .job_event_counters
+                .refused
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            write_json(
+                request,
+                refusal.status(),
+                &json!({"error": refusal.to_string()}),
+            );
+            return;
+        }
+    };
+    state.job_event_counters.count(&event.kind);
+    crate::log_line!(
+        "job-dispatcher event {} ({}) for job {} on attempt {}",
+        event.id,
+        event.kind,
+        event.job_id,
+        event.attempt
+    );
+    if event.kind != "assigned" {
+        write_json(
+            request,
+            200,
+            &json!({"applied": false, "reason": "only an assignment changes a mission"}),
+        );
+        return;
+    }
+    if state.estop.engaged() {
+        write_json(
+            request,
+            200,
+            &json!({"applied": false, "reason": "the global stop is engaged"}),
+        );
+        return;
+    }
+    let applied = {
+        let mut reg = state.registry.lock().unwrap();
+        let outcome = match reg.get_mut(&event.job_id) {
+            None => Err("not one of this orchestrator's missions"),
+            Some(m) => m
+                .dispatch(event.robot_id.clone())
+                .map_err(|_| "the mission is not pending"),
+        };
+        if outcome.is_ok() {
+            reg.persist();
+        }
+        outcome
+    };
+    match applied {
+        Ok(()) => write_json(request, 200, &json!({"applied": true})),
+        Err(reason) => write_json(request, 200, &json!({"applied": false, "reason": reason})),
+    }
+}
+
 /// Counts per state, how many closes still wait for Job-Dispatcher, and
 /// where Job-Dispatcher is.
 fn handle_stats(request: tiny_http::Request, state: &AppState) {
@@ -458,6 +664,11 @@ fn handle_stats(request: tiny_http::Request, state: &AppState) {
             "pendingRemoteCloses": state.close_outbox.pending().len(),
             "oldestPendingCloseAgeSeconds": oldest_close_age_seconds,
             "jobDispatcherUrl": state.job_dispatcher_url,
+            "estop": state.estop.status(),
+            "jobEvents": {
+                "enabled": state.job_events.is_some(),
+                "received": state.job_event_counters.snapshot(),
+            },
             "jobDispatcher": {
                 "lastOkAtMs": health.last_ok_ms,
                 "lastError": health.last_error,
@@ -876,6 +1087,14 @@ struct DispatchRequest {
 }
 
 fn handle_dispatch(request: tiny_http::Request, state: &AppState, id: &str, raw: &str) {
+    if state.estop.engaged() {
+        write_json(
+            request,
+            423,
+            &json!({"error": "the global stop is engaged: nothing is dispatched or started until an administrator releases it", "estop": true}),
+        );
+        return;
+    }
     // With a Job-Dispatcher configured it owns the assignment of missions to robots: a node chosen here would never reach it, it would
     // go on seeing the job as pending and hand it to another robot on its next pass, and the mission would be in two places at once.
     if state.job_dispatcher_url.is_some() {
@@ -948,6 +1167,14 @@ fn handle_dispatch(request: tiny_http::Request, state: &AppState, id: &str, raw:
 /// never a caller-supplied node the way `POST /missions/:id/dispatch`
 /// (manual override, kept unchanged above) still takes one directly.
 fn handle_auto_dispatch(request: tiny_http::Request, state: &AppState, id: &str) {
+    if state.estop.engaged() {
+        write_json(
+            request,
+            423,
+            &json!({"error": "the global stop is engaged: nothing is dispatched or started until an administrator releases it", "estop": true}),
+        );
+        return;
+    }
     let Some(base_url) = &state.job_dispatcher_url else {
         write_json(
             request,
@@ -1073,6 +1300,14 @@ fn handle_auto_dispatch(request: tiny_http::Request, state: &AppState, id: &str)
 }
 
 fn handle_start(request: tiny_http::Request, state: &AppState, id: &str, raw: &str) {
+    if state.estop.engaged() {
+        write_json(
+            request,
+            423,
+            &json!({"error": "the global stop is engaged: nothing is dispatched or started until an administrator releases it", "estop": true}),
+        );
+        return;
+    }
     let fence = match parse_fence(raw) {
         Ok(f) => f,
         Err(message) => {
@@ -3507,5 +3742,277 @@ mod tests {
         let (status, listed) = get(port, "/leases");
         assert_eq!(status, 200);
         assert!(listed.contains("healer-of-c"));
+    }
+
+    // ---- the global stop and the signed events of Job-Dispatcher ----
+
+    fn request_with_headers(
+        port: u16,
+        method: &str,
+        path: &str,
+        body: &str,
+        headers: &[(&str, &str)],
+    ) -> (u16, String) {
+        let mut stream = TcpStream::connect(("127.0.0.1", port)).expect("connect must succeed");
+        let extra: String = headers
+            .iter()
+            .map(|(k, v)| format!("{k}: {v}\r\n"))
+            .collect();
+        let raw_request = format!(
+            "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1\r\n{extra}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        stream.write_all(raw_request.as_bytes()).unwrap();
+        let mut raw = String::new();
+        stream.read_to_string(&mut raw).unwrap();
+        let (head, resp_body) = raw.split_once("\r\n\r\n").unwrap_or((raw.as_str(), ""));
+        let status = head
+            .lines()
+            .next()
+            .and_then(|l| l.split_whitespace().nth(1))
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
+        (status, resp_body.to_string())
+    }
+
+    fn estop_options(token: Option<&str>, admin: Option<&str>) -> ServerOptions {
+        ServerOptions {
+            token: token.map(str::to_string),
+            estop: Some(crate::estop::EstopConfig {
+                admin_token: admin.map(str::to_string),
+                ..crate::estop::EstopConfig::default()
+            }),
+            ..ServerOptions::default()
+        }
+    }
+
+    #[test]
+    fn the_stop_blocks_dispatch_and_start_but_not_closing() {
+        let port = start_test_server();
+        post(port, "/missions", r#"{"id":"m1"}"#);
+        post(port, "/missions/m1/dispatch", r#"{"node":"node-a"}"#);
+        post(port, "/missions", r#"{"id":"m2"}"#);
+        let (status, body) = post(port, "/estop", r#"{"by":"ana","reason":"smoke"}"#);
+        assert_eq!(status, 200, "{body}");
+        assert!(
+            body.contains("\"engaged\":true") && body.contains("m1"),
+            "{body}"
+        );
+        assert_eq!(post(port, "/missions/m1/start", "").0, 423);
+        assert_eq!(
+            post(port, "/missions/m2/dispatch", r#"{"node":"node-a"}"#).0,
+            423
+        );
+        assert_eq!(post(port, "/missions/m2/auto-dispatch", "").0, 423);
+        // a mission can still be closed while the stop is engaged
+        assert_eq!(post(port, "/missions/m1/cancel", "").0, 200);
+        let (_, stats) = get(port, "/stats");
+        assert!(
+            stats.contains("\"estop\"") && stats.contains("\"engaged\":true"),
+            "{stats}"
+        );
+    }
+
+    #[test]
+    fn the_stop_answers_to_anything_that_looks_like_a_request_and_is_idempotent() {
+        let port = start_test_server();
+        // an empty body, a body that is not JSON and a body with strange fields all engage it
+        assert_eq!(post(port, "/estop", "").0, 200);
+        let (status, body) = post(port, "/estop", "not json at all");
+        assert_eq!(status, 200);
+        assert!(body.contains("\"already_engaged\":true"), "{body}");
+        assert_eq!(post(port, "/estop", r#"{"by":7}"#).0, 200);
+        assert_eq!(get(port, "/estop").0, 200);
+    }
+
+    #[test]
+    fn nothing_rearms_the_stop_but_an_explicit_release() {
+        let port = start_test_server();
+        post(port, "/estop", "{}");
+        // other traffic does not clear it
+        post(port, "/missions", r#"{"id":"m1"}"#);
+        assert_eq!(
+            post(port, "/missions/m1/dispatch", r#"{"node":"n"}"#).0,
+            423
+        );
+        let (status, body) = post(port, "/estop/release", r#"{"by":"admin"}"#);
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(
+            post(port, "/missions/m1/dispatch", r#"{"node":"n"}"#).0,
+            200
+        );
+        let (_, state) = get(port, "/estop");
+        assert!(state.contains("\"engaged\":false"), "{state}");
+    }
+
+    #[test]
+    fn an_operator_stops_but_only_the_administrator_releases() {
+        let port = start_test_server_with(None, estop_options(Some("op"), Some("adm")));
+        assert_eq!(request_with_auth(port, "POST", "/estop", "{}", None).0, 401);
+        assert_eq!(
+            request_with_auth(port, "POST", "/estop", "{}", Some("wrong")).0,
+            401
+        );
+        assert_eq!(
+            request_with_auth(port, "POST", "/estop", "{}", Some("op")).0,
+            200
+        );
+        assert_eq!(
+            request_with_auth(port, "POST", "/estop/release", "{}", Some("op")).0,
+            403
+        );
+        let (_, still) = request_with_auth(port, "GET", "/estop", "", Some("op"));
+        assert!(still.contains("\"engaged\":true"), "{still}");
+        assert_eq!(
+            request_with_auth(port, "POST", "/estop/release", "{}", Some("adm")).0,
+            200
+        );
+        // the administrator may also stop
+        assert_eq!(
+            request_with_auth(port, "POST", "/estop", "{}", Some("adm")).0,
+            200
+        );
+    }
+
+    #[test]
+    fn with_a_single_token_that_token_is_the_administrator() {
+        let port = start_test_server_with(None, estop_options(Some("only"), None));
+        assert_eq!(
+            request_with_auth(port, "POST", "/estop", "{}", Some("only")).0,
+            200
+        );
+        assert_eq!(
+            request_with_auth(port, "POST", "/estop/release", "{}", Some("only")).0,
+            200
+        );
+    }
+
+    fn signed_headers(secret: &str, ts: &str, body: &str) -> (String, String) {
+        (
+            ts.to_string(),
+            format!(
+                "sha256={}",
+                crate::hmac::sign(secret.as_bytes(), ts, body.as_bytes())
+            ),
+        )
+    }
+
+    fn events_options() -> ServerOptions {
+        ServerOptions {
+            // a token is set so that the signature, not the token, is what lets the event in
+            token: Some("api-token".into()),
+            job_events: Some(crate::job_events::JobEventsConfig {
+                secret: b"hook-secret".to_vec(),
+                max_skew_seconds: 300,
+            }),
+            ..ServerOptions::default()
+        }
+    }
+
+    #[test]
+    fn the_event_route_is_unknown_while_it_is_off() {
+        let port = start_test_server();
+        assert_eq!(post(port, "/events/job-dispatcher", "{}").0, 404);
+    }
+
+    #[test]
+    fn a_signed_assignment_moves_a_pending_mission_to_dispatched() {
+        let port = start_test_server_with(None, events_options());
+        request_with_auth(
+            port,
+            "POST",
+            "/missions",
+            r#"{"id":"m1"}"#,
+            Some("api-token"),
+        );
+        let body = r#"{"id":1,"type":"assigned","jobId":"m1","robotId":"r1","attempt":1,"atMs":1}"#;
+        let now = (crate::logging::now_ms() / 1000).to_string();
+        let (ts, sig) = signed_headers("hook-secret", &now, body);
+        let (status, answer) = request_with_headers(
+            port,
+            "POST",
+            "/events/job-dispatcher",
+            body,
+            &[("X-Hydra-Timestamp", &ts), ("X-Hydra-Signature", &sig)],
+        );
+        assert_eq!(status, 200, "{answer}");
+        assert!(answer.contains("\"applied\":true"), "{answer}");
+        let (_, mission) = request_with_auth(port, "GET", "/missions/m1", "", Some("api-token"));
+        assert!(
+            mission.contains("Dispatched") && mission.contains("r1"),
+            "{mission}"
+        );
+        // the same event again changes nothing
+        let (_, again) = request_with_headers(
+            port,
+            "POST",
+            "/events/job-dispatcher",
+            body,
+            &[("X-Hydra-Timestamp", &ts), ("X-Hydra-Signature", &sig)],
+        );
+        assert!(again.contains("\"applied\":false"), "{again}");
+        let (_, stats) = request_with_auth(port, "GET", "/stats", "", Some("api-token"));
+        assert!(stats.contains("\"assigned\":2"), "{stats}");
+    }
+
+    #[test]
+    fn an_unsigned_or_wrongly_signed_event_is_refused() {
+        let port = start_test_server_with(None, events_options());
+        let body = r#"{"id":1,"type":"assigned","jobId":"m1","robotId":"r1"}"#;
+        let now = (crate::logging::now_ms() / 1000).to_string();
+        // the bearer token of the API is not what lets an event in
+        let (status, _) = request_with_auth(
+            port,
+            "POST",
+            "/events/job-dispatcher",
+            body,
+            Some("api-token"),
+        );
+        assert_eq!(status, 400);
+        let (ts, sig) = signed_headers("other-secret", &now, body);
+        let (status, _) = request_with_headers(
+            port,
+            "POST",
+            "/events/job-dispatcher",
+            body,
+            &[("X-Hydra-Timestamp", &ts), ("X-Hydra-Signature", &sig)],
+        );
+        assert_eq!(status, 401);
+        let (ts, sig) = signed_headers("hook-secret", "1000", body);
+        let (status, _) = request_with_headers(
+            port,
+            "POST",
+            "/events/job-dispatcher",
+            body,
+            &[("X-Hydra-Timestamp", &ts), ("X-Hydra-Signature", &sig)],
+        );
+        assert_eq!(status, 401, "an old delivery is refused");
+    }
+
+    #[test]
+    fn an_assignment_is_not_applied_while_the_stop_is_engaged() {
+        let port = start_test_server_with(None, events_options());
+        request_with_auth(
+            port,
+            "POST",
+            "/missions",
+            r#"{"id":"m1"}"#,
+            Some("api-token"),
+        );
+        request_with_auth(port, "POST", "/estop", "{}", Some("api-token"));
+        let body = r#"{"id":1,"type":"assigned","jobId":"m1","robotId":"r1","attempt":1}"#;
+        let now = (crate::logging::now_ms() / 1000).to_string();
+        let (ts, sig) = signed_headers("hook-secret", &now, body);
+        let (_, answer) = request_with_headers(
+            port,
+            "POST",
+            "/events/job-dispatcher",
+            body,
+            &[("X-Hydra-Timestamp", &ts), ("X-Hydra-Signature", &sig)],
+        );
+        assert!(
+            answer.contains("\"applied\":false") && answer.contains("stop"),
+            "{answer}"
+        );
     }
 }

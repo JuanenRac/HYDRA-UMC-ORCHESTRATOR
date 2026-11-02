@@ -19,14 +19,14 @@ GPL-3.0-or-later - see LICENSE
   <img src="https://img.shields.io/badge/Language-Rust-orange.svg" alt="Language">
   <img src="https://img.shields.io/badge/Architecture-Distributed%20Edge-blue.svg" alt="Architecture">
   <img src="https://img.shields.io/badge/Sync-JSON%2FHTTP-yellow.svg" alt="Sync">
-  <img src="https://img.shields.io/badge/Tests-197%20passing-2ea44f.svg" alt="Tests">
+  <img src="https://img.shields.io/badge/Tests-234%20passing-2ea44f.svg" alt="Tests">
   <img src="https://img.shields.io/badge/Version-0.2.4-0f6cbd.svg" alt="Version">
   <img src="https://img.shields.io/badge/Maturity-functional-0F6CBD.svg" alt="Maturity">
 </p>
 
 ---
 
-**Honesty check - what actually runs today:** the mission state machine (`src/mission.rs`: `Mission`/`MissionRegistry`, every `Pending -> Dispatched -> InProgress -> Completed`/`Cancelled`/`Failed` transition, idempotent cancel, node-failure recovery), its own disk persistence (`MissionRegistry::load`/`persist`, `data/missions.json`), the durable pending-remote-close outbox (`src/outbox.rs`), the real HTTP client to HYDRA-UMC-JOB-DISPATCHER (`src/job_dispatcher.rs`), and the plain JSON/HTTP server exposing all of it (`src/server.rs`, `tiny_http`, no async runtime) are real and tested (197 tests, `cargo test`). The `mission-demo` CLI subcommand runs a real end-to-end scenario against that same `MissionRegistry` - not a mock. What is still aspirational: the "Planned internal layers" in section 3 below (API layer, PTP-synced dispatch, fleet health aggregation as a standing service) describe design intent, not code that exists yet; there is no gRPC wiring from this repo to a live JOB-DISPATCHER or NODE-HEALING process, no PATH-PLANNER-3D/SWARM-SYNC integration, and no live multi-node fleet has ever run against this binary - `docker-compose.yml` builds and starts the 3 sibling services together, but that has not been exercised against real robot hardware. See `CHANGELOG.md` for exactly what has shipped so far, and the ROADMAP below for what remains open.
+**Honesty check - what actually runs today:** the mission state machine (`src/mission.rs`: `Mission`/`MissionRegistry`, every `Pending -> Dispatched -> InProgress -> Completed`/`Cancelled`/`Failed` transition, idempotent cancel, node-failure recovery), its own disk persistence (`MissionRegistry::load`/`persist`, `data/missions.json`), the durable pending-remote-close outbox (`src/outbox.rs`), the real HTTP client to HYDRA-UMC-JOB-DISPATCHER (`src/job_dispatcher.rs`), and the plain JSON/HTTP server exposing all of it (`src/server.rs`, `tiny_http`, no async runtime) are real and tested (234 tests, `cargo test`). The `mission-demo` CLI subcommand runs a real end-to-end scenario against that same `MissionRegistry` - not a mock. What is still aspirational: the "Planned internal layers" in section 3 below (API layer, PTP-synced dispatch, fleet health aggregation as a standing service) describe design intent, not code that exists yet; there is no gRPC wiring from this repo to a live JOB-DISPATCHER or NODE-HEALING process, no PATH-PLANNER-3D/SWARM-SYNC integration, and no live multi-node fleet has ever run against this binary - `docker-compose.yml` builds and starts the 3 sibling services together, but that has not been exercised against real robot hardware. See `CHANGELOG.md` for exactly what has shipped so far, and the ROADMAP below for what remains open.
 
 ---
 
@@ -40,7 +40,7 @@ GPL-3.0-or-later - see LICENSE
 |---|---|
 | Version | `0.2.4` |
 | Maturity | Functional |
-| Tests | 197 (`cargo test`) |
+| Tests | 234 (`cargo test`) |
 | Stack | Rust / tiny_http / ureq / JSON/HTTP |
 | Target | The Raspberry Pi CM5 of a HYDRA-UMC cell |
 | On real hardware | Not yet: no run on real hardware is recorded for this version |
@@ -56,7 +56,7 @@ Each line is one part of this repository and the light says how far it is today.
 | Area | State | What it means here |
 |---|---|---|
 | Software | 🟡 | Works for its main purpose; the honesty check above lists what is still missing |
-| Tests | 🟢 | 197 automated tests, run on every change |
+| Tests | 🟢 | 234 automated tests, run on every change |
 | Real hardware | 🔴 | Not yet: no run on real hardware is recorded for this version |
 | Interface and protocols | 🟡 | The routes or messages it offers are documented and tested with a client; not every client has used them yet |
 | Integration | 🟠 | It runs together with the other services on the CM5 test bench and its messages follow the shared contracts of the SDK |
@@ -78,12 +78,14 @@ Planned: global mission planning, load balancing across the fleet, and real-time
 * 📜 **A written contract with the job-dispatcher, checked with both real processes:** `docs/JOB_DISPATCHER_CONTRACT.md` says who owns what (the dispatcher the assignment of work to robots, this orchestrator the mission: its life cycle, its closing and its recovery) and what each side promises the other, step by step. `tools/verify_dispatcher_contract.py` starts the real dispatcher (Go, from its sibling checkout) and the real orchestrator and drives missions through them: a mission is a pending job, a manual dispatch is refused, the dispatcher chooses the robot, complete and fail close the job, and recovering a node takes its work back and fences a late report of the lost attempt. It skips (exit 0) when Go, the dispatcher or the built orchestrator is missing. *(implemented, 23 checks)*
 * 🕸️ **Swarm Coordination:** Orchestrates up to 32+ independent robot arms across multiple controllers. *(planned)*
 * ⚖️ **Load Balancing:** Automatically assigns missions to the most available or best-equipped robot.
-* 🛡️ **Centralized Safety:** Global E-STOP management and fleet-wide health monitoring. *(planned)*
+* 🛡️ **Centralized Safety:** Fleet-wide health monitoring *(planned)*; the global stop (`POST /estop`) already exists, see below.
 * 📡 **Unified API:** Provides a single entry point for APPs and Studios to interact with the entire factory. *(planned)*
 * 🧩 **Real v0 - Mission State Machine:** `mission.rs` tracks every mission through `Pending -> Dispatched -> InProgress -> Completed` (plus `Cancelled`/`Failed` terminal states), with idempotent cancellation and real recovery when a node is reported unreachable/invalid - see `mission-demo` below. Pure in-memory logic - no live JOB-DISPATCHER/NODE-HEALING gRPC peer needed to run or test it.
 * 🧱 **Safe by default, and a late report cannot overwrite a handover (v0):** the API listens on `127.0.0.1:8114` unless told otherwise; another address needs a bearer token (`--token` / `ORCHESTRATOR_TOKEN`; every route but `GET /health` then demands it) or an explicit `--allow-anonymous`, and request bodies over 64 KB are refused with `413`. Every dispatch bumps the mission's `attempt`; a `start`/`complete`/`fail` that carries a stale `attempt` (or the name of a node that no longer holds the mission) is refused with `409` without touching the mission, so a node that was declared unavailable and comes back from a network partition cannot overwrite the node the mission was handed to (`--require-attempt` makes the field mandatory). The mission registry and the outbox are forced to disk before they replace the previous file, the shipped systemd unit now gives the process a writable state directory (before, `ProtectSystem=strict` made the default `data` directory read-only and nothing survived a restart), and `docker-compose.yml` now starts real services (`serve` commands, health checks, required tokens, pinned images, only the orchestrator published and only on the host loopback). *(implemented)*
 * 🔭 **Readable operation (optional):** `GET /stats` also shows how old the oldest unconfirmed close is (`oldestPendingCloseAgeSeconds`) and the last success and failure of the calls to JOB-DISPATCHER; `--log-format json` writes one JSON object per log line; `--keep-finished N` forgets the oldest finished missions whose close was confirmed, so `missions.json` does not grow for ever; the file carries a `schema_version` and one written by a newer version is refused; a close tells JOB-DISPATCHER which attempt it is closing. All off or unchanged by default. *(implemented)*
 * 🔐 **Leases for the healer and a replicated registry (optional):** `POST /leases/{name}/acquire|renew|release` keeps a lease per cell (`healer-of-<cell>`) with a token that only goes up, and a recovery request is accepted only from the holder (`--require-healer-lease` refuses every other one); `--swarm-sync-url` pushes the records of `GET /replica` to HYDRA-UMC-SWARM-SYNC every few seconds so a second orchestrator can take the registry over. Not tried with two machines.
+* 🛑 **Global stop, always available:** `POST /estop` (an operator or an administrator, no confirmation) engages a latch before anything else, forwards the stop to HYDRA-UMC-SERVER (`/api/stop-all`) and lists the missions that were moving. Repeating it changes nothing, every stop and release goes to an audit file, the latch survives a restart (a saved state that cannot be read counts as engaged) and only `POST /estop/release` by an administrator ends it. While it is engaged, dispatching, auto-dispatching and starting a mission answer `423`; closing a mission stays possible. It is software: the controller and the actuator keep the last word.
+* 📥 **Signed events of the job dispatcher (off by default):** with the `job_events` section of the configuration file, `POST /events/job-dispatcher` takes the events of HYDRA-UMC-JOB-DISPATCHER (HMAC-SHA256 over the timestamp and the body, secret from an environment variable, limited clock skew, constant-time comparison): an `assigned` event moves a pending mission to dispatched, so an assignment made by a pass nobody here asked for is no longer missed; the other types are only counted in `GET /stats`.
 
 ## 🧩 Role in HYDRA-UMC
 
@@ -187,7 +189,7 @@ cargo test
 
 ## 🧪 Testing
 
-197 automated tests run with `cargo test`. They need no hardware and nothing outside this machine.
+234 automated tests run with `cargo test`. They need no hardware and nothing outside this machine.
 
 The CI runs `HYDRA_UMC_CI=1 python tools/ci_validate.py`, which checks the manifest, the documents, the eight READMEs and the pictures.
 
@@ -234,7 +236,7 @@ run.bat mission-demo
 ```
 
 ```bash
-cargo test   # 197 tests: mission.rs's transitions/invalid-transition
+cargo test   # 234 tests: mission.rs's transitions/invalid-transition
              # rejections/idempotent cancel/node-failure recovery, plus
              # outbox.rs's crash-safe persistence, job_dispatcher.rs's
              # real HTTP client, and server.rs's HTTP handlers
