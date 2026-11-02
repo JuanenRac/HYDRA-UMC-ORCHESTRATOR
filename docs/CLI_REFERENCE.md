@@ -241,14 +241,16 @@ The records carry no routing hints, so a taken-over mission is not resubmitted t
 
 ## Configuration file (`--config`)
 
-`--config FILE` (or `ORCHESTRATOR_CONFIG`) reads the tuned values of the global stop and of the events of the job-dispatcher. An unknown key stops the start. Secrets are never in the file: each one is named by an environment variable.
+`--config FILE` (or `ORCHESTRATOR_CONFIG`) reads the tuned values of the global stop, of the events of the job-dispatcher and of the health service over gRPC. An unknown key stops the start. Secrets are never in the file: each one is named by an environment variable.
 
 ```json
 {
   "estop": {"server_url": "http://127.0.0.1:18080", "server_token_env": "ORCHESTRATOR_ESTOP_SERVER_TOKEN", "fanout_timeout_seconds": 3, "admin_token_env": "ORCHESTRATOR_ADMIN_TOKEN"},
-  "job_events": {"enabled": true, "secret_env": "ORCHESTRATOR_JD_WEBHOOK_SECRET", "max_skew_seconds": 300}
+  "job_events": {"enabled": true, "secret_env": "ORCHESTRATOR_JD_WEBHOOK_SECRET", "max_skew_seconds": 300},
+  "health_grpc": {"enabled": true, "listen": "127.0.0.1:50114"}
 }
 ```
 
 * **`estop`:** where the stop is forwarded and who administers it. Without the section the stop still works, kept in `data/estop.json`, and is not forwarded.
 * **`job_events`:** off unless `enabled` is `true`. `POST /events/job-dispatcher` accepts an event only when `X-Hydra-Signature` is `sha256=` plus the HMAC-SHA256 of `"<X-Hydra-Timestamp>.<body>"` with the secret (the one the job-dispatcher signs with, `events.webhooks[].secret_env` there), compared in constant time, and the timestamp is within `max_skew_seconds` (1 to 86400, default 300) of the clock of this machine. The bearer token of the API is not what lets an event in. An `assigned` event moves a `Pending` mission to `Dispatched` on the robot it names (the same step as `auto-dispatch`); `done`, `failed` and `unknown` are only counted, because the outcome of a mission is decided by what its node reports. `GET /stats` shows the counters under `jobEvents`.
+* **`health_grpc`:** off unless `enabled` is `true`. Serves `Check()` and `Watch()` of the shared `HealthService` on `listen` (default `127.0.0.1:50114`); an address other than loopback needs a token (`token_env`, or the token of the API). Every key, the states it reports and how to point the watchdog at it are in [`HEALTH_GRPC.md`](HEALTH_GRPC.md).

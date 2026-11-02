@@ -17,8 +17,14 @@ copy, not a rewrite.
 ## Files
 
 - **`hydra_common.proto`** — the one contract every node is meant to implement:
-  `NodeIdentity`, `HealthReport`, and `HealthService`. No node serves it over
-  gRPC yet (NODE-HEALING probes each node's HTTP health route today). It is what lets [HYDRA-UMC-NODE-HEALING](https://github.com/JuanenRac/HYDRA-UMC-NODE-HEALING)
+  `NodeIdentity`, `HealthReport`, and `HealthService` with its two calls:
+  `Check()` (one report) and `Watch()` (the same report as a server stream).
+  HYDRA-UMC-ORCHESTRATOR and HYDRA-UMC-JOB-DISPATCHER serve it when their
+  `health_grpc` section is switched on (off by default, loopback by default);
+  the other nodes are still probed over their HTTP health route. The states
+  read like the standard gRPC health protocol: `OK` is SERVING, `DEGRADED` is
+  SERVING with a concern, `UNHEALTHY` is NOT_SERVING and `UNSPECIFIED` is
+  UNKNOWN. It is what lets [HYDRA-UMC-NODE-HEALING](https://github.com/JuanenRac/HYDRA-UMC-NODE-HEALING)
   probe any node in the ecosystem the same way, instead of each family
   inventing its own ad-hoc health check.
 
@@ -40,8 +46,9 @@ python -m grpc_tools.protoc -I proto \
   --python_out=OUT_DIR --grpc_python_out=OUT_DIR \
   proto/hydra_common.proto
 
-# Rust (tonic-build, from a build.rs)
-tonic_build::compile_protos("proto/hydra_common.proto")?;
+# Rust (tonic-prost-build, from a build.rs: this repo does it, with the protoc
+# of the protoc-bin-vendored crate, so no tool has to be installed)
+tonic_prost_build::compile_protos("proto/hydra_common.proto")?;
 
 # Go (protoc-gen-go + protoc-gen-go-grpc)
 protoc -I proto --go_out=. --go-grpc_out=. proto/hydra_common.proto

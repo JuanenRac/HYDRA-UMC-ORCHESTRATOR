@@ -413,6 +413,29 @@
           }
         },
         {
+          "name": "build.rs",
+          "desc": {
+            "en": "gRPC bindings generator",
+            "es": "Generador de enlaces gRPC",
+            "de": "gRPC-Bindings-Generator",
+            "fr": "Générateur de liaisons gRPC",
+            "it": "Generatore di binding gRPC",
+            "ja": "gRPC バインディング生成",
+            "zh": "gRPC 绑定生成",
+            "pt": "Gerador de ligações gRPC"
+          },
+          "tree_desc": {
+            "en": "Build script: generates the gRPC bindings of the shared contract",
+            "es": "Script de compilación: genera los enlaces gRPC del contrato compartido",
+            "de": "Build-Skript: erzeugt die gRPC-Anbindung des gemeinsamen Vertrags",
+            "fr": "Script de build : génère les liaisons gRPC du contrat partagé",
+            "it": "Script di build: genera i binding gRPC del contratto condiviso",
+            "ja": "ビルドスクリプト：共有契約の gRPC バインディングを生成",
+            "zh": "构建脚本：生成共享契约的 gRPC 绑定",
+            "pt": "Script de compilação: gera as ligações gRPC do contrato partilhado"
+          }
+        },
+        {
           "name": "bump_version.py",
           "desc": {
             "en": "explicit version bump",

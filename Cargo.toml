@@ -37,3 +37,18 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tiny_http = "0.12"
 ureq = { version = "2", default-features = false }
+
+# The health service over gRPC (health_grpc.rs, off unless the configuration
+# turns it on). tonic runs on its own runtime thread; the rest of the process
+# stays as it was (blocking, tiny_http). The bindings are generated at build
+# time from proto/hydra_common.proto, protoc comes from protoc-bin-vendored so
+# no tool has to be installed.
+tonic = { version = "0.14", default-features = false, features = ["transport", "codegen", "router"] }
+tonic-prost = "0.14"
+prost = "0.14"
+tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "sync", "macros"] }
+tokio-stream = { version = "0.1", features = ["net"] }
+
+[build-dependencies]
+tonic-prost-build = "0.14"
+protoc-bin-vendored = "3"

@@ -41,6 +41,7 @@
 
 mod config;
 mod estop;
+mod health_grpc;
 mod hmac;
 mod job_dispatcher;
 mod job_events;
@@ -304,6 +305,14 @@ fn run_serve(args: &[String]) -> bool {
             return false;
         }
     };
+    // the health service over gRPC: off unless the configuration turns it on; the token falls back to the one of the HTTP API
+    let health_grpc_config = match config::health_grpc(&file_config, token.as_deref()) {
+        Ok(built) => built,
+        Err(e) => {
+            crate::log_line!("fatal: {e}");
+            return false;
+        }
+    };
     let missions_path = std::path::PathBuf::from(&data_dir).join("missions.json");
     let mut registry = match MissionRegistry::load(missions_path.clone()) {
         Ok(registry) => registry,
@@ -338,6 +347,17 @@ fn run_serve(args: &[String]) -> bool {
                     "POST /events/job-dispatcher accepts the signed events of job-dispatcher"
                 );
             }
+            if let Some(grpc) = &health_grpc_config {
+                crate::log_line!(
+                    "gRPC health service (Check, Watch) on {}{}",
+                    grpc.listen,
+                    if grpc.token.is_some() {
+                        ", bearer token required"
+                    } else {
+                        ""
+                    }
+                );
+            }
             if token.is_some() {
                 crate::log_line!("bearer token required on every route except GET /health");
             } else if !server::is_loopback_addr(&addr) {
@@ -367,6 +387,7 @@ fn run_serve(args: &[String]) -> bool {
                     swarm_push,
                     estop: Some(estop_config),
                     job_events: job_events_config,
+                    health_grpc: health_grpc_config,
                 },
             );
             true

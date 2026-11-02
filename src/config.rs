@@ -14,6 +14,7 @@ use std::time::Duration;
 use serde::Deserialize;
 
 use crate::estop::EstopConfig;
+use crate::health_grpc::HealthGrpcConfig;
 use crate::job_events::JobEventsConfig;
 
 #[derive(Debug, Default, Deserialize)]
@@ -21,6 +22,7 @@ use crate::job_events::JobEventsConfig;
 pub struct FileConfig {
     pub estop: Option<EstopSection>,
     pub job_events: Option<JobEventsSection>,
+    pub health_grpc: Option<HealthGrpcSection>,
 }
 
 /// The "estop" section. The stop itself is always available; this only says where it is forwarded and who may release it.
@@ -44,6 +46,23 @@ pub struct JobEventsSection {
     /// environment variable with the secret shared with Job-Dispatcher
     pub secret_env: Option<String>,
     pub max_skew_seconds: Option<u64>,
+}
+
+/// The "health_grpc" section: the health service of the shared contract over gRPC. Off unless enabled; loopback unless an
+/// address is given, and an address other than loopback needs a token.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HealthGrpcSection {
+    #[serde(default)]
+    pub enabled: bool,
+    /// address to listen on, an IP and a port (default 127.0.0.1:50114)
+    pub listen: Option<String>,
+    /// environment variable with the bearer token; when absent, an address other than loopback uses the token of the HTTP API (if any)
+    pub token_env: Option<String>,
+    pub max_connections: Option<usize>,
+    pub max_watchers: Option<usize>,
+    pub watch_interval_seconds: Option<f64>,
+    pub keepalive_seconds: Option<f64>,
 }
 
 pub fn parse(text: &str) -> Result<FileConfig, String> {
@@ -116,6 +135,60 @@ pub fn build(
     Ok((estop, job_events))
 }
 
+/// The settings of the gRPC health service, or `None` while it is off. `api_token` is the token of the HTTP API: it is the
+/// fallback when `token_env` is not named, and only for an address other than loopback. An address other than loopback without any token is refused.
+pub fn health_grpc(
+    file: &FileConfig,
+    api_token: Option<&str>,
+) -> Result<Option<HealthGrpcConfig>, String> {
+    let Some(section) = file.health_grpc.as_ref().filter(|s| s.enabled) else {
+        return Ok(None);
+    };
+    let mut cfg = HealthGrpcConfig::default();
+    if let Some(listen) = &section.listen {
+        cfg.listen = listen.parse().map_err(|_| {
+            format!("health_grpc.listen must be an IP address and a port such as 127.0.0.1:50114, not {listen:?}")
+        })?;
+    }
+    // The token of the HTTP API is a fallback only for an address reachable from the network: on loopback, with no token named, the
+    // service is open to this machine (the watchdog of the cell dials it without credentials).
+    cfg.token = match env_value(&section.token_env)? {
+        Some(token) => Some(token),
+        None if !cfg.listen.ip().is_loopback() => {
+            api_token.filter(|t| !t.is_empty()).map(str::to_string)
+        }
+        None => None,
+    };
+    if cfg.token.is_none() && !cfg.listen.ip().is_loopback() {
+        return Err("health_grpc.listen is reachable from the network but there is no token: name one with health_grpc.token_env (or run the API with a token), or listen on 127.0.0.1".into());
+    }
+    if let Some(n) = section.max_connections {
+        if !(1..=1024).contains(&n) {
+            return Err("health_grpc.max_connections must be between 1 and 1024".into());
+        }
+        cfg.max_connections = n;
+    }
+    if let Some(n) = section.max_watchers {
+        if !(1..=1024).contains(&n) {
+            return Err("health_grpc.max_watchers must be between 1 and 1024".into());
+        }
+        cfg.max_watchers = n;
+    }
+    if let Some(s) = section.watch_interval_seconds {
+        if !(0.1..=60.0).contains(&s) {
+            return Err("health_grpc.watch_interval_seconds must be between 0.1 and 60".into());
+        }
+        cfg.watch_interval = Duration::from_secs_f64(s);
+    }
+    if let Some(s) = section.keepalive_seconds {
+        if !(1.0..=3600.0).contains(&s) {
+            return Err("health_grpc.keepalive_seconds must be between 1 and 3600".into());
+        }
+        cfg.keepalive = Duration::from_secs_f64(s);
+    }
+    Ok(Some(cfg))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -171,5 +244,54 @@ mod tests {
         .0;
         assert_eq!(ok.server_url.as_deref(), Some("http://127.0.0.1:18080"));
         assert_eq!(ok.fanout_timeout, Duration::from_secs(2));
+    }
+
+    #[test]
+    fn health_grpc_is_off_by_default_and_checked_when_on() {
+        assert!(health_grpc(&parse("").unwrap(), None).unwrap().is_none());
+        let off = parse(r#"{"health_grpc":{"enabled":false,"listen":"0.0.0.0:1"}}"#).unwrap();
+        assert!(health_grpc(&off, None).unwrap().is_none());
+        let on = parse(r#"{"health_grpc":{"enabled":true}}"#).unwrap();
+        let cfg = health_grpc(&on, None).unwrap().unwrap();
+        assert!(cfg.listen.ip().is_loopback() && cfg.token.is_none());
+        // another address needs a token, from the API or from the section
+        let open = parse(r#"{"health_grpc":{"enabled":true,"listen":"0.0.0.0:50114"}}"#).unwrap();
+        assert!(health_grpc(&open, None).is_err());
+        assert_eq!(
+            health_grpc(&open, Some("t"))
+                .unwrap()
+                .unwrap()
+                .token
+                .as_deref(),
+            Some("t")
+        );
+        // on loopback the token of the HTTP API is not borrowed: the watchdog dials without credentials
+        assert!(health_grpc(&on, Some("t"))
+            .unwrap()
+            .unwrap()
+            .token
+            .is_none());
+        let missing =
+            parse(r#"{"health_grpc":{"enabled":true,"token_env":"ORCH_TEST_NO_SUCH_TOKEN"}}"#)
+                .unwrap();
+        assert!(health_grpc(&missing, Some("t")).is_err());
+    }
+
+    #[test]
+    fn health_grpc_values_are_checked() {
+        for bad in [
+            r#"{"health_grpc":{"enabled":true,"listen":"not-an-address"}}"#,
+            r#"{"health_grpc":{"enabled":true,"max_connections":0}}"#,
+            r#"{"health_grpc":{"enabled":true,"max_watchers":5000}}"#,
+            r#"{"health_grpc":{"enabled":true,"watch_interval_seconds":0}}"#,
+            r#"{"health_grpc":{"enabled":true,"keepalive_seconds":0.5}}"#,
+        ] {
+            assert!(health_grpc(&parse(bad).unwrap(), None).is_err(), "{bad}");
+        }
+        assert!(parse(r#"{"health_grpc":{"enabeld":true}}"#).is_err());
+        let ok = parse(r#"{"health_grpc":{"enabled":true,"listen":"127.0.0.1:0","max_connections":3,"max_watchers":2,"watch_interval_seconds":2,"keepalive_seconds":10}}"#).unwrap();
+        let cfg = health_grpc(&ok, None).unwrap().unwrap();
+        assert_eq!((cfg.max_connections, cfg.max_watchers), (3, 2));
+        assert_eq!(cfg.watch_interval, Duration::from_secs(2));
     }
 }

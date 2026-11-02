@@ -86,6 +86,7 @@ Planned: global mission planning, load balancing across the fleet, and real-time
 * 🔐 **Leases for the healer and a replicated registry (optional):** `POST /leases/{name}/acquire|renew|release` keeps a lease per cell (`healer-of-<cell>`) with a token that only goes up, and a recovery request is accepted only from the holder (`--require-healer-lease` refuses every other one); `--swarm-sync-url` pushes the records of `GET /replica` to HYDRA-UMC-SWARM-SYNC every few seconds so a second orchestrator can take the registry over. Not tried with two machines.
 * 🛑 **Global stop, always available:** `POST /estop` (an operator or an administrator, no confirmation) engages a latch before anything else, forwards the stop to HYDRA-UMC-SERVER (`/api/stop-all`) and lists the missions that were moving. Repeating it changes nothing, every stop and release goes to an audit file, the latch survives a restart (a saved state that cannot be read counts as engaged) and only `POST /estop/release` by an administrator ends it. While it is engaged, dispatching, auto-dispatching and starting a mission answer `423`; closing a mission stays possible. It is software: the controller and the actuator keep the last word.
 * 📥 **Signed events of the job dispatcher (off by default):** with the `job_events` section of the configuration file, `POST /events/job-dispatcher` takes the events of HYDRA-UMC-JOB-DISPATCHER (HMAC-SHA256 over the timestamp and the body, secret from an environment variable, limited clock skew, constant-time comparison): an `assigned` event moves a pending mission to dispatched, so an assignment made by a pass nobody here asked for is no longer missed; the other types are only counted in `GET /stats`.
+* 🩺 **Health service over gRPC (off by default):** with the `health_grpc` section of the configuration file, `Check()` and the streaming `Watch()` of the shared `HealthService` answer on loopback (another address needs a bearer token): OK while the mission registry can be read and the global stop is not engaged, degraded while the stop is engaged, unhealthy when the registry is unusable. Connections and open streams are limited and every stream ends with its client. Tested with a real gRPC client against the real server; never against a live watchdog, a robot or a cell. See [`docs/HEALTH_GRPC.md`](docs/HEALTH_GRPC.md).
 
 ## 🧩 Role in HYDRA-UMC
 
@@ -278,6 +279,7 @@ HYDRA-UMC-ORCHESTRATOR/
 ├── systemd/                            service unit
 ├── .github/                            CI workflow and issue templates
 ├── Cargo.toml                          Rust package manifest (name, version, deps)
+├── build.rs                            Build script: generates the gRPC bindings of the shared contract
 ├── bump_version.py                     explicit version bump
 ├── bump_manifest_version.py            Syncs hydra-umc.project.json's version to the native one (--sync)
 ├── docker-compose.yml                  Integrates this repo with its 3 real children

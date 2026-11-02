@@ -87,18 +87,29 @@ message HealthReport {
 
 message Empty {}
 
-// The one service every node is meant to implement. No node serves it over
-// gRPC yet: HYDRA-UMC-NODE-HEALING probes each node's HTTP health route
-// (`healthUrl`) today, and this contract is the target for when a node
-// does. HYDRA-UMC-NODE-HEALING is the primary client, but any node may probe
+// The one service every node is meant to implement. HYDRA-UMC-ORCHESTRATOR
+// and HYDRA-UMC-JOB-DISPATCHER serve it over gRPC when their `health_grpc`
+// section is switched on (off by default, loopback by default); the other
+// nodes are probed over their HTTP health route (`healthUrl`) until they
+// do. HYDRA-UMC-NODE-HEALING is the primary client, but any node may probe
 // any other node (e.g. HYDRA-UMC-ORCHESTRATOR checking on
 // HYDRA-UMC-JOB-DISPATCHER before assigning it work).
+//
+// How the states read next to the standard gRPC health protocol:
+//   HEALTH_STATE_OK          = SERVING     (the node can do its job now)
+//   HEALTH_STATE_DEGRADED    = SERVING with a real concern (it answers, but
+//                              something it depends on is failing)
+//   HEALTH_STATE_UNHEALTHY   = NOT_SERVING (it cannot fulfil its role)
+//   HEALTH_STATE_UNSPECIFIED = UNKNOWN     (the node did not classify itself)
+// `identity.name` must be the name the node is registered under: a client
+// refuses the health of a node that answers with another name.
 service HealthService {
+  // One report, now.
   rpc Check(Empty) returns (HealthReport);
 
-  // A streaming Watch() RPC would let HYDRA-UMC-NODE-HEALING avoid
-  // polling entirely - deliberately left out of v0 so no node is required
-  // to implement server-streaming just to satisfy this contract on day
-  // one. Tracked as a v2 addition once the first real consumer
-  // (HYDRA-UMC-NODE-HEALING itself) needs it.
+  // The same report as a server stream: the current one at once, then one
+  // whenever the state changes and a repeat at least every few seconds as a
+  // keepalive, until the client cancels. A node that does not serve it
+  // answers UNIMPLEMENTED and the client keeps polling Check().
+  rpc Watch(Empty) returns (stream HealthReport);
 }

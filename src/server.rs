@@ -114,6 +114,8 @@ pub struct ServerOptions {
     pub estop: Option<crate::estop::EstopConfig>,
     /// the signed events of Job-Dispatcher are accepted at `POST /events/job-dispatcher` only with this (off by default)
     pub job_events: Option<crate::job_events::JobEventsConfig>,
+    /// the health service over gRPC is served only with this (off by default)
+    pub health_grpc: Option<crate::health_grpc::HealthGrpcConfig>,
 }
 
 /// Request bodies here are a few dozen bytes; anything past this is refused
@@ -298,6 +300,22 @@ pub fn run(
         job_events: options.job_events.clone(),
         job_event_counters: crate::job_events::JobEventCounters::default(),
     });
+
+    // kept alive until `serve` below returns: dropping the handle would stop the service
+    let _health_grpc = if let Some(config) = options.health_grpc.clone() {
+        let shared = Arc::clone(&state);
+        let source: crate::health_grpc::ReportSource =
+            Arc::new(move || crate::health_grpc::report(&shared.registry, shared.estop.engaged()));
+        match crate::health_grpc::spawn(config, source) {
+            Ok(handle) => Some(handle),
+            Err(e) => {
+                crate::log_line!("fatal: {e}");
+                std::process::exit(1);
+            }
+        }
+    } else {
+        None
+    };
 
     if let Some(config) = options.swarm_push.clone() {
         crate::swarm_push::spawn(Arc::clone(&state.registry), config);
