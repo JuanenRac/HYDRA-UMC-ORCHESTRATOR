@@ -57,6 +57,14 @@ jobs:
         with:
           ref: ${{ inputs.ref }}
           persist-credentials: false
+          fetch-depth: 0
+
+      - name: Make sure the commit belongs to the main branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          # only code that is already in main is built: a branch or a fork commit that is not in main is refused
+          git merge-base --is-ancestor HEAD refs/remotes/origin/main || { echo "::error::the commit $(git rev-parse --short HEAD) is not part of the main branch; merge it first"; exit 1; }
 
       - name: Work out the version and pin the commit
         id: plan
