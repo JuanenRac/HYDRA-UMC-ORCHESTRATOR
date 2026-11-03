@@ -62,7 +62,7 @@ Jede Zeile ist ein Teil dieses Repositorys, und die Ampel sagt, wie weit er heut
 | Integration | 🟠 | Es läuft zusammen mit den anderen Diensten auf dem CM5-Prüfstand, und seine Nachrichten folgen den gemeinsamen Verträgen des SDK |
 | Sicherheit | 🟡 | Zugriffskontrolle, Eingabegrenzen oder Signaturen sind umgesetzt und auf einem Rechner getestet; niemand außerhalb des Projekts hat sie geprüft |
 | Bereitstellung | 🟡 | Als Dienst auf dem CM5-Prüfstand mit Installer und Unit installiert; bei jeder Aktualisierung neu gestartet |
-| Betrieb | 🟡 | Stellt /metrics im Prometheus-Textformat mit einer Gesundheitsübersicht bereit; noch nicht an ein Überwachungs-Dashboard angeschlossen |
+| Betrieb | 🟡 | Bietet /metrics im Prometheus-Textformat mit einer Gesundheitsübersicht, sobald die Konfigurationsdatei es aktiviert (standardmäßig aus); noch nicht an ein Überwachungs-Dashboard angeschlossen |
 | Aktualisierungen | 🟡 | Wird über HYDRA-UMC-UPDATER aktualisiert (signierte Züge, Sicherungen und Rücknahme auf einem Rechner getestet) |
 | Stopp und Sicherheit | 🟠 | Der Stoppweg und seine Grenzen sind umgesetzt und gegen Simulatoren getestet; sie liefen nie an einer echten Maschine, und dies ist kein zertifiziertes Sicherheitssystem |
 | Dokumentation | 🟢 | README in acht Sprachen, bei jeder Änderung gegen das Manifest geprüft |

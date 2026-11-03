@@ -62,7 +62,7 @@ Each line is one part of this repository and the light says how far it is today.
 | Integration | 🟠 | It runs together with the other services on the CM5 test bench and its messages follow the shared contracts of the SDK |
 | Security | 🟡 | Access control, input limits or signatures are implemented and tested on a computer; nobody outside the project has reviewed them |
 | Deployment | 🟡 | Installed as a service on the CM5 test bench with its installer and unit; restarted on every update |
-| Operation | 🟡 | Exposes /metrics in the Prometheus text format with a health summary; it is not wired to a monitoring dashboard yet |
+| Operation | 🟡 | Offers /metrics in the Prometheus text format with a health summary once the configuration file enables it (off by default); it is not wired to a monitoring dashboard yet |
 | Updates | 🟡 | Updated through HYDRA-UMC-UPDATER (signed trains, backups and rollback tested on a computer) |
 | Stop and safety | 🟠 | The stop path and its limits are implemented and tested against simulators; they have never run on a real machine, and this is not a certified safety system |
 | Documentation | 🟢 | README in eight languages, checked against the manifest on every change |

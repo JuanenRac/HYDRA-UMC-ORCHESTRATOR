@@ -62,7 +62,7 @@ Cada línea es una parte de este repositorio y la luz dice hasta dónde llega ho
 | Integración | 🟠 | Funciona junto con los demás servicios en el banco de pruebas de la CM5 y sus mensajes siguen los contratos compartidos del SDK |
 | Seguridad | 🟡 | El control de acceso, los límites de entrada o las firmas están implementados y probados en un ordenador; nadie ajeno al proyecto los ha revisado |
 | Despliegue | 🟡 | Instalado como servicio en el banco de pruebas de la CM5 con su instalador y su unidad; se reinicia en cada actualización |
-| Operación | 🟡 | Expone /metrics en el formato de texto de Prometheus con un resumen de salud; todavía no está conectado a un panel de supervisión |
+| Operación | 🟡 | Ofrece /metrics en el formato de texto de Prometheus con un resumen de salud cuando el fichero de configuración lo activa (apagado por defecto); todavía no está conectado a un panel de supervisión |
 | Actualizaciones | 🟡 | Se actualiza con HYDRA-UMC-UPDATER (trenes firmados, copias de seguridad y reversión probadas en un ordenador) |
 | Parada y seguridad | 🟠 | El camino de parada y sus límites están implementados y probados con simuladores; nunca han funcionado en una máquina real, y esto no es un sistema de seguridad certificado |
 | Documentación | 🟢 | README en ocho idiomas, comprobado contra el manifiesto en cada cambio |
