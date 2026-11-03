@@ -221,7 +221,7 @@ _SDK_TAG = re.compile(r"^v\d+\.\d+\.\d+(?:\.\d+)?$")
 _SDK_REFERENCES = (
     re.compile(r"HYDRA-UMC-SDK\.git@([^#\s\"']+)"),
     re.compile(r"repository:\s*JuanenRac/HYDRA-UMC-SDK\b[^\n}]*?\bref:\s*([^\s,}]+)"),
-    re.compile(r"repository:\s*JuanenRac/HYDRA-UMC-SDK[ \t]*\r?\n(?:[ \t]+[^\n]*\r?\n)*?[ \t]+ref:\s*([^\s#]+)"),
+    re.compile(r"repository:\s*JuanenRac/HYDRA-UMC-SDK[ \t]*\r?\n(?:[ \t][^\r\n]*\r?\n)*?[ \t]+ref:\s*([^\s#]+)"),
 )
 _SDK_FILES = ("pyproject.toml", "requirements.txt", "requirements-dev.txt", ".github/workflows/ci.yml")
 
