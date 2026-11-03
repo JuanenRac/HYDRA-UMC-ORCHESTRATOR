@@ -133,7 +133,7 @@ runs:
       run: python -m unittest discover -s clients/python/tests -v
     - name: Set up Node.js
       if: ${{ hashFiles('package.json') != '' && inputs.node-checks != 'none' }}
-      uses: actions/setup-node@v5
+      uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
       with:
         node-version: ${{ inputs.node-version }}
         cache: npm
@@ -147,7 +147,7 @@ runs:
         npm run lint --if-present
     - name: Set up Rust
       if: ${{ hashFiles('Cargo.toml') != '' }}
-      uses: dtolnay/rust-toolchain@stable
+      uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
       with:
         components: rustfmt, clippy
     - name: Cache the Cargo registry and the build directory
@@ -162,7 +162,7 @@ runs:
         cargo test --all-targets
     - name: Set up Go
       if: ${{ hashFiles('go.mod') != '' || hashFiles('src/go.mod') != '' }}
-      uses: actions/setup-go@v5
+      uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
       with:
         go-version: stable
     - name: Validate Go project
@@ -209,7 +209,7 @@ runs:
         go build ./...
     - name: Set up Flutter
       if: ${{ hashFiles('pubspec.yaml') != '' }}
-      uses: subosito/flutter-action@v2
+      uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
       with:
         channel: stable
         cache: true
@@ -222,7 +222,7 @@ runs:
         flutter test
     - name: Set up Java for Android or Wear OS
       if: ${{ hashFiles('gradlew') != '' }}
-      uses: actions/setup-java@v4
+      uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
       with:
         distribution: temurin
         java-version: "21"
