@@ -1,0 +1,70 @@
+# =============================================================================
+# HYDRA-UMC-ORCHESTRATOR - Watchdog for the manual build (binaries-build.yml)
+# Copyright (C) 2026 JuanenRac (Electro Hobby 3D) <electrohobby3d@gmail.com>
+# GPL-3.0-or-later - see LICENSE
+# =============================================================================
+# The notify job of the build cannot speak when a run stays queued, hangs, or its runner dies, because it never starts. This watchdog
+# runs every hour (and by hand) and looks at the runs of binaries-build.yml that are still queued or in progress: when one is older than the limit it
+# opens (or updates) the issue "build-stuck" with a link; when none is stuck it closes the issue. It builds nothing and holds no secret.
+# A scheduled workflow stops by itself after 60 days without activity in the repository: start it by hand once if it did.
+
+name: Build watchdog
+
+on:
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+    inputs:
+      max_minutes:
+        description: "A queued or running build older than this many minutes is stuck"
+        type: string
+        required: true
+        default: "120"
+
+permissions:
+  contents: read
+
+jobs:
+  watch:
+    name: Look for stuck builds
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      issues: write
+      contents: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      MAX_MINUTES: ${{ inputs.max_minutes || '120' }}
+    steps:
+      - name: Open, update or close the issue build-stuck
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$MAX_MINUTES" =~ ^[0-9]{1,5}$ ]] || { echo "::error::max_minutes must be a number"; exit 1; }
+          now="$(date +%s)"
+          stuck=""
+          nl=$'\n'
+          for state in queued in_progress; do
+            rows="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/binaries-build.yml/runs?status=$state&per_page=50" --jq '.workflow_runs[] | "\(.id) \(.created_at) \(.html_url)"')"
+            while read -r id created url; do
+              [ -n "$id" ] || continue
+              age=$(( (now - $(date -d "$created" +%s)) / 60 ))
+              if [ "$age" -ge "$MAX_MINUTES" ]; then stuck="$stuck- $url ($state, $age minutes)$nl"; fi
+            done <<< "$rows"
+          done
+          number="$(gh issue list --repo "$GITHUB_REPOSITORY" --label build-stuck --state open --json number --jq '.[0].number // empty')"
+          if [ -n "$stuck" ]; then
+            body="A build has been queued or running for $MAX_MINUTES minutes or more and may be stuck:$nl$nl$stuck$nl""Cancel it in the Actions tab and start it again."
+            echo "::error::stuck builds found"
+            { echo "### Stuck builds"; echo "$stuck"; } >> "$GITHUB_STEP_SUMMARY"
+            if [ -n "$number" ]; then
+              gh issue comment "$number" --repo "$GITHUB_REPOSITORY" --body "$body"
+            else
+              gh label create build-stuck --repo "$GITHUB_REPOSITORY" --color D93F0B --description "A build in GitHub Actions is queued or running for too long" 2>/dev/null || true
+              gh issue create --repo "$GITHUB_REPOSITORY" --label build-stuck --title "Build stuck" --body "$body"
+            fi
+          else
+            echo "No stuck build." >> "$GITHUB_STEP_SUMMARY"
+            if [ -n "$number" ]; then gh issue close "$number" --repo "$GITHUB_REPOSITORY" --comment "No build is stuck any more."; fi
+          fi
