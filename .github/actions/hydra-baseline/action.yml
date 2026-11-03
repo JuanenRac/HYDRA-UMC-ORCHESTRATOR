@@ -12,7 +12,7 @@
 # checks the repository out first (a local action needs the files), keeps what is its own after this step, and says in the inputs which variant it needs.
 # A repository whose Node checks need steps of their own between the setup of Node.js and its validation (other repositories to clone, environment variables,
 # a download to verify) passes node-checks: none, and sets up Node.js and runs those checks itself after this action.
-# Caches: pip, npm, Cargo (target directory and registry), Gradle and the Flutter SDK; Go caches its modules by itself.
+# Caches: pip, npm, Cargo (target directory and registry) and Gradle; Go caches its modules by itself.
 # The versions of ruff and mypy are written here once (the same ones as the ARMOR family); the check of the sync script finds any other pin in a workflow.
 name: Repository baseline
 description: Set up Python, validate the project baseline and run the checks of the languages the repository uses
@@ -207,12 +207,12 @@ runs:
         "$(go env GOPATH)/bin/govulncheck" ./... || echo "::warning::govulncheck found known vulnerabilities; see the log"
         go test -race ./...
         go build ./...
-    - name: Set up Flutter
+    - name: Set up Flutter from its repository
       if: ${{ hashFiles('pubspec.yaml') != '' }}
-      uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
-      with:
-        channel: stable
-        cache: true
+      shell: bash
+      run: |
+        git clone --depth 1 --branch stable https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
+        echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
     - name: Validate Flutter project
       if: ${{ hashFiles('pubspec.yaml') != '' }}
       shell: bash
