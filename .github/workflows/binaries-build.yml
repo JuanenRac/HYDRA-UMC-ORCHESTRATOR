@@ -44,6 +44,15 @@ jobs:
       version: ${{ steps.plan.outputs.version }}
       sha: ${{ steps.plan.outputs.sha }}
     steps:
+      - name: Only the owner starts a build
+        shell: bash
+        env:
+          ACTOR: ${{ github.actor }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          [ "$ACTOR" = "$OWNER" ] || { echo "::error::only the owner of the repository starts a build"; exit 1; }
+
       - name: Check the inputs
         shell: bash
         env:
@@ -132,7 +141,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
-      contents: write
+      contents: read
       id-token: write
       attestations: write
     env:
@@ -185,20 +194,6 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      - name: Prepare the draft release with the unsigned files
-        if: ${{ !inputs.dry_run }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          tag="v$VERSION"
-          if gh release view "$tag" >/dev/null 2>&1; then
-            echo "::error::the release $tag already exists: raise the version before a new build"
-            exit 1
-          fi
-          gh release create "$tag" files/* --draft --target "$SHA" --title "HYDRA-UMC-ORCHESTRATOR $VERSION (unsigned build)" \
-            --notes "Unsigned build made by GitHub Actions. The signed files of the release replace these."
-          echo "- draft release \`$tag\` prepared with the unsigned files" >> "$GITHUB_STEP_SUMMARY"
-
   verify:
     name: Verify the artifact as a stranger would
     needs: [plan, collect]
@@ -209,6 +204,7 @@ jobs:
       attestations: read
     env:
       GH_TOKEN: ${{ github.token }}
+      SIGNER: ${{ github.repository }}/.github/workflows/binaries-build.yml
     steps:
       - name: Download the build
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
@@ -229,14 +225,55 @@ jobs:
           print("manifest ok:", manifest["project"], manifest["version"], len(manifest["files"]), "files")
           PY
           for file in hydra-umc-orchestrator-* SHA256SUMS; do
-            gh attestation verify "$file" --repo "$GITHUB_REPOSITORY" >/dev/null
+            gh attestation verify "$file" --repo "$GITHUB_REPOSITORY" --signer-workflow "$SIGNER" --source-digest "$GITHUB_SHA" >/dev/null
             echo "attestation ok: $file"
           done
+
+  draft:
+    name: Prepare the draft release (owner approval)
+    needs: [plan, collect, verify]
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: release
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+      SHA: ${{ needs.plan.outputs.sha }}
+      GH_TOKEN: ${{ github.token }}
+      ACTOR: ${{ github.actor }}
+      OWNER: ${{ github.repository_owner }}
+    steps:
+      - name: Only the owner prepares a draft
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ "$ACTOR" = "$OWNER" ] || { echo "::error::only the owner of the repository prepares a draft"; exit 1; }
+
+      - name: Download the verified build
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: binaries-orchestrator-${{ needs.plan.outputs.version }}
+          path: files
+
+      - name: Prepare the draft release with the unsigned files
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="v$VERSION"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "::error::the release $tag already exists: raise the version before a new build"
+            exit 1
+          fi
+          gh release create "$tag" files/* --draft --target "$SHA" --title "HYDRA-UMC-ORCHESTRATOR $VERSION (unsigned build)" \
+            --notes "Unsigned build made by GitHub Actions. The signed files of the release replace these."
+          echo "- draft release \`$tag\` prepared with the unsigned files" >> "$GITHUB_STEP_SUMMARY"
 
   notify:
     name: Tell the owner (issue build-failed)
     if: ${{ always() }}
-    needs: [plan, build, collect, verify]
+    needs: [plan, build, collect, verify, draft]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -245,6 +282,8 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       RESULTS: ${{ needs.plan.result }} ${{ needs.build.result }} ${{ needs.collect.result }} ${{ needs.verify.result }}
+      DRAFT: ${{ needs.draft.result }}
+      DRY_RUN: ${{ inputs.dry_run }}
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
       - name: Open, update or close the issue
@@ -254,8 +293,10 @@ jobs:
           number="$(gh issue list --repo "$GITHUB_REPOSITORY" --label build-failed --state open --json number --jq '.[0].number // empty')"
           bad=""
           for r in $RESULTS; do [ "$r" = "success" ] || bad="$bad $r"; done
+          # the draft job is skipped on purpose in a dry run; in any other case it must have passed
+          if [ "$DRAFT" != "success" ] && ! { [ "$DRAFT" = "skipped" ] && [ "$DRY_RUN" = "true" ]; }; then bad="$bad draft:$DRAFT"; fi
           if [ -n "$bad" ]; then
-            body="The build failed (plan / build / collect / verify: $RESULTS; anything but success counts as a failure: failure, timed out, cancelled or skipped). Run: $RUN_URL"
+            body="The build failed (plan / build / collect / verify: $RESULTS, draft: $DRAFT; anything but success counts as a failure: failure, timed out, cancelled or skipped). Run: $RUN_URL"
             if [ -n "$number" ]; then
               gh issue comment "$number" --repo "$GITHUB_REPOSITORY" --body "$body"
             else
