@@ -388,6 +388,7 @@ fn run_serve(args: &[String]) -> bool {
                     estop: Some(estop_config),
                     job_events: job_events_config,
                     health_grpc: health_grpc_config,
+                    metrics: config::metrics_enabled(&file_config),
                 },
             );
             true

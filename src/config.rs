@@ -23,6 +23,21 @@ pub struct FileConfig {
     pub estop: Option<EstopSection>,
     pub job_events: Option<JobEventsSection>,
     pub health_grpc: Option<HealthGrpcSection>,
+    pub metrics: Option<MetricsSection>,
+}
+
+/// The "metrics" section: `GET /metrics` in the text format of Prometheus. Off unless enabled (closed, the route answers `404` like an unknown
+/// one). Open, it answers a caller on this machine, or any caller that presents the bearer token when the API has one.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MetricsSection {
+    #[serde(default)]
+    pub enabled: bool,
+}
+
+/// Whether the configuration opens `GET /metrics` (off by default).
+pub fn metrics_enabled(file: &FileConfig) -> bool {
+    file.metrics.as_ref().is_some_and(|s| s.enabled)
 }
 
 /// The "estop" section. The stop itself is always available; this only says where it is forwarded and who may release it.
@@ -244,6 +259,18 @@ mod tests {
         .0;
         assert_eq!(ok.server_url.as_deref(), Some("http://127.0.0.1:18080"));
         assert_eq!(ok.fanout_timeout, Duration::from_secs(2));
+    }
+
+    #[test]
+    fn metrics_are_off_unless_the_section_enables_them() {
+        assert!(!metrics_enabled(&parse("").unwrap()));
+        assert!(!metrics_enabled(
+            &parse(r#"{"metrics":{"enabled":false}}"#).unwrap()
+        ));
+        assert!(metrics_enabled(
+            &parse(r#"{"metrics":{"enabled":true}}"#).unwrap()
+        ));
+        assert!(parse(r#"{"metrics":{"enabled":true,"bogus":1}}"#).is_err());
     }
 
     #[test]

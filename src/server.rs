@@ -83,6 +83,8 @@ pub struct AppState {
     /// the receiving end of the events of Job-Dispatcher; `None` leaves the route unknown
     pub job_events: Option<crate::job_events::JobEventsConfig>,
     pub job_event_counters: crate::job_events::JobEventCounters,
+    /// whether `GET /metrics` is open (the `metrics` section of the configuration file)
+    pub metrics: bool,
 }
 
 /// How the HTTP surface is protected. The default - no token, attempt
@@ -116,6 +118,8 @@ pub struct ServerOptions {
     pub job_events: Option<crate::job_events::JobEventsConfig>,
     /// the health service over gRPC is served only with this (off by default)
     pub health_grpc: Option<crate::health_grpc::HealthGrpcConfig>,
+    /// `GET /metrics` answers only with this (off by default: the route answers like an unknown one)
+    pub metrics: bool,
 }
 
 /// Request bodies here are a few dozen bytes; anything past this is refused
@@ -286,6 +290,7 @@ pub fn run(
         registry: Arc::new(Mutex::new(registry)),
         job_dispatcher_url,
         close_outbox: Arc::new(close_outbox),
+        metrics: options.metrics,
         token: options.token.filter(|t| !t.is_empty()),
         require_attempt: options.require_attempt,
         takeover: options.takeover,
@@ -397,7 +402,16 @@ fn serve(server: &Server, state: &AppState) {
 
         // the numbers of the service: the token when one is set, 401 without it (numbers only, never a mission, a node or a token)
         if crate::service_metrics::is_metrics_request(&request) {
-            let allowed = authorized(&request, &state.token);
+            if !state.metrics {
+                write_json(request, 404, &json!({"error": "not found"}));
+                continue;
+            }
+            // with a token the caller presents it; without one only a caller on this machine may read the numbers
+            let allowed = if state.token.is_some() {
+                authorized(&request, &state.token)
+            } else {
+                request.remote_addr().is_some_and(|a| a.ip().is_loopback())
+            };
             let checks = [("registry", !state.registry.is_poisoned())];
             METRICS.respond(request, env!("CARGO_PKG_VERSION"), allowed, &checks);
             continue;
@@ -2895,10 +2909,33 @@ mod tests {
         assert_eq!(get(port, "/health").0, 200);
     }
 
+    fn metrics_on() -> ServerOptions {
+        ServerOptions {
+            metrics: true,
+            ..ServerOptions::default()
+        }
+    }
+
+    #[test]
+    fn the_metrics_are_off_by_default_and_answer_like_an_unknown_route() {
+        let _guard = net_test_lock();
+        let port = start_test_server();
+        assert_eq!(get(port, "/metrics").0, 404);
+        let guarded = start_test_server_with(
+            None,
+            ServerOptions {
+                token: Some("s3cret-token".to_string()),
+                ..Default::default()
+            },
+        );
+        let (status, _) = request_with_auth(guarded, "GET", "/metrics", "", Some("s3cret-token"));
+        assert_eq!(status, 404, "closed means closed, even with the token");
+    }
+
     #[test]
     fn the_metrics_are_prometheus_text_with_numbers_only() {
         let _guard = net_test_lock();
-        let port = start_test_server();
+        let port = start_test_server_with(None, metrics_on());
         post(port, "/missions", r#"{"id":"secret-mission-name"}"#);
         get(port, "/missions/unknown");
         let (status, text) = get(port, "/metrics");
@@ -2921,6 +2958,7 @@ mod tests {
             None,
             ServerOptions {
                 token: Some("s3cret-token".to_string()),
+                metrics: true,
                 ..Default::default()
             },
         );
