@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
       - name: Run the baseline steps of the family
         uses: ./.github/actions/hydra-baseline
       - name: Check the compose file structure and its secret policy
@@ -50,7 +50,7 @@ jobs:
     timeout-minutes: 40
     steps:
       - name: Check out repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
       - name: Skip when Docker Compose is not available
         id: docker
         run: |

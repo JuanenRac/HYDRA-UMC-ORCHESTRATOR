@@ -19,20 +19,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
       - name: Check out JOB-DISPATCHER
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
         with:
           repository: JuanenRac/HYDRA-UMC-JOB-DISPATCHER
           path: job-dispatcher
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Check the compose file
         run: python tools/verify_compose.py
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7
         with:
           go-version: stable
       - name: Build JOB-DISPATCHER
