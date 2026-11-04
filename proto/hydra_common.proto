@@ -34,10 +34,12 @@ syntax = "proto3";
 package hydra.common.v1;
 
 // Go is one of the 4 codegen targets documented in proto/README.md; each
-// consuming repo generates its own bindings locally from this same file
-// (no shared Go module dependency between repos), so this only needs to
-// be a stable, collision-free import path - not a real published module.
-option go_package = "github.com/JuanenRac/hydra-common-proto/hydracommonpb;hydracommonpb";
+// consuming repo (HYDRA-UMC-NODE-HEALING, HYDRA-UMC-JOB-DISPATCHER) keeps its
+// own generated bindings in src/healthpb, built from this same file by the
+// manual workflow proto-go.yml. The import path below is the real location of
+// this schema (the proto folder of this repository); the Go package keeps the
+// name hydracommonpb.
+option go_package = "github.com/JuanenRac/HYDRA-UMC-ORCHESTRATOR/proto;hydracommonpb";
 
 // ---------------------------------------------------------------------------
 // Identity

@@ -50,8 +50,12 @@ python -m grpc_tools.protoc -I proto \
 # of the protoc-bin-vendored crate, so no tool has to be installed)
 tonic_prost_build::compile_protos("proto/hydra_common.proto")?;
 
-# Go (protoc-gen-go + protoc-gen-go-grpc)
-protoc -I proto --go_out=. --go-grpc_out=. proto/hydra_common.proto
+# Go (protoc-gen-go + protoc-gen-go-grpc). The go_package of the file is the real
+# location of the schema; the consumers keep the generated files in src/healthpb.
+# The manual workflow "Go bindings of the health contract" (proto-go.yml) installs
+# protoc, generates them like this and returns them as an artifact:
+protoc -I proto --go_out=src/healthpb --go_opt=paths=source_relative \
+  --go-grpc_out=src/healthpb --go-grpc_opt=paths=source_relative proto/hydra_common.proto
 
 # Node/TypeScript (ts-proto or grpc-tools)
 protoc -I proto --plugin=protoc-gen-ts_proto \
