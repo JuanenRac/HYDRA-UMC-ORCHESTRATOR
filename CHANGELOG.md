@@ -4,6 +4,8 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+- **`GET /nodes/:node/jobs` reads the jobs the dispatcher holds for one robot:** it asks JOB-DISPATCHER with `GET /jobs?robot=<id>` instead of downloading the whole queue (an older dispatcher that ignores the filter is cut down here to the same answer). Read-only; `503` with no dispatcher configured and `502` when it cannot be asked. 5 tests.
+
 - **The build test of the repository compiles only on CI or when allowed:** for the stacks that compile (`rust`, `go`, `android`, `flutter`, `firmware-c`), `tools/build_test.py` prints `BUILD_TEST=SKIPPED` with exit status 2 on a plain PC, never a pass; `ALLOW_LOCAL_BUILD=1` allows it and a CI runner always may. The `python` and `node` stacks are not locked.
 
 - **The gRPC health service accepts the identity of the server:** with `--identity-key-file` set, `Check` and `Watch` take the signed token of HYDRA-UMC-SERVER as a bearer token next to the token of their own (which keeps working), a call with no credential is refused even on loopback, and an address reachable from the network needs no token of its own. Without the key file nothing changes.

@@ -525,6 +525,7 @@ fn serve(server: &Server, state: &AppState) {
                 let claim = lease_claim(&request);
                 handle_recover(request, state, node, claim)
             }
+            (Method::Get, ["nodes", node, "jobs"]) => handle_node_jobs(request, state, node),
             (Method::Get, ["stats"]) => handle_stats(request, state),
             _ => write_json(request, 404, &json!({"error": "not found"})),
         }
@@ -1897,6 +1898,33 @@ fn recover_lease_problem(state: &AppState, claim: &Option<LeaseClaim>) -> Option
     }
 }
 
+/// `GET /nodes/:node/jobs`: the jobs JOB-DISPATCHER holds for one robot, read with `GET /jobs?robot=` so the whole queue is not
+/// downloaded. Read-only; `503` while no dispatcher is configured and `502` when it cannot be asked.
+fn handle_node_jobs(request: tiny_http::Request, state: &AppState, node: &str) {
+    let Some(base_url) = &state.job_dispatcher_url else {
+        write_json(
+            request,
+            503,
+            &json!({"error": "no job-dispatcher is configured"}),
+        );
+        return;
+    };
+    match job_dispatcher::jobs_for_robot(base_url, node) {
+        Ok(jobs) => {
+            let jobs: Vec<serde_json::Value> = jobs
+                .into_iter()
+                .map(|j| json!({"id": j.id, "status": j.status, "attempt": j.attempt}))
+                .collect();
+            write_json(request, 200, &json!({"node": node, "jobs": jobs}));
+        }
+        Err(e) => write_json(
+            request,
+            502,
+            &json!({"error": format!("the job-dispatcher could not be asked: {e}")}),
+        ),
+    }
+}
+
 fn handle_recover(
     request: tiny_http::Request,
     state: &AppState,
@@ -2414,6 +2442,33 @@ mod tests {
 
         let (_, m1_body) = get(port, "/missions/m1");
         assert!(m1_body.contains("\"Pending\""));
+    }
+
+    #[test]
+    fn node_jobs_asks_the_dispatcher_only_for_that_robots_jobs() {
+        let _guard = net_test_lock();
+        let (jd_url, rx) = fake_job_dispatcher_capturing(
+            200,
+            r#"[{"ID":"m1","Status":"assigned","AssignedRobot":"node-a","Attempt":1}]"#,
+        );
+        let port = start_test_server_with_job_dispatcher(Some(jd_url));
+        let (status, body) = get(port, "/nodes/node-a/jobs");
+        assert_eq!(status, 200);
+        assert!(body.contains("\"m1\"") && body.contains("\"node-a\""));
+        let calls = drain(&rx);
+        assert!(
+            calls
+                .iter()
+                .any(|c| c.starts_with("GET /jobs?robot=node-a ")),
+            "expected the filtered request, got {calls:?}"
+        );
+    }
+
+    #[test]
+    fn node_jobs_without_a_dispatcher_is_a_503() {
+        let _guard = net_test_lock();
+        let port = start_test_server();
+        assert_eq!(get(port, "/nodes/node-a/jobs").0, 503);
     }
 
     #[test]

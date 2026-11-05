@@ -106,6 +106,7 @@ Real routes (`src/server.rs`'s own dispatch table):
 | `POST` | `/estop` | Engage the global stop (see below); always available, idempotent, audited |
 | `POST` | `/estop/release` | End the global stop; only an administrator |
 | `POST` | `/events/job-dispatcher` | A signed event of the job-dispatcher (only with the `job_events` section of the configuration file; otherwise `404`) |
+| `GET` | `/nodes/:node/jobs` | `{"node": ..., "jobs": [{"id", "status", "attempt"}]}`: the jobs JOB-DISPATCHER holds for that robot, read with `GET /jobs?robot=` (read-only; `503` with no dispatcher configured, `502` when it cannot be asked) |
 | `GET` | `/stats` | `{"missionCount": ..., "missionsByState": {...}, "pendingRemoteCloses": n, "oldestPendingCloseAgeSeconds": n or null, "jobDispatcherUrl": ..., "jobDispatcher": {"lastOkAtMs": ..., "lastError": ..., "lastErrorAtMs": ...}}` |
 | `GET` | `/health` | `{"status": "ok", "name": "HYDRA-UMC-ORCHESTRATOR", "version": ...}`; the only route that never asks for the token, so a watchdog can probe it |
 

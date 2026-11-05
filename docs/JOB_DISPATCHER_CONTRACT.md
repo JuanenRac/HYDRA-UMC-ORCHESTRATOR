@@ -38,6 +38,7 @@ Without `--job-dispatcher-url` the orchestrator is on its own and assigns by han
 3. `GET /jobs/{id}` tells the truth about a job (`Status`, `AssignedRobot`, `Attempt`), so the orchestrator can close it against what the dispatcher holds.
 4. It accepts the close of a job that is already over (the answer is a conflict the orchestrator treats as done), and refuses the close of a job that was reassigned since (the orchestrator reads the job first and names its attempt).
 5. `POST /jobs/requeue` returns a job to the queue and keeps the robot unavailable until it sends a heartbeat.
+6. `GET /jobs?robot=<id>` lists only the jobs assigned to that robot (an additive filter: a dispatcher that does not know it answers every job, and the orchestrator cuts the answer down itself), and `GET /dispatch/state` answers the counts by status and the jobs each robot holds.
 
 ## A dispatcher that is down
 

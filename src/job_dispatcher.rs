@@ -425,6 +425,49 @@ pub fn run_dispatch(base_url: &str) -> Result<Vec<Assignment>, ClientError> {
     note(run_dispatch_inner(base_url))
 }
 
+/// One job held by a robot, as `GET /jobs?robot=<id>` lists it.
+#[derive(Debug, Deserialize, PartialEq, Eq)]
+pub struct RobotJob {
+    #[serde(rename = "ID")]
+    pub id: String,
+    #[serde(rename = "Status", default)]
+    pub status: String,
+    #[serde(rename = "AssignedRobot", default)]
+    pub assigned_robot: String,
+    #[serde(rename = "Attempt", default)]
+    pub attempt: u32,
+}
+
+/// The jobs Job-Dispatcher has assigned to one robot: `GET /jobs?robot=<id>`, so the whole queue is not downloaded to look at one
+/// robot. A dispatcher that is older than the filter ignores it and answers every job; the answer is cut down here to the jobs whose
+/// `AssignedRobot` is the robot asked about, so the result is the same with either.
+fn jobs_for_robot_inner(base_url: &str, robot_id: &str) -> Result<Vec<RobotJob>, ClientError> {
+    let url = format!(
+        "{}/jobs?robot={}",
+        base_url.trim_end_matches('/'),
+        path_segment(robot_id)
+    );
+    match authed(agent().get(&url)).call() {
+        Ok(response) => {
+            let text = response
+                .into_string()
+                .map_err(|e| ClientError::BadResponse(e.to_string()))?;
+            let jobs = serde_json::from_str::<Vec<RobotJob>>(&text)
+                .map_err(|e| ClientError::BadResponse(e.to_string()))?;
+            Ok(jobs
+                .into_iter()
+                .filter(|j| j.assigned_robot == robot_id)
+                .collect())
+        }
+        Err(ureq::Error::Status(code, resp)) => Err(bad_status(code, resp)),
+        Err(ureq::Error::Transport(t)) => Err(transport(t)),
+    }
+}
+
+pub fn jobs_for_robot(base_url: &str, robot_id: &str) -> Result<Vec<RobotJob>, ClientError> {
+    note(jobs_for_robot_inner(base_url, robot_id))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -714,6 +757,50 @@ mod tests {
         let (base_url, _rx) = fake_server(200, "[]");
         let result = run_dispatch(&base_url).unwrap();
         assert!(result.is_empty());
+    }
+
+    #[test]
+    fn jobs_for_robot_asks_only_for_that_robots_jobs() {
+        let (base_url, rx) = fake_server(
+            200,
+            r#"[{"ID":"m1","Status":"assigned","AssignedRobot":"arm-3","Attempt":2}]"#,
+        );
+        let jobs = jobs_for_robot(&base_url, "arm-3").unwrap();
+        assert_eq!(
+            jobs,
+            vec![RobotJob {
+                id: "m1".into(),
+                status: "assigned".into(),
+                assigned_robot: "arm-3".into(),
+                attempt: 2
+            }]
+        );
+        assert!(next(&rx).starts_with("GET /jobs?robot=arm-3 "));
+    }
+
+    #[test]
+    fn jobs_for_robot_cuts_down_the_answer_of_a_dispatcher_that_ignores_the_filter() {
+        let (base_url, _rx) = fake_server(
+            200,
+            r#"[{"ID":"a","Status":"assigned","AssignedRobot":"arm-3"},{"ID":"b","Status":"assigned","AssignedRobot":"arm-4"},{"ID":"c","Status":"pending"}]"#,
+        );
+        let jobs = jobs_for_robot(&base_url, "arm-4").unwrap();
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].id, "b");
+    }
+
+    #[test]
+    fn jobs_for_robot_encodes_the_robot_id_and_reports_a_bad_answer() {
+        let (base_url, rx) = fake_server(200, "not json");
+        assert!(matches!(
+            jobs_for_robot(&base_url, "a b&c"),
+            Err(ClientError::BadResponse(_))
+        ));
+        assert!(next(&rx).starts_with("GET /jobs?robot=a%20b%26c "));
+        assert!(matches!(
+            jobs_for_robot("http://127.0.0.1:1", "x"),
+            Err(ClientError::Unreachable(_))
+        ));
     }
 
     #[test]
