@@ -4,6 +4,8 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## [0.2.6] - GET /nodes/:node/jobs reads the jobs the dispatcher holds for one robot: it asks JOB-DISPATCHER with GET /jobs?robot=<id> instead of downloading the whole queue (an older dispatcher that ignores the filter is cut down here to... (and 6 more changes)
+
 - **`GET /nodes/:node/jobs` reads the jobs the dispatcher holds for one robot:** it asks JOB-DISPATCHER with `GET /jobs?robot=<id>` instead of downloading the whole queue (an older dispatcher that ignores the filter is cut down here to the same answer). Read-only; `503` with no dispatcher configured and `502` when it cannot be asked. 5 tests.
 
 - **The build test of the repository compiles only on CI or when allowed:** for the stacks that compile (`rust`, `go`, `android`, `flutter`, `firmware-c`), `tools/build_test.py` prints `BUILD_TEST=SKIPPED` with exit status 2 on a plain PC, never a pass; `ALLOW_LOCAL_BUILD=1` allows it and a CI runner always may. The `python` and `node` stacks are not locked.
