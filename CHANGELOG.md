@@ -4,6 +4,8 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+- **The identity of HYDRA-UMC-SERVER, off by default (`serve --identity-key-file FILE`, or `ORCHESTRATOR_IDENTITY_KEY_FILE`):** the service verifies the signed token (HS256 JWT with `exp`, `username` and `role`) that the server issues at login and accepts it next to its own token. A viewer may read but not change, and a request with no credential is refused even on loopback, `GET /health` and `GET /stats` included: nothing is open. An address that is not loopback no longer needs a token of the service. The key is the signing key of the server, read from a file that only the group of the service may read, at least 32 characters; without the switch nothing changes.
+
 - **`GET /metrics` is off by default and loopback-only:** the new `metrics` section of the configuration file (`{"metrics": {"enabled": true}}`) opens it. Closed, the route answers `404`; open, it answers a caller on this machine, or any caller with the bearer token when the API has one.
 
 - **The manifest declares the gRPC health port:** the `service` block of `hydra-umc.project.json` names `grpc_port` (50114) and `grpc_service` (`hydra.common.v1.HealthService`), so the registry of ports of the SDK lists the loopback gRPC health service next to the HTTP port and a clash between the two is caught.

@@ -52,6 +52,7 @@ mod outbox;
 mod plan;
 mod replica;
 mod server;
+mod server_identity;
 mod service_metrics;
 mod swarm_push;
 
@@ -171,6 +172,21 @@ fn run_serve(args: &[String]) -> bool {
     let token = find_flag(args, "--token")
         .or_else(|| std::env::var("ORCHESTRATOR_TOKEN").ok())
         .filter(|t| !t.is_empty());
+    // The signing key of HYDRA-UMC-SERVER, from a file (never from the command line): with it a signed token of the server is accepted, nothing is open and
+    // a viewer may read but not change. Off unless it is given.
+    let identity_key = match find_flag(args, "--identity-key-file")
+        .or_else(|| std::env::var("ORCHESTRATOR_IDENTITY_KEY_FILE").ok())
+        .filter(|path| !path.is_empty())
+    {
+        Some(path) => match server_identity::load_identity_key(&path) {
+            Ok(key) => Some(key),
+            Err(problem) => {
+                crate::log_line!("fatal: --identity-key-file: {problem}");
+                return false;
+            }
+        },
+        None => None,
+    };
     let allow_anonymous = args.iter().any(|a| a == "--allow-anonymous");
     let require_attempt = args.iter().any(|a| a == "--require-attempt");
     // Taking over the replicated registry of another orchestrator (POST /replica/takeover) is off unless asked for.
@@ -246,7 +262,11 @@ fn run_serve(args: &[String]) -> bool {
             }
         },
     };
-    if let Some(problem) = server::startup_problem(&bind_addr, token.as_deref(), allow_anonymous) {
+    if let Some(problem) = server::startup_problem(
+        &bind_addr,
+        token.as_deref(),
+        allow_anonymous || identity_key.is_some(),
+    ) {
         crate::log_line!("fatal: {problem}");
         return false;
     }
@@ -358,9 +378,12 @@ fn run_serve(args: &[String]) -> bool {
                     }
                 );
             }
+            if identity_key.is_some() {
+                crate::log_line!("tokens of HYDRA-UMC-SERVER accepted: every route needs an identity (GET /health too), a viewer may read but not change");
+            }
             if token.is_some() {
                 crate::log_line!("bearer token required on every route except GET /health");
-            } else if !server::is_loopback_addr(&addr) {
+            } else if identity_key.is_none() && !server::is_loopback_addr(&addr) {
                 crate::log_line!("WARNING: --allow-anonymous - this API is open to the network");
             }
             if require_attempt {
@@ -379,6 +402,7 @@ fn run_serve(args: &[String]) -> bool {
                 registry,
                 server::ServerOptions {
                     token,
+                    identity_key,
                     require_attempt,
                     keep_finished,
                     takeover,

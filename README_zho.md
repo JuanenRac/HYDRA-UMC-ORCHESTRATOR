@@ -87,6 +87,7 @@ GPL-3.0-or-later - see LICENSE
 * 🛑 **始终可用的全局急停：** `POST /estop`（操作员或管理员，无需确认）先于一切锁定闩锁，把停止转发给 HYDRA-UMC-SERVER（`/api/stop-all`），并列出当时在运动的任务。重复调用不会改变任何东西，每次停止和解除都写入审计文件，闩锁在重启后依然保持（无法读取的已保存状态按已锁定处理），只有管理员的 `POST /estop/release` 才能解除。锁定期间，分派、自动分派和启动任务都返回 `423`；仍可结束任务。这是软件：最终决定权在控制器和执行器手中。
 * 📥 **作业调度器的带签名事件（默认关闭）：** 在配置文件的 `job_events` 段开启后，`POST /events/job-dispatcher` 接收 HYDRA-UMC-JOB-DISPATCHER 的事件（对时间戳和正文做 HMAC-SHA256，密钥取自环境变量，时钟偏差有限，恒定时间比较）：`assigned` 事件把待处理任务置为已分派，因此这里没人发起的某次调度所做的分配不再被漏掉；其他类型只在 `GET /stats` 中计数。
 * 🩺 **gRPC 健康服务（默认关闭）：** 启用配置文件的 `health_grpc` 部分后，共享 `HealthService` 的 `Check()` 和流式 `Watch()` 在回环地址上应答（其他地址需要持有者令牌）：任务注册表可读且全局停止未启用时为 OK，停止启用期间为降级，注册表不可用时为不健康。连接数和打开的流有上限，每个流随其客户端结束。已用真实的 gRPC 客户端对真实服务器测试；从未对真实的看门狗、机器人或工作单元测试。参见 [`docs/HEALTH_GRPC.md`](docs/HEALTH_GRPC.md)。
+* 🪪 **HYDRA-UMC-SERVER 的身份（默认关闭）：** `serve --identity-key-file 文件`（或 `ORCHESTRATOR_IDENTITY_KEY_FILE=文件`）会让服务在自己的令牌之外，也接受服务器在登录时签发的已签名令牌：查看者只能读取而不能更改，没有凭据的请求即使在环回地址上也会被拒绝。不开启该开关时一切照旧。
 
 ## 🧩 在 HYDRA-UMC 中的角色
 

@@ -69,6 +69,9 @@ pub struct AppState {
     pub job_dispatcher_url: Option<String>,
     pub close_outbox: SharedOutbox,
     pub token: Option<String>,
+    /// the signing key of HYDRA-UMC-SERVER when the operator turned its identity on (`--identity-key-file`): a signed token of the server is then accepted next to
+    /// the token above, a viewer may read but not change, and nothing is open, not even `GET /health`
+    pub identity_key: Option<Vec<u8>>,
     pub require_attempt: bool,
     /// `POST /replica/takeover` exists only when this is set
     pub takeover: bool,
@@ -95,6 +98,8 @@ pub struct ServerOptions {
     /// when set, every route except `GET /health` needs
     /// `Authorization: Bearer <token>`
     pub token: Option<String>,
+    /// the signing key of HYDRA-UMC-SERVER (see `server_identity.rs`); `None` (the default) leaves the earlier rules
+    pub identity_key: Option<Vec<u8>>,
     /// when set, `start`/`complete`/`fail` must carry the `attempt` the
     /// mission was dispatched with, so a node that lost the mission (and was
     /// declared unavailable) cannot overwrite the one that holds it now
@@ -178,6 +183,33 @@ fn authorized(request: &tiny_http::Request, token: &Option<String>) -> bool {
         .find(|h| h.field.equiv("Authorization"))
         .and_then(|h| h.value.as_str().strip_prefix("Bearer "))
         .is_some_and(|given| constant_time_eq(given.as_bytes(), expected.as_bytes()))
+}
+
+fn identity_of(
+    request: &tiny_http::Request,
+    key: &[u8],
+) -> Option<crate::server_identity::Identity> {
+    let given = bearer(request)?;
+    let now = crate::logging::now_ms() as f64 / 1000.0;
+    crate::server_identity::verify_token(&given, key, now).ok()
+}
+
+/// The rule for every route: the earlier one (the token, when one is set) while the identity of HYDRA-UMC-SERVER is off; with its key, the token of the API or a
+/// valid signed token of the SERVER (any role reads, `admin` or `operator` changes), and nothing else.
+fn request_allowed(request: &tiny_http::Request, state: &AppState) -> bool {
+    let Some(key) = state.identity_key.as_deref() else {
+        return authorized(request, &state.token);
+    };
+    if state.token.is_some() && authorized(request, &state.token) {
+        return true;
+    }
+    match identity_of(request, key) {
+        Some(identity) => {
+            crate::server_identity::is_read_method(request.method().as_str())
+                || identity.can_write()
+        }
+        None => false,
+    }
 }
 
 fn json_header() -> Header {
@@ -292,6 +324,7 @@ pub fn run(
         close_outbox: Arc::new(close_outbox),
         metrics: options.metrics,
         token: options.token.filter(|t| !t.is_empty()),
+        identity_key: options.identity_key,
         require_attempt: options.require_attempt,
         takeover: options.takeover,
         leases: Mutex::new(crate::lease::LeaseTable::new()),
@@ -407,7 +440,9 @@ fn serve(server: &Server, state: &AppState) {
                 continue;
             }
             // with a token the caller presents it; without one only a caller on this machine may read the numbers
-            let allowed = if state.token.is_some() {
+            let allowed = if state.identity_key.is_some() {
+                request_allowed(&request, &state)
+            } else if state.token.is_some() {
                 authorized(&request, &state.token)
             } else {
                 request.remote_addr().is_some_and(|a| a.ip().is_loopback())
@@ -419,7 +454,7 @@ fn serve(server: &Server, state: &AppState) {
 
         // liveness stays open so a watchdog can probe it without a credential
         let is_health = matches!((&method, parts.as_slice()), (Method::Get, ["health"]));
-        if !is_health && !authorized(&request, &state.token) {
+        if (!is_health || state.identity_key.is_some()) && !request_allowed(&request, &state) {
             write_json(
                 request,
                 401,
@@ -500,6 +535,8 @@ fn serve(server: &Server, state: &AppState) {
 /// administrator. With a single token, or none (a loopback lab), the requester is an administrator: there is only one role.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 enum Role {
+    /// a viewer of the identity of HYDRA-UMC-SERVER: it may read the state of the stop, not change it
+    Viewer,
     Operator,
     Admin,
 }
@@ -515,7 +552,16 @@ fn bearer(request: &tiny_http::Request) -> Option<String> {
 
 fn estop_role(request: &tiny_http::Request, state: &AppState) -> Option<Role> {
     let admin = state.estop.admin_token().filter(|t| !t.is_empty());
-    if state.token.is_none() && admin.is_none() {
+    if let Some(key) = state.identity_key.as_deref() {
+        // with the identity of HYDRA-UMC-SERVER on there is no open lab: a signed token of the server decides the role
+        if let Some(identity) = identity_of(request, key) {
+            return Some(match identity.role.as_str() {
+                "admin" => Role::Admin,
+                "operator" => Role::Operator,
+                _ => Role::Viewer,
+            });
+        }
+    } else if state.token.is_none() && admin.is_none() {
         return Some(Role::Admin);
     }
     let given = bearer(request).unwrap_or_default();
@@ -569,6 +615,14 @@ fn handle_estop(request: tiny_http::Request, state: &AppState, method: &Method, 
     };
     if *method == Method::Get {
         write_json(request, 200, &state.estop.status());
+        return;
+    }
+    if role == Role::Viewer {
+        write_json(
+            request,
+            403,
+            &json!({"error": "a viewer may read the state of the global stop but not change it", "engaged": state.estop.engaged()}),
+        );
         return;
     }
     let raw = read_body(&mut request).unwrap_or_default();
@@ -2899,6 +2953,79 @@ mod tests {
         assert!(body.contains("HYDRA-UMC-ORCHESTRATOR"));
         let (status, _) = request_with_auth(port, "GET", "/missions", "", Some("s3cret-token"));
         assert_eq!(status, 200);
+    }
+
+    /// A token of HYDRA-UMC-SERVER signed with `key`, valid for ten minutes.
+    fn server_token(key: &[u8], role: &str) -> String {
+        fn b64(data: &[u8]) -> String {
+            const TABLE: &[u8; 64] =
+                b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+            let mut out = String::new();
+            for chunk in data.chunks(3) {
+                let n = chunk
+                    .iter()
+                    .enumerate()
+                    .fold(0u32, |acc, (i, b)| acc | (u32::from(*b) << (16 - 8 * i)));
+                for i in 0..=chunk.len() {
+                    out.push(TABLE[((n >> (18 - 6 * i)) & 63) as usize] as char);
+                }
+            }
+            out
+        }
+        let head = b64(br#"{"alg":"HS256","typ":"JWT"}"#);
+        let exp = crate::logging::now_ms() / 1000 + 600;
+        let body = b64(format!(r#"{{"username":"ana","role":"{role}","exp":{exp}}}"#).as_bytes());
+        let mac = crate::hmac::hmac_sha256(key, format!("{head}.{body}").as_bytes());
+        format!("{head}.{body}.{}", b64(&mac))
+    }
+
+    #[test]
+    fn with_the_identity_of_the_server_nothing_is_open_and_a_viewer_only_reads() {
+        let _guard = net_test_lock();
+        let key = b"0123456789abcdef0123456789abcdef".to_vec();
+        let port = start_test_server_with(
+            None,
+            ServerOptions {
+                identity_key: Some(key.clone()),
+                ..Default::default()
+            },
+        );
+        for path in ["/missions", "/stats", "/health"] {
+            assert_eq!(get(port, path).0, 401, "GET {path} without a credential");
+            let (status, _) = request_with_auth(port, "GET", path, "", Some("not-a-token"));
+            assert_eq!(status, 401, "GET {path} with a bad token");
+            let viewer = server_token(&key, "viewer");
+            let (status, _) = request_with_auth(port, "GET", path, "", Some(viewer.as_str()));
+            assert_eq!(status, 200, "GET {path} as a viewer");
+        }
+        let viewer = server_token(&key, "viewer");
+        let (status, _) = request_with_auth(port, "POST", "/missions", "{}", Some(viewer.as_str()));
+        assert_eq!(status, 401, "a viewer does not change anything");
+        let (status, _) = request_with_auth(port, "POST", "/estop", "{}", Some(viewer.as_str()));
+        assert_eq!(status, 403, "a viewer does not stop the fleet");
+        let operator = server_token(&key, "operator");
+        let (status, _) =
+            request_with_auth(port, "POST", "/missions", "{}", Some(operator.as_str()));
+        assert_ne!(status, 401, "an operator is let in");
+        let forged = server_token(b"another-key-of-more-than-32-characters!", "admin");
+        let (status, _) = request_with_auth(port, "GET", "/missions", "", Some(forged.as_str()));
+        assert_eq!(status, 401, "a token signed with another key");
+    }
+
+    #[test]
+    fn with_the_identity_of_the_server_the_token_of_the_api_keeps_working() {
+        let _guard = net_test_lock();
+        let port = start_test_server_with(
+            None,
+            ServerOptions {
+                token: Some("s3cret-token".to_string()),
+                identity_key: Some(b"0123456789abcdef0123456789abcdef".to_vec()),
+                ..Default::default()
+            },
+        );
+        let (status, _) = request_with_auth(port, "GET", "/missions", "", Some("s3cret-token"));
+        assert_eq!(status, 200);
+        assert_eq!(get(port, "/health").0, 401);
     }
 
     #[test]

@@ -119,6 +119,7 @@ Real routes (`src/server.rs`'s own dispatch table):
   required, as before. `--job-dispatcher-token` (or `JOB_DISPATCHER_TOKEN`)
   is sent on every call to JOB-DISPATCHER, which asks for one the moment it
   listens on a network address.
+* **Identity of HYDRA-UMC-SERVER (off by default).** `--identity-key-file FILE` (or `ORCHESTRATOR_IDENTITY_KEY_FILE`) gives the signing key of the server (its `JWT_SECRET`, 32 characters or more, read from a file and never printed). A signed token of the server (HS256 with `username`, `role` and `exp`) is then accepted next to `--token`: a viewer may read but not change (and may read the state of the global stop but not engage it), `admin` and `operator` may change, and a request with no credential is refused even on loopback, `GET /health` and `GET /metrics` included. A non-loopback `--addr` no longer needs `--token`. Without the switch nothing changes.
 * **Body size.** A request body over 64 KB is refused with `413` before it is
   read into memory (a body that announces more than that is refused without
   reading any of it).
