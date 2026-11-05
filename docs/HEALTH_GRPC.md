@@ -34,6 +34,10 @@ Every key but `enabled` is optional and an unknown key stops the start (see the 
 | `watch_interval_seconds` | 5 | A stream repeats the report at least this often when nothing changed (0.1 to 60). It is the keepalive of the stream. |
 | `keepalive_seconds` | 30 | Period of the HTTP/2 pings; a client that does not answer within the same time is dropped (1 to 3600). |
 
+## The identity of the server
+
+When the service is started with `--identity-key-file` (the key of HYDRA-UMC-SERVER, the same file that opens the HTTP API to the signed token of the server), the gRPC health service accepts that signed token as a bearer token too, in `authorization: Bearer <token>`, next to the token named by `token_env` (which keeps working). A token of any role is enough: the service only reads. Nothing is open any more: a call with no credential is refused, even on loopback, and an address reachable from the network needs no token of its own. Without the key file nothing changes.
+
 ## What it says
 
 `Check()` returns one `HealthReport`; `Watch()` returns the same report as a stream: the current one at once, another whenever the state or the detail changes, and a repeat every `watch_interval_seconds`, until the client cancels or the service stops.

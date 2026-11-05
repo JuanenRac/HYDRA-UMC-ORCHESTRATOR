@@ -4,6 +4,8 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+- **The gRPC health service accepts the identity of the server:** with `--identity-key-file` set, `Check` and `Watch` take the signed token of HYDRA-UMC-SERVER as a bearer token next to the token of their own (which keeps working), a call with no credential is refused even on loopback, and an address reachable from the network needs no token of its own. Without the key file nothing changes.
+
 - **The dispatcher contract check does not build Go on a plain PC:** `tools/verify_dispatcher_contract.py` asks `tools/local_build.py` first (a CI runner, or `ALLOW_LOCAL_BUILD=1`, may build) and says SKIPPED anywhere else.
 
 - **The identity of HYDRA-UMC-SERVER, off by default (`serve --identity-key-file FILE`, or `ORCHESTRATOR_IDENTITY_KEY_FILE`):** the service verifies the signed token (HS256 JWT with `exp`, `username` and `role`) that the server issues at login and accepts it next to its own token. A viewer may read but not change, and a request with no credential is refused even on loopback, `GET /health` and `GET /stats` included: nothing is open. An address that is not loopback no longer needs a token of the service. The key is the signing key of the server, read from a file that only the group of the service may read, at least 32 characters; without the switch nothing changes.

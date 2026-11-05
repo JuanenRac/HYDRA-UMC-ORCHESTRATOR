@@ -53,6 +53,9 @@ pub struct HealthGrpcConfig {
     pub listen: SocketAddr,
     /// bearer token every call needs; `None` is only allowed on loopback
     pub token: Option<String>,
+    /// the signing key of HYDRA-UMC-SERVER: when set, a valid signed token of the server (any role: the service only reads) is accepted next to `token`,
+    /// and a call with no credential is refused even on loopback
+    pub identity_key: Option<Vec<u8>>,
     pub max_connections: usize,
     pub max_watchers: usize,
     /// how often a `Watch()` stream repeats the report when nothing changed (the keepalive of the stream)
@@ -66,6 +69,7 @@ impl Default for HealthGrpcConfig {
         HealthGrpcConfig {
             listen: DEFAULT_LISTEN.parse().expect("a valid default address"),
             token: None,
+            identity_key: None,
             max_connections: DEFAULT_MAX_CONNECTIONS,
             max_watchers: DEFAULT_MAX_WATCHERS,
             watch_interval: DEFAULT_WATCH_INTERVAL,
@@ -237,25 +241,39 @@ impl AsyncWrite for LimitedConn {
     }
 }
 
-/// The bearer-token check: every call, including `Watch()`, carries `authorization: Bearer <token>`.
+/// The bearer-token check: every call, including `Watch()`, carries `authorization: Bearer <token>`. The token is the one of the service, or, when the identity
+/// key is set, a valid signed token of HYDRA-UMC-SERVER. With neither configured the service is open (loopback only, enforced when it starts).
 fn token_interceptor(
     token: Option<String>,
+    identity_key: Option<Vec<u8>>,
 ) -> impl FnMut(Request<()>) -> Result<Request<()>, Status> + Clone {
     move |request: Request<()>| {
-        let Some(expected) = &token else {
+        if token.is_none() && identity_key.is_none() {
             return Ok(request);
-        };
+        }
         let given = request
             .metadata()
             .get("authorization")
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.strip_prefix("Bearer "));
-        match given {
-            Some(g) if crate::hmac::constant_time_eq(g.as_bytes(), expected.as_bytes()) => {
-                Ok(request)
+        let Some(given) = given else {
+            return Err(Status::unauthenticated("missing or wrong bearer token"));
+        };
+        if let Some(expected) = &token {
+            if crate::hmac::constant_time_eq(given.as_bytes(), expected.as_bytes()) {
+                return Ok(request);
             }
-            _ => Err(Status::unauthenticated("missing or wrong bearer token")),
         }
+        if let Some(key) = &identity_key {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs_f64())
+                .unwrap_or(0.0);
+            if crate::server_identity::verify_token(given, key, now).is_ok() {
+                return Ok(request);
+            }
+        }
+        Err(Status::unauthenticated("missing or wrong bearer token"))
     }
 }
 
@@ -384,7 +402,7 @@ async fn run(
         HealthServiceServer::new(service)
             .max_decoding_message_size(1024)
             .max_encoding_message_size(64 * 1024),
-        token_interceptor(config.token.clone()),
+        token_interceptor(config.token.clone(), config.identity_key.clone()),
     );
     let _ = ready.send(Ok(local_addr));
     let result = tonic::transport::Server::builder()
@@ -414,6 +432,7 @@ mod tests {
         HealthGrpcConfig {
             listen: "127.0.0.1:0".parse().unwrap(),
             token: token.map(str::to_string),
+            identity_key: None,
             max_connections: 4,
             max_watchers: 2,
             watch_interval: Duration::from_millis(200),
@@ -563,6 +582,65 @@ mod tests {
             assert!(c.watch(with_token(Empty {}, "s3cret")).await.is_ok());
         });
         handle.stop();
+    }
+
+    fn b64(data: &[u8]) -> String {
+        const TABLE: &[u8; 64] =
+            b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+        let mut out = String::new();
+        for chunk in data.chunks(3) {
+            let n = chunk
+                .iter()
+                .enumerate()
+                .fold(0u32, |acc, (i, b)| acc | (u32::from(*b) << (16 - 8 * i)));
+            for i in 0..chunk.len() + 1 {
+                out.push(TABLE[((n >> (18 - 6 * i)) & 63) as usize] as char);
+            }
+        }
+        out
+    }
+
+    /// A token of the SERVER format (HS256, username, role, exp) signed with `key`, expiring `expires_in` seconds from now.
+    fn signed(key: &[u8], role: &str, expires_in: f64) -> String {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs_f64();
+        let head = b64(b"{\"alg\":\"HS256\",\"typ\":\"JWT\"}");
+        let body = b64(
+            format!("{{\"username\":\"hydra-umc-server\",\"role\":\"{role}\",\"exp\":{}}}", now + expires_in).as_bytes(),
+        );
+        let mac = crate::hmac::hmac_sha256(key, format!("{head}.{body}").as_bytes());
+        format!("{head}.{body}.{}", b64(&mac))
+    }
+
+    #[test]
+    fn the_identity_of_the_server_is_accepted_and_nothing_is_open() {
+        const KEY: &[u8] = b"0123456789abcdef0123456789abcdef";
+        for token in [None, Some("s3cret")] {
+            let mut cfg = config(token);
+            cfg.identity_key = Some(KEY.to_vec());
+            let handle = spawn(cfg, fixed(HealthState::Ok)).unwrap();
+            let addr = handle.local_addr;
+            rt().block_on(async {
+                let mut c = client(addr).await;
+                // no credential is refused even on loopback, as is a wrong, a foreign and an expired token
+                assert_eq!(c.check(Empty {}).await.unwrap_err().code(), tonic::Code::Unauthenticated);
+                assert_eq!(c.check(with_token(Empty {}, "nope")).await.unwrap_err().code(), tonic::Code::Unauthenticated);
+                let foreign = signed(b"another-key-of-more-than-32-characters", "viewer", 60.0);
+                assert_eq!(c.check(with_token(Empty {}, &foreign)).await.unwrap_err().code(), tonic::Code::Unauthenticated);
+                let expired = signed(KEY, "viewer", -60.0);
+                assert_eq!(c.check(with_token(Empty {}, &expired)).await.unwrap_err().code(), tonic::Code::Unauthenticated);
+                // a viewer is enough: the service only reads
+                let viewer = signed(KEY, "viewer", 60.0);
+                assert!(c.check(with_token(Empty {}, &viewer)).await.is_ok());
+                assert!(c.watch(with_token(Empty {}, &viewer)).await.is_ok());
+                if token.is_some() {
+                    assert!(c.check(with_token(Empty {}, "s3cret")).await.is_ok(), "the own token keeps working");
+                }
+            });
+            handle.stop();
+        }
     }
 
     #[test]

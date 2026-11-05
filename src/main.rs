@@ -326,7 +326,7 @@ fn run_serve(args: &[String]) -> bool {
         }
     };
     // the health service over gRPC: off unless the configuration turns it on; the token falls back to the one of the HTTP API
-    let health_grpc_config = match config::health_grpc(&file_config, token.as_deref()) {
+    let health_grpc_config = match config::health_grpc(&file_config, token.as_deref(), identity_key.as_deref()) {
         Ok(built) => built,
         Err(e) => {
             crate::log_line!("fatal: {e}");

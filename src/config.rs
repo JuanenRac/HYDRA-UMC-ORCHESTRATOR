@@ -151,10 +151,12 @@ pub fn build(
 }
 
 /// The settings of the gRPC health service, or `None` while it is off. `api_token` is the token of the HTTP API: it is the
-/// fallback when `token_env` is not named, and only for an address other than loopback. An address other than loopback without any token is refused.
+/// fallback when `token_env` is not named, and only for an address other than loopback. An address other than loopback without any token (or the identity key
+/// of the server, `identity_key`) is refused.
 pub fn health_grpc(
     file: &FileConfig,
     api_token: Option<&str>,
+    identity_key: Option<&[u8]>,
 ) -> Result<Option<HealthGrpcConfig>, String> {
     let Some(section) = file.health_grpc.as_ref().filter(|s| s.enabled) else {
         return Ok(None);
@@ -174,7 +176,9 @@ pub fn health_grpc(
         }
         None => None,
     };
-    if cfg.token.is_none() && !cfg.listen.ip().is_loopback() {
+    // with the identity key of the family the signed token of the server is accepted too and nothing is open: an address reachable from the network needs no token of its own
+    cfg.identity_key = identity_key.map(<[u8]>::to_vec);
+    if cfg.token.is_none() && cfg.identity_key.is_none() && !cfg.listen.ip().is_loopback() {
         return Err("health_grpc.listen is reachable from the network but there is no token: name one with health_grpc.token_env (or run the API with a token), or listen on 127.0.0.1".into());
     }
     if let Some(n) = section.max_connections {
@@ -275,17 +279,17 @@ mod tests {
 
     #[test]
     fn health_grpc_is_off_by_default_and_checked_when_on() {
-        assert!(health_grpc(&parse("").unwrap(), None).unwrap().is_none());
+        assert!(health_grpc(&parse("").unwrap(), None, None).unwrap().is_none());
         let off = parse(r#"{"health_grpc":{"enabled":false,"listen":"0.0.0.0:1"}}"#).unwrap();
-        assert!(health_grpc(&off, None).unwrap().is_none());
+        assert!(health_grpc(&off, None, None).unwrap().is_none());
         let on = parse(r#"{"health_grpc":{"enabled":true}}"#).unwrap();
-        let cfg = health_grpc(&on, None).unwrap().unwrap();
+        let cfg = health_grpc(&on, None, None).unwrap().unwrap();
         assert!(cfg.listen.ip().is_loopback() && cfg.token.is_none());
         // another address needs a token, from the API or from the section
         let open = parse(r#"{"health_grpc":{"enabled":true,"listen":"0.0.0.0:50114"}}"#).unwrap();
-        assert!(health_grpc(&open, None).is_err());
+        assert!(health_grpc(&open, None, None).is_err());
         assert_eq!(
-            health_grpc(&open, Some("t"))
+            health_grpc(&open, Some("t"), None)
                 .unwrap()
                 .unwrap()
                 .token
@@ -293,7 +297,7 @@ mod tests {
             Some("t")
         );
         // on loopback the token of the HTTP API is not borrowed: the watchdog dials without credentials
-        assert!(health_grpc(&on, Some("t"))
+        assert!(health_grpc(&on, Some("t"), None)
             .unwrap()
             .unwrap()
             .token
@@ -301,7 +305,19 @@ mod tests {
         let missing =
             parse(r#"{"health_grpc":{"enabled":true,"token_env":"ORCH_TEST_NO_SUCH_TOKEN"}}"#)
                 .unwrap();
-        assert!(health_grpc(&missing, Some("t")).is_err());
+        assert!(health_grpc(&missing, Some("t"), None).is_err());
+    }
+
+    #[test]
+    fn the_identity_key_stands_in_for_the_token_on_an_address_reachable_from_the_network() {
+        let open = parse(r#"{"health_grpc":{"enabled":true,"listen":"0.0.0.0:50114"}}"#).unwrap();
+        assert!(health_grpc(&open, None, None).is_err());
+        let key: &[u8] = b"0123456789abcdef0123456789abcdef";
+        let cfg = health_grpc(&open, None, Some(key)).unwrap().unwrap();
+        assert!(cfg.token.is_none());
+        assert_eq!(cfg.identity_key.as_deref(), Some(key));
+        let loopback = parse(r#"{"health_grpc":{"enabled":true}}"#).unwrap();
+        assert_eq!(health_grpc(&loopback, None, Some(key)).unwrap().unwrap().identity_key.as_deref(), Some(key));
     }
 
     #[test]
@@ -313,11 +329,11 @@ mod tests {
             r#"{"health_grpc":{"enabled":true,"watch_interval_seconds":0}}"#,
             r#"{"health_grpc":{"enabled":true,"keepalive_seconds":0.5}}"#,
         ] {
-            assert!(health_grpc(&parse(bad).unwrap(), None).is_err(), "{bad}");
+            assert!(health_grpc(&parse(bad).unwrap(), None, None).is_err(), "{bad}");
         }
         assert!(parse(r#"{"health_grpc":{"enabeld":true}}"#).is_err());
         let ok = parse(r#"{"health_grpc":{"enabled":true,"listen":"127.0.0.1:0","max_connections":3,"max_watchers":2,"watch_interval_seconds":2,"keepalive_seconds":10}}"#).unwrap();
-        let cfg = health_grpc(&ok, None).unwrap().unwrap();
+        let cfg = health_grpc(&ok, None, None).unwrap().unwrap();
         assert_eq!((cfg.max_connections, cfg.max_watchers), (3, 2));
         assert_eq!(cfg.watch_interval, Duration::from_secs(2));
     }
