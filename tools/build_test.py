@@ -8,6 +8,9 @@
 
 This command never invokes version bump scripts and never updates CHANGELOG.md.
 It may create normal compiler outputs such as build/, target/ or APK artifacts.
+
+The check of a stack that compiles (rust, go, android, flutter, firmware-c) is locked on a developer PC: it runs on a CI runner (CI or GITHUB_ACTIONS set) or
+with ALLOW_LOCAL_BUILD=1, and anywhere else it prints BUILD_TEST=SKIPPED and exits 2, never a pass. The python and node stacks are not locked.
 """
 from __future__ import annotations
 
@@ -15,9 +18,20 @@ import json
 import os
 import subprocess
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+try:
+    from local_build import local_build_refusal  # noqa: E402  (the lock on builds that compile on this PC, kept by tools/sync_repo_tools.py)
+except ImportError:   # a repository that has not taken the helper yet keeps the same rule
+    def local_build_refusal(env: Mapping[str, str] | None = None) -> str | None:
+        env = os.environ if env is None else env
+        if env.get("ALLOW_LOCAL_BUILD", "").strip() == "1" or any(env.get(n, "").strip().lower() not in ("", "0", "false", "no", "off") for n in ("CI", "GITHUB_ACTIONS")):
+            return None
+        return "local builds are off; GitHub Actions builds it. Set ALLOW_LOCAL_BUILD=1 to allow it on this PC"
+COMPILED_STACKS = {"rust", "go", "android", "flutter", "firmware-c"}   # the check of these compiles: locked on a developer PC
 EXCLUDED_PARTS = {".git", ".venv", "node_modules", "build", "dist", "target", "__pycache__"}
 
 
@@ -56,6 +70,10 @@ def main() -> int:
     if not isinstance(stack, str):
         fail("manifest stack must be a string")
     print(f"BUILD_TEST project={manifest.get('name', ROOT.name)} stack={stack}")
+    refusal = local_build_refusal() if stack in COMPILED_STACKS else None
+    if refusal is not None:
+        print(f"BUILD_TEST=SKIPPED {refusal}")   # compiling on this PC is locked: skipped, never passed
+        return 2
 
     if stack in {"python", "python-bare"}:
         compile_python_sources()
