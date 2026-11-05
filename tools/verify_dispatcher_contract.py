@@ -35,6 +35,8 @@ import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from local_build import local_build_refusal  # noqa: E402  (the lock on builds that compile on this PC)
 EXE = ".exe" if os.name == "nt" else ""
 
 
@@ -103,6 +105,8 @@ def main() -> int:
         return skip(f"no checkout of HYDRA-UMC-JOB-DISPATCHER at {jd_root}")
     if shutil.which("go") is None:
         return skip("Go is not installed")
+    if local_build_refusal() is not None:
+        return skip(local_build_refusal())
     orchestrator = find_orchestrator()
     if orchestrator is None:
         return skip("the orchestrator is not built (cargo build)")
