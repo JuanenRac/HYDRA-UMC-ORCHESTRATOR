@@ -279,7 +279,9 @@ mod tests {
 
     #[test]
     fn health_grpc_is_off_by_default_and_checked_when_on() {
-        assert!(health_grpc(&parse("").unwrap(), None, None).unwrap().is_none());
+        assert!(health_grpc(&parse("").unwrap(), None, None)
+            .unwrap()
+            .is_none());
         let off = parse(r#"{"health_grpc":{"enabled":false,"listen":"0.0.0.0:1"}}"#).unwrap();
         assert!(health_grpc(&off, None, None).unwrap().is_none());
         let on = parse(r#"{"health_grpc":{"enabled":true}}"#).unwrap();
@@ -317,7 +319,14 @@ mod tests {
         assert!(cfg.token.is_none());
         assert_eq!(cfg.identity_key.as_deref(), Some(key));
         let loopback = parse(r#"{"health_grpc":{"enabled":true}}"#).unwrap();
-        assert_eq!(health_grpc(&loopback, None, Some(key)).unwrap().unwrap().identity_key.as_deref(), Some(key));
+        assert_eq!(
+            health_grpc(&loopback, None, Some(key))
+                .unwrap()
+                .unwrap()
+                .identity_key
+                .as_deref(),
+            Some(key)
+        );
     }
 
     #[test]
@@ -329,7 +338,10 @@ mod tests {
             r#"{"health_grpc":{"enabled":true,"watch_interval_seconds":0}}"#,
             r#"{"health_grpc":{"enabled":true,"keepalive_seconds":0.5}}"#,
         ] {
-            assert!(health_grpc(&parse(bad).unwrap(), None, None).is_err(), "{bad}");
+            assert!(
+                health_grpc(&parse(bad).unwrap(), None, None).is_err(),
+                "{bad}"
+            );
         }
         assert!(parse(r#"{"health_grpc":{"enabeld":true}}"#).is_err());
         let ok = parse(r#"{"health_grpc":{"enabled":true,"listen":"127.0.0.1:0","max_connections":3,"max_watchers":2,"watch_interval_seconds":2,"keepalive_seconds":10}}"#).unwrap();

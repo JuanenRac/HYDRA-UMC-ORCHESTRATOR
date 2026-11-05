@@ -607,9 +607,11 @@ mod tests {
             .unwrap()
             .as_secs_f64();
         let head = b64(b"{\"alg\":\"HS256\",\"typ\":\"JWT\"}");
-        let body = b64(
-            format!("{{\"username\":\"hydra-umc-server\",\"role\":\"{role}\",\"exp\":{}}}", now + expires_in).as_bytes(),
-        );
+        let body = b64(format!(
+            "{{\"username\":\"hydra-umc-server\",\"role\":\"{role}\",\"exp\":{}}}",
+            now + expires_in
+        )
+        .as_bytes());
         let mac = crate::hmac::hmac_sha256(key, format!("{head}.{body}").as_bytes());
         format!("{head}.{body}.{}", b64(&mac))
     }
@@ -625,18 +627,42 @@ mod tests {
             rt().block_on(async {
                 let mut c = client(addr).await;
                 // no credential is refused even on loopback, as is a wrong, a foreign and an expired token
-                assert_eq!(c.check(Empty {}).await.unwrap_err().code(), tonic::Code::Unauthenticated);
-                assert_eq!(c.check(with_token(Empty {}, "nope")).await.unwrap_err().code(), tonic::Code::Unauthenticated);
+                assert_eq!(
+                    c.check(Empty {}).await.unwrap_err().code(),
+                    tonic::Code::Unauthenticated
+                );
+                assert_eq!(
+                    c.check(with_token(Empty {}, "nope"))
+                        .await
+                        .unwrap_err()
+                        .code(),
+                    tonic::Code::Unauthenticated
+                );
                 let foreign = signed(b"another-key-of-more-than-32-characters", "viewer", 60.0);
-                assert_eq!(c.check(with_token(Empty {}, &foreign)).await.unwrap_err().code(), tonic::Code::Unauthenticated);
+                assert_eq!(
+                    c.check(with_token(Empty {}, &foreign))
+                        .await
+                        .unwrap_err()
+                        .code(),
+                    tonic::Code::Unauthenticated
+                );
                 let expired = signed(KEY, "viewer", -60.0);
-                assert_eq!(c.check(with_token(Empty {}, &expired)).await.unwrap_err().code(), tonic::Code::Unauthenticated);
+                assert_eq!(
+                    c.check(with_token(Empty {}, &expired))
+                        .await
+                        .unwrap_err()
+                        .code(),
+                    tonic::Code::Unauthenticated
+                );
                 // a viewer is enough: the service only reads
                 let viewer = signed(KEY, "viewer", 60.0);
                 assert!(c.check(with_token(Empty {}, &viewer)).await.is_ok());
                 assert!(c.watch(with_token(Empty {}, &viewer)).await.is_ok());
                 if token.is_some() {
-                    assert!(c.check(with_token(Empty {}, "s3cret")).await.is_ok(), "the own token keeps working");
+                    assert!(
+                        c.check(with_token(Empty {}, "s3cret")).await.is_ok(),
+                        "the own token keeps working"
+                    );
                 }
             });
             handle.stop();
