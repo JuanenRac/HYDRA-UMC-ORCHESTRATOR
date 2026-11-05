@@ -441,7 +441,7 @@ fn serve(server: &Server, state: &AppState) {
             }
             // with a token the caller presents it; without one only a caller on this machine may read the numbers
             let allowed = if state.identity_key.is_some() {
-                request_allowed(&request, &state)
+                request_allowed(&request, state)
             } else if state.token.is_some() {
                 authorized(&request, &state.token)
             } else {
@@ -454,7 +454,7 @@ fn serve(server: &Server, state: &AppState) {
 
         // liveness stays open so a watchdog can probe it without a credential
         let is_health = matches!((&method, parts.as_slice()), (Method::Get, ["health"]));
-        if (!is_health || state.identity_key.is_some()) && !request_allowed(&request, &state) {
+        if (!is_health || state.identity_key.is_some()) && !request_allowed(&request, state) {
             write_json(
                 request,
                 401,
