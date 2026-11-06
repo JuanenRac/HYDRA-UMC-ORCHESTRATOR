@@ -358,4 +358,76 @@ mod tests {
         assert!(t.healer_lease_active(1_000));
         assert!(!t.healer_lease_active(2_000));
     }
+
+    #[test]
+    fn the_active_leases_are_listed_by_name_and_without_the_expired_ones() {
+        let mut t = LeaseTable::new();
+        t.acquire("b-lease", "h2", Some(5_000), MAX, 0).unwrap();
+        t.acquire("a-lease", "h1", Some(5_000), MAX, 0).unwrap();
+        t.acquire("short", "h3", Some(1_000), MAX, 0).unwrap();
+        let names: Vec<String> = t.active(500).into_iter().map(|(n, _)| n).collect();
+        assert_eq!(names, ["a-lease", "b-lease", "short"]);
+        let names: Vec<String> = t.active(1_000).into_iter().map(|(n, _)| n).collect();
+        assert_eq!(names, ["a-lease", "b-lease"]);
+        assert!(t.active(5_000).is_empty());
+    }
+
+    #[test]
+    fn a_holder_can_renew_its_lease_when_the_table_is_full() {
+        let mut t = LeaseTable::new();
+        for i in 0..MAX_LEASES {
+            t.acquire(&format!("l{i}"), "h", Some(30_000), MAX, 0)
+                .unwrap();
+        }
+        // a newcomer is refused, but the holder of a lease still gets it longer and keeps its token
+        assert_eq!(t.acquire("new", "h", None, MAX, 10), Err(LeaseError::Full));
+        let before = t
+            .check("l0", "h", t.active(10)[0].1.token, 10)
+            .unwrap()
+            .token;
+        let renewed = t.acquire("l0", "h", Some(30_000), MAX, 10).unwrap();
+        assert_eq!(renewed.token, before);
+        assert_eq!(renewed.expires_at_ms, 30_010);
+    }
+
+    #[test]
+    fn a_limit_below_the_minimum_still_gives_the_minimum_and_the_errors_say_why() {
+        let mut t = LeaseTable::new();
+        let l = t.acquire("a", "h", Some(60_000), 10, 100).unwrap();
+        assert_eq!(l.expires_at_ms, 100 + MIN_TTL_MS);
+        assert_eq!(
+            t.check("nope", "h", 1, 0).unwrap_err().to_string(),
+            "nobody holds this lease"
+        );
+        assert_eq!(
+            t.check("a", "other", l.token, 200).unwrap_err().to_string(),
+            "the lease is held by h"
+        );
+        assert_eq!(
+            t.check("a", "h", l.token + 1, 200).unwrap_err().to_string(),
+            "the token is not the current one"
+        );
+        assert_eq!(
+            t.check("a", "h", l.token, l.expires_at_ms)
+                .unwrap_err()
+                .to_string(),
+            "the lease expired"
+        );
+        assert_eq!(LeaseError::Full.to_string(), "too many leases are held");
+        assert_eq!(
+            t.acquire("a", "x", None, MAX, 200).unwrap_err().to_string(),
+            "the lease is held by h"
+        );
+    }
+
+    #[test]
+    fn the_labels_accept_only_the_characters_that_are_safe_in_a_name() {
+        let (long, too_long) = ("y".repeat(128), "y".repeat(129));
+        for ok in ["healer-of-cell-1", "a.b_c:d-e", "X", long.as_str()] {
+            assert!(valid_label(ok), "{ok}");
+        }
+        for bad in ["", "a b", "a/b", "a\n", "ñ", too_long.as_str()] {
+            assert!(!valid_label(bad), "{bad:?}");
+        }
+    }
 }

@@ -540,4 +540,154 @@ mod tests {
         assert_eq!(clean("a\nb\u{7}c", 10), "abc");
         assert_eq!(clean(&"x".repeat(1000), MAX_REASON).len(), MAX_REASON);
     }
+
+    #[test]
+    fn a_state_file_that_cannot_be_opened_is_an_engaged_stop() {
+        // a directory where the file should be: the error is not "not found", so the stop must not be taken as released
+        let dir = temp_dir("unopenable");
+        let path = dir.join("estop.json");
+        std::fs::create_dir_all(&path).unwrap();
+        let estop = Estop::new(EstopConfig {
+            state_file: Some(path),
+            ..EstopConfig::default()
+        });
+        assert!(estop.engaged());
+        assert_eq!(estop.status()["by"], "startup");
+        assert_eq!(estop.status()["triggers"], 1);
+    }
+
+    #[test]
+    fn a_saved_released_state_starts_released_and_a_missing_file_too() {
+        let dir = temp_dir("released");
+        let path = dir.join("estop.json");
+        let cfg = EstopConfig {
+            state_file: Some(path.clone()),
+            ..EstopConfig::default()
+        };
+        assert!(!Estop::new(cfg.clone()).engaged(), "no file at all");
+        let estop = Estop::new(cfg.clone());
+        estop.trigger("ana", "r", None);
+        estop.release("admin");
+        let saved: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(saved["engaged"], false);
+        assert_eq!(saved["triggers"], 0);
+        assert!(!Estop::new(cfg).engaged());
+    }
+
+    #[test]
+    fn what_is_saved_while_engaged_names_the_first_author_and_the_cleaned_reason() {
+        let dir = temp_dir("saved");
+        let path = dir.join("estop.json");
+        let estop = Estop::new(EstopConfig {
+            state_file: Some(path.clone()),
+            ..EstopConfig::default()
+        });
+        estop.trigger("ana\nroot", "smoke\u{7} in cell 2", Some(vec!["m1".into()]));
+        estop.trigger("bob", "second", None);
+        let saved: Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        assert_eq!(saved["engaged"], true);
+        assert_eq!(saved["by"], "anaroot");
+        assert_eq!(saved["reason"], "smoke in cell 2");
+        assert_eq!(saved["triggers"], 2);
+        assert!(saved["since_ms"].as_u64().unwrap() > 0);
+    }
+
+    #[test]
+    fn an_empty_author_is_recorded_as_unknown_and_a_file_that_cannot_be_written_does_not_stop_the_stop(
+    ) {
+        let dir = temp_dir("unwritable");
+        // the audit file and the state file are inside a folder that does not exist: nothing can be written
+        let missing = dir.join("no-such-folder");
+        let estop = Estop::new(EstopConfig {
+            state_file: Some(missing.join("estop.json")),
+            audit_file: Some(missing.join("audit.jsonl")),
+            ..EstopConfig::default()
+        });
+        let out = estop.trigger("\n\t", "r", None);
+        assert!(estop.engaged());
+        assert_eq!(out["engaged"], true);
+        assert_eq!(out["by"], "unknown");
+        let released = estop.release("   ");
+        assert_eq!(released["was_engaged"], true);
+        assert!(!estop.engaged());
+    }
+
+    /// A server that answers the requests it gets with the statuses in `statuses`, one each, and lets the test count them.
+    fn server_with_statuses(statuses: Vec<&'static str>) -> (String, mpsc::Receiver<String>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            for status in statuses {
+                let Ok((mut stream, _)) = listener.accept() else {
+                    return;
+                };
+                let mut received = Vec::new();
+                let mut buf = [0u8; 2048];
+                loop {
+                    let n = stream.read(&mut buf).unwrap_or(0);
+                    if n == 0 {
+                        break;
+                    }
+                    received.extend_from_slice(&buf[..n]);
+                    if String::from_utf8_lossy(&received).contains("\r\n\r\n{}") {
+                        break;
+                    }
+                }
+                let _ = tx.send(String::from_utf8_lossy(&received).to_string());
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 {status}\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{{}}"
+                );
+            }
+        });
+        (url, rx)
+    }
+
+    #[test]
+    fn a_failed_forward_is_tried_again_by_the_next_trigger_and_a_confirmed_one_survives_a_restart()
+    {
+        let dir = temp_dir("retry");
+        let (url, rx) = server_with_statuses(vec!["503 Service Unavailable", "200 OK"]);
+        let cfg = EstopConfig {
+            state_file: Some(dir.join("estop.json")),
+            server_url: Some(url),
+            ..EstopConfig::default()
+        };
+        let estop = Estop::new(cfg.clone());
+        let first = estop.trigger("ana", "r", None);
+        assert!(first["server"].as_str().unwrap().contains("503"), "{first}");
+        assert_eq!(estop.status()["server_confirmed"], false);
+        // the second ask tries again and this time the server confirms
+        let second = estop.trigger("ana", "r", None);
+        assert_eq!(second["server"], "confirmed");
+        assert_eq!(second["already_engaged"], true);
+        assert_eq!(estop.status()["server_confirmed"], true);
+        assert!(rx.recv_timeout(Duration::from_secs(2)).is_ok());
+        assert!(rx.recv_timeout(Duration::from_secs(2)).is_ok());
+        // after a restart the confirmation is remembered: no third call is made
+        let again = Estop::new(cfg);
+        assert!(again.engaged());
+        assert_eq!(
+            again.trigger("bob", "r", None)["server"],
+            "already_confirmed"
+        );
+        assert!(rx.recv_timeout(Duration::from_millis(300)).is_err());
+    }
+
+    #[test]
+    fn the_status_of_a_released_stop_is_empty() {
+        let estop = Estop::new(EstopConfig::default());
+        estop.trigger("ana", "r", None);
+        estop.release("admin");
+        let status = estop.status();
+        assert_eq!(status["engaged"], false);
+        assert_eq!(status["by"], "");
+        assert_eq!(status["triggers"], 0);
+        assert_eq!(status["server_configured"], false);
+        // and it can be engaged again from scratch, with the author of the new stop
+        let out = estop.trigger("bob", "again", None);
+        assert_eq!(out["already_engaged"], false);
+        assert_eq!(out["by"], "bob");
+    }
 }
