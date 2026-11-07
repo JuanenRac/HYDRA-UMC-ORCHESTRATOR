@@ -41,6 +41,7 @@
 
 mod config;
 mod estop;
+mod failover;
 mod health_grpc;
 mod hmac;
 mod job_dispatcher;

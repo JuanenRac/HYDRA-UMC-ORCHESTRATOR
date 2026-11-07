@@ -4,6 +4,8 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+- **The decision of a standby orchestrator, tested with a fake primary and a fake robot (`src/failover.rs`):** the standby counts the answers the primary misses in a row (any answer resets the count, a limit of 0 is refused), keeps the newest readable copy of the records of `GET /replica`, and only when the limit is reached asks the robot that held each in-flight mission whether it stopped, turns the answers into proofs (holder, mission and attempt must all match) and takes the registry over once. A mission whose robot does not confirm stays `Unknown` and is not dispatched again. Not wired to the network yet: the HTTP side and the stop acknowledgement of a real robot are still to do. 8 tests.
+
 ## [0.2.6] - GET /nodes/:node/jobs reads the jobs the dispatcher holds for one robot: it asks JOB-DISPATCHER with GET /jobs?robot=<id> instead of downloading the whole queue (an older dispatcher that ignores the filter is cut down here to... (and 6 more changes)
 
 - **`GET /nodes/:node/jobs` reads the jobs the dispatcher holds for one robot:** it asks JOB-DISPATCHER with `GET /jobs?robot=<id>` instead of downloading the whole queue (an older dispatcher that ignores the filter is cut down here to the same answer). Read-only; `503` with no dispatcher configured and `502` when it cannot be asked. 5 tests.
