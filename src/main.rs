@@ -426,10 +426,86 @@ fn run_serve(args: &[String]) -> bool {
     }
 }
 
+/// `standby`: watches the primary orchestrator and, when it has been silent for `--misses` rounds in a row, takes the replicated registry
+/// over once and returns. No robot can acknowledge a stop yet, so every mission that was in flight stays `Unknown` (it is not dispatched a
+/// second time); the missions that were only queued are adopted as they were. After the takeover the registry is on disk and `serve` is
+/// started by whoever supervises the process. `false` for every fatal path.
+fn run_standby(args: &[String]) -> bool {
+    let flag = |name: &str| find_flag(args, name);
+    let env = |name: &str| std::env::var(name).ok();
+    let options = match failover::StandbyOptions::from_flags(&flag, &env) {
+        Ok(options) => options,
+        Err(problem) => {
+            crate::log_line!("fatal: {problem}");
+            return false;
+        }
+    };
+    let Some(mut standby) = failover::Standby::new(failover::Limits {
+        misses: options.misses,
+    }) else {
+        crate::log_line!("fatal: --misses must be at least 1");
+        return false;
+    };
+    let missions_path = std::path::PathBuf::from(&options.data_dir).join("missions.json");
+    let mut registry = match MissionRegistry::load(missions_path.clone()) {
+        Ok(registry) => registry,
+        Err(e) => {
+            crate::log_line!(
+                "fatal: could not load the mission registry at {}: {e}",
+                missions_path.display()
+            );
+            return false;
+        }
+    };
+    let mut peer = failover::HttpPeer::new(
+        &options.primary_url,
+        options.token.clone(),
+        &options.primary_name,
+    );
+    crate::log_line!(
+        "standby: watching {} every {} s; it takes the registry over after {} silent round(s) in a row",
+        options.primary_url,
+        options.interval.as_secs(),
+        options.misses
+    );
+    crate::log_line!("no robot can acknowledge a stop yet: the missions in flight will stay Unknown, none is dispatched again");
+    let report = failover::run_until_takeover(
+        &mut standby,
+        &mut peer,
+        &mut failover::NoStopProof,
+        &mut registry,
+        || std::thread::sleep(options.interval),
+        |step| {
+            if let failover::Step::PrimarySilent(n) = step {
+                crate::log_line!(
+                    "standby: the primary did not answer ({n} of {})",
+                    options.misses
+                );
+            }
+        },
+    );
+    crate::log_line!(
+        "standby: took the registry over from {}: {} adopted, {} requeued, {} unconfirmed (left Unknown), {} already held, {} rejected; saved to {}",
+        options.primary_url,
+        report.adopted.len(),
+        report.requeued.len(),
+        report.unconfirmed.len(),
+        report.existing.len(),
+        report.rejected.len(),
+        missions_path.display()
+    );
+    true
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(|s| s.as_str()) {
         Some("mission-demo") => run_mission_demo(),
+        Some("standby") => {
+            if !run_standby(&args[1..]) {
+                std::process::exit(1);
+            }
+        }
         Some("serve") => {
             if !run_serve(&args[1..]) {
                 std::process::exit(1);

@@ -163,7 +163,23 @@ read/created, or the port is already bound) prints `[orchestrator] fatal: ...`
 and exits with a real nonzero status - never `0` - so a process supervisor
 watching the exit code can tell a crash apart from a clean shutdown.
 
-Any argument other than `mission-demo`/`serve` (including no argument at all)
+### `standby`
+
+`hydra-umc-orchestrator standby --primary-url URL [--primary-token TOKEN] [--primary-name NAME] [--misses N] [--interval-s SECONDS] [--data-dir DIR]`
+
+A second orchestrator that watches the first one and takes its registry over when the first goes silent. Nothing is served and nothing is dispatched: every `--interval-s` seconds
+(5 by default, 1 to 3600) it asks `GET /health` of the primary (any 2xx answer counts as alive) and, when it is alive, keeps the newest readable copy of `GET /replica?owner=NAME`
+(`--primary-name`, the `--orchestrator-name` of the primary, `orchestrator` by default; a plain name of letters, digits and `- _ .`). The token is `--primary-token` or the
+`ORCHESTRATOR_PRIMARY_TOKEN` environment variable (the environment keeps it out of the process list); without one no `Authorization` header is sent. Any answer resets the count of
+silent rounds, so a primary that flaps is not replaced. After `--misses` silent rounds in a row (3 by default, 1 to 1000) the standby takes the copy into the registry of `--data-dir`
+(`data/missions.json`) **once**, prints what it did (`adopted`, `requeued`, `unconfirmed`, `already held`, `rejected`) and exits 0; whoever supervises the process then starts
+`serve` on the same data directory. A mission the registry already holds is never overwritten.
+
+No robot can acknowledge a stop to the standby yet, so no proof of a stop is ever gathered: every mission that was in flight on the primary is kept as `Unknown` and is not
+dispatched a second time while it may still be running; only the missions that were still queued are adopted as they were. An option that cannot be used (no `--primary-url`, an
+address that does not start with `http://` or `https://`, a limit out of range, a name that is not plain, a registry file that cannot be read) is `fatal:` with exit status 1.
+
+Any argument other than `mission-demo`, `serve` or `standby` (including no argument at all)
 falls through to the same identity/version output as bare invocation — there
 is no usage error path for an unrecognized subcommand:
 

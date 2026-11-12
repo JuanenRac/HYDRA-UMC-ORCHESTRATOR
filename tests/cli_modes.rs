@@ -160,3 +160,83 @@ fn json_log_format_is_accepted_and_applies_to_the_fatal_line() {
     let parsed: serde_json::Value = serde_json::from_str(line).expect("one JSON object per line");
     assert!(parsed.to_string().contains("refusing to listen"), "{line}");
 }
+
+#[test]
+fn standby_refuses_bad_options_with_a_nonzero_exit() {
+    let dir = scratch("standby-refuse");
+    assert_fatal(&["standby"], "--primary-url is required", &dir);
+    assert_fatal(
+        &["standby", "--primary-url", "ftp://primary"],
+        "must start with http:// or https://",
+        &dir,
+    );
+    assert_fatal(
+        &[
+            "standby",
+            "--primary-url",
+            "http://127.0.0.1:1",
+            "--misses",
+            "0",
+        ],
+        "--misses must be a whole number from 1 to",
+        &dir,
+    );
+    assert_fatal(
+        &[
+            "standby",
+            "--primary-url",
+            "http://127.0.0.1:1",
+            "--interval-s",
+            "soon",
+        ],
+        "--interval-s must be a whole number from 1 to",
+        &dir,
+    );
+    assert_fatal(
+        &[
+            "standby",
+            "--primary-url",
+            "http://127.0.0.1:1",
+            "--primary-name",
+            "a b",
+        ],
+        "--primary-name must be a plain name",
+        &dir,
+    );
+    std::fs::create_dir_all(dir.join("data")).unwrap();
+    std::fs::write(dir.join("data").join("missions.json"), "{broken").unwrap();
+    assert_fatal(
+        &["standby", "--primary-url", "http://127.0.0.1:1"],
+        "could not load the mission registry",
+        &dir,
+    );
+}
+
+#[test]
+fn a_standby_whose_primary_never_answers_takes_over_and_says_what_it_left_unknown() {
+    let dir = scratch("standby-silent");
+    let (code, _, stderr) = run_in(
+        &dir,
+        &[
+            "standby",
+            "--primary-url",
+            "http://127.0.0.1:1",
+            "--misses",
+            "1",
+        ],
+    );
+    assert_eq!(code, Some(0), "{stderr}");
+    assert!(
+        stderr.contains("standby: watching http://127.0.0.1:1"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("no robot can acknowledge a stop yet"),
+        "{stderr}"
+    );
+    // the primary never answered, so there was no copy of its records to adopt
+    assert!(
+        stderr.contains("0 adopted, 0 requeued, 0 unconfirmed"),
+        "{stderr}"
+    );
+}
