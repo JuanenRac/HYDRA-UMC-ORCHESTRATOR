@@ -230,13 +230,44 @@ fn a_standby_whose_primary_never_answers_takes_over_and_says_what_it_left_unknow
         stderr.contains("standby: watching http://127.0.0.1:1"),
         "{stderr}"
     );
-    assert!(
-        stderr.contains("no robot can acknowledge a stop yet"),
-        "{stderr}"
-    );
+    assert!(stderr.contains("no stop proof is configured"), "{stderr}");
     // the primary never answered, so there was no copy of its records to adopt
     assert!(
         stderr.contains("0 adopted, 0 requeued, 0 unconfirmed"),
         "{stderr}"
     );
+}
+
+#[test]
+fn a_standby_with_a_dispatcher_address_says_where_the_proof_comes_from() {
+    let dir = scratch("standby-proof");
+    let (code, _, stderr) = run_in(
+        &dir,
+        &[
+            "standby",
+            "--primary-url",
+            "http://127.0.0.1:1",
+            "--misses",
+            "1",
+            "--dispatcher-url",
+            "http://127.0.0.1:1",
+        ],
+    );
+    assert_eq!(code, Some(0), "{stderr}");
+    assert!(
+        stderr.contains("a stop is proven by the acknowledgements kept at http://127.0.0.1:1"),
+        "{stderr}"
+    );
+    let (code, _, stderr) = run_in(
+        &dir,
+        &[
+            "standby",
+            "--primary-url",
+            "http://127.0.0.1:1",
+            "--dispatcher-url",
+            "ftp://d",
+        ],
+    );
+    assert_eq!(code, Some(1), "{stderr}");
+    assert!(stderr.contains("--dispatcher-url"), "{stderr}");
 }
