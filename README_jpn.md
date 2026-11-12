@@ -108,8 +108,8 @@ flowchart TB
     ORCH <--> JOB["JOB-DISPATCHER (Mission Queue)"]
     JOB -.-> PATH["PATH-PLANNER-3D (Collision Check)"]
     PATH -.-> SYNC["SWARM-SYNC (PTP Synchronization)"]
-    SYNC -.-> NODE1["HydraNode 1 (H745)"]
-    SYNC -.-> NODE2["HydraNode 2 (H745)"]
+    SYNC -.-> NODE1["HydraNode 1 (H757)"]
+    SYNC -.-> NODE2["HydraNode 2 (H757)"]
     HEAL["NODE-HEALING (Failover)"] --> ORCH
 ```
 
@@ -306,7 +306,7 @@ HYDRA-UMC-ORCHESTRATOR/
 **エコシステムの他のプロジェクト**
 
 *コアハードウェア&プラットフォーム*
-- **[HYDRA-UMC](https://github.com/JuanenRac/HYDRA-UMC)** — ロボットアームのマザーボードの設計——CM5 ホスト + デュアルコア STM32H745、CAN-OTA/SPI-OTA 経由で最大 8 本のツールアームを統括することを目指す(ファームウェアは初期段階で、実装済みの基板はまだない)。
+- **[HYDRA-UMC](https://github.com/JuanenRac/HYDRA-UMC)** — ロボットアームのマザーボードの設計——NVIDIA Jetson Orin NX ホスト + デュアルコア STM32H757(CM5 はパイロット試験台として残る)、CAN-OTA/SPI-OTA 経由で最大 8 本のツールアームを統括することを目指す(ファームウェアは初期段階で、実装済みの基板はまだない)。
 - **[HYDRA-UMC-OS](https://github.com/JuanenRac/HYDRA-UMC-OS)** — CM5 向けの再現可能な Raspberry Pi OS プロダクト層——読み取り専用エージェント、検証済み設定/プロファイル、WiFi 初回接続プロビジョニング。
 - **[HYDRA-UMC-SDK](https://github.com/JuanenRac/HYDRA-UMC-SDK)** — すべてのブリッジが自身のコマンドを検証する共有 JSON-Schema 契約とソフトウェアのジョブゲート境界(認証済みの安全機能ではない)。
 - **[HYDRA-UMC-CONNECTOR-HUB](https://github.com/JuanenRac/HYDRA-UMC-CONNECTOR-HUB)** — 外部マシン用コネクタのための宣言的アダプターマニフェストのレジストリとバリデーター。SDK 自身の契約という発想を外部マシンにまで拡張し、産業用ゲートウェイ系のプロジェクトを置き換えることはありません。

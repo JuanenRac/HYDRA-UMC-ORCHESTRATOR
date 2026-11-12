@@ -108,8 +108,8 @@ flowchart TB
     ORCH <--> JOB["JOB-DISPATCHER (Mission Queue)"]
     JOB -.-> PATH["PATH-PLANNER-3D (Collision Check)"]
     PATH -.-> SYNC["SWARM-SYNC (PTP Synchronization)"]
-    SYNC -.-> NODE1["HydraNode 1 (H745)"]
-    SYNC -.-> NODE2["HydraNode 2 (H745)"]
+    SYNC -.-> NODE1["HydraNode 1 (H757)"]
+    SYNC -.-> NODE2["HydraNode 2 (H757)"]
     HEAL["NODE-HEALING (Failover)"] --> ORCH
 ```
 
@@ -327,7 +327,7 @@ This project is part of the HYDRA-UMC robotics ecosystem by the same author (Jua
 **Also Part of the Ecosystem**
 
 *Core Hardware & Platform*
-- **[HYDRA-UMC](https://github.com/JuanenRac/HYDRA-UMC)** — the robot-arm motherboard design: CM5 host + dual-core STM32H745, meant to orchestrate up to 8 tool arms over CAN-OTA/SPI-OTA (firmware at an early stage; no populated board yet).
+- **[HYDRA-UMC](https://github.com/JuanenRac/HYDRA-UMC)** — the robot-arm motherboard design: NVIDIA Jetson Orin NX host + dual-core STM32H757 (the CM5 stays as the pilot bench), meant to orchestrate up to 8 tool arms over CAN-OTA/SPI-OTA (firmware at an early stage; no populated board yet).
 - **[HYDRA-UMC-OS](https://github.com/JuanenRac/HYDRA-UMC-OS)** — reproducible Raspberry Pi OS product layer for the CM5: read-only agent, validated config/profiles, WiFi first-contact provisioning.
 - **[HYDRA-UMC-SDK](https://github.com/JuanenRac/HYDRA-UMC-SDK)** — the shared JSON-Schema contract and software job-gate boundary every bridge validates its commands against (not a certified safety function).
 - **[HYDRA-UMC-CONNECTOR-HUB](https://github.com/JuanenRac/HYDRA-UMC-CONNECTOR-HUB)** — declarative adapter-manifest registry and validator for external-machine connectors; extends the SDK's own contract idea to external machines without replacing the industrial-gateway projects.
