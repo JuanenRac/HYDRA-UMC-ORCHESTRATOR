@@ -19,14 +19,14 @@ GPL-3.0-or-later - see LICENSE
   <img src="https://img.shields.io/badge/Language-Rust-orange.svg" alt="Language">
   <img src="https://img.shields.io/badge/Architecture-Distributed%20Edge-blue.svg" alt="Architecture">
   <img src="https://img.shields.io/badge/Sync-JSON%2FHTTP-yellow.svg" alt="Sync">
-  <img src="https://img.shields.io/badge/Tests-278%20passing-2ea44f.svg" alt="Tests">
+  <img src="https://img.shields.io/badge/Tests-292%20passing-2ea44f.svg" alt="Tests">
   <img src="https://img.shields.io/badge/Version-0.2.6-0f6cbd.svg" alt="Version">
   <img src="https://img.shields.io/badge/Maturity-functional-0F6CBD.svg" alt="Maturity">
 </p>
 
 ---
 
-**诚实核查——今天真正能跑起来的部分：** 任务状态机（`src/mission.rs`：`Mission`/`MissionRegistry`，每一次 `Pending -> Dispatched -> InProgress -> Completed`/`Cancelled`/`Failed` 转换、幂等取消、节点故障恢复）、它自己的磁盘持久化（`MissionRegistry::load`/`persist`，`data/missions.json`）、持久化的远程关闭待办outbox（`src/outbox.rs`）、指向 HYDRA-UMC-JOB-DISPATCHER 的真实 HTTP 客户端（`src/job_dispatcher.rs`），以及把这一切暴露出来的简单 JSON/HTTP 服务器（`src/server.rs`，`tiny_http`，没有异步运行时）都是真实且经过测试的（278 个测试，`cargo test`）。`mission-demo` CLI 子命令针对同一个 `MissionRegistry` 运行一个真实的端到端场景——不是模拟（mock）。仍然只是设想、尚未实现的部分：下面第 3 节中的"计划中的内部层"（API 层、PTP 同步调度、作为常驻服务的舰队健康聚合）描述的是设计意图，不是已经存在的代码；本仓库目前没有到真实运行中的 JOB-DISPATCHER 或 NODE-HEALING 进程的 gRPC 连接，没有与 PATH-PLANNER-3D/SWARM-SYNC 的集成，也从未有过真实的多节点舰队跑在这个二进制文件上——`docker-compose.yml` 会一起构建并启动这 3 个兄弟服务，但这从未在真实机器人硬件上验证过。已交付的具体内容见 `CHANGELOG.md`，尚未完成的部分见下面的 ROADMAP。
+**诚实核查——今天真正能跑起来的部分：** 任务状态机（`src/mission.rs`：`Mission`/`MissionRegistry`，每一次 `Pending -> Dispatched -> InProgress -> Completed`/`Cancelled`/`Failed` 转换、幂等取消、节点故障恢复）、它自己的磁盘持久化（`MissionRegistry::load`/`persist`，`data/missions.json`）、持久化的远程关闭待办outbox（`src/outbox.rs`）、指向 HYDRA-UMC-JOB-DISPATCHER 的真实 HTTP 客户端（`src/job_dispatcher.rs`），以及把这一切暴露出来的简单 JSON/HTTP 服务器（`src/server.rs`，`tiny_http`，没有异步运行时）都是真实且经过测试的（292 个测试，`cargo test`）。`mission-demo` CLI 子命令针对同一个 `MissionRegistry` 运行一个真实的端到端场景——不是模拟（mock）。仍然只是设想、尚未实现的部分：下面第 3 节中的"计划中的内部层"（API 层、PTP 同步调度、作为常驻服务的舰队健康聚合）描述的是设计意图，不是已经存在的代码；本仓库目前没有到真实运行中的 JOB-DISPATCHER 或 NODE-HEALING 进程的 gRPC 连接，没有与 PATH-PLANNER-3D/SWARM-SYNC 的集成，也从未有过真实的多节点舰队跑在这个二进制文件上——`docker-compose.yml` 会一起构建并启动这 3 个兄弟服务，但这从未在真实机器人硬件上验证过。已交付的具体内容见 `CHANGELOG.md`，尚未完成的部分见下面的 ROADMAP。
 
 ---
 
@@ -40,7 +40,7 @@ GPL-3.0-or-later - see LICENSE
 |---|---|
 | 版本 | `0.2.6` |
 | 成熟度 | 可用 |
-| 测试 | 278 (`cargo test`) |
+| 测试 | 292 (`cargo test`) |
 | 技术栈 | Rust / tiny_http / ureq / JSON/HTTP |
 | 目标 | HYDRA-UMC 工作单元的 Raspberry Pi CM5 |
 | 真实硬件 | 尚未：此版本没有在真实硬件上运行的记录 |
@@ -56,7 +56,7 @@ GPL-3.0-or-later - see LICENSE
 | 领域 | 状态 | 在这里的含义 |
 |---|---|---|
 | 软件 | 🟡 | 主要用途可用；上面的诚实性检查列出了仍然缺少的内容 |
-| 测试 | 🟢 | 278 项自动测试，每次变更都会运行 |
+| 测试 | 🟢 | 292 项自动测试，每次变更都会运行 |
 | 真实硬件 | 🔴 | 尚未：此版本没有在真实硬件上运行的记录 |
 | 接口与协议 | 🟡 | 提供的路由或消息已有文档，并用客户端测试过；尚未被所有客户端使用 |
 | 集成 | 🟠 | 在 CM5 测试台上与其他服务一起运行，其消息遵循 SDK 的共享契约 |
@@ -162,7 +162,7 @@ cargo test
 
 ## 🧪 测试
 
-运行 `cargo test` 会执行 278 个自动测试。 不需要硬件，也不需要这台机器以外的任何东西。
+运行 `cargo test` 会执行 292 个自动测试。 不需要硬件，也不需要这台机器以外的任何东西。
 
 CI 运行 `HYDRA_UMC_CI=1 python tools/ci_validate.py`，检查清单、文档、八个 README 和图片。
 
@@ -209,7 +209,7 @@ run.bat mission-demo
 ```
 
 ```bash
-cargo test   # 278 个测试：mission.rs 的每一次状态转换、每一次非法转换的
+cargo test   # 292 个测试：mission.rs 的每一次状态转换、每一次非法转换的
              # 拒绝、幂等取消、节点故障后的恢复，加上 outbox.rs 的
              # 抗崩溃持久化、job_dispatcher.rs 的真实 HTTP 客户端，
              # 以及 server.rs 的 HTTP 处理器
