@@ -542,7 +542,7 @@ mod tests {
     // ---- the primary over HTTP ----
 
     use std::collections::HashMap;
-    use std::io::{Read as _, Write as _};
+    use std::io::Write as _;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{mpsc, Arc};
 
