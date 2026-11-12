@@ -927,11 +927,7 @@ mod tests {
                     let n = stream.read(&mut buf).unwrap_or(0);
                     raw.extend_from_slice(&buf[..n]);
                     if n == 0
-                        || raw.windows(4).any(|w| {
-                            w == b"
-
-"
-                        })
+                        || raw.windows(4).any(|w| w == b"\r\n\r\n")
                     {
                         break;
                     }
@@ -945,12 +941,7 @@ mod tests {
                 let _ = tx.send(text);
                 let _ = write!(
                     stream,
-                    "HTTP/1.1 {status} X
-Content-Type: application/json
-Content-Length: {}
-Connection: close
-
-{body}",
+                    "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
                     body.len()
                 );
             }
