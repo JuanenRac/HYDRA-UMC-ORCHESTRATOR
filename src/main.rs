@@ -468,11 +468,23 @@ fn run_standby(args: &[String]) -> bool {
         options.interval.as_secs(),
         options.misses
     );
-    crate::log_line!("no robot can acknowledge a stop yet: the missions in flight will stay Unknown, none is dispatched again");
+    let mut stop_source: Box<dyn failover::StopSource> = match &options.dispatcher_url {
+        Some(url) => {
+            crate::log_line!("standby: a stop is proven by the acknowledgements kept at {url}; a mission without one stays Unknown, none is dispatched again");
+            Box::new(failover::HttpStopProof::new(
+                url,
+                options.dispatcher_token.clone(),
+            ))
+        }
+        None => {
+            crate::log_line!("no stop proof is configured (--dispatcher-url): the missions in flight will stay Unknown, none is dispatched again");
+            Box::new(failover::NoStopProof)
+        }
+    };
     let report = failover::run_until_takeover(
         &mut standby,
         &mut peer,
-        &mut failover::NoStopProof,
+        stop_source.as_mut(),
         &mut registry,
         || std::thread::sleep(options.interval),
         |step| {

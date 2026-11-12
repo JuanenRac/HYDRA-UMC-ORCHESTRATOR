@@ -165,7 +165,7 @@ watching the exit code can tell a crash apart from a clean shutdown.
 
 ### `standby`
 
-`hydra-umc-orchestrator standby --primary-url URL [--primary-token TOKEN] [--primary-name NAME] [--misses N] [--interval-s SECONDS] [--data-dir DIR]`
+`hydra-umc-orchestrator standby --primary-url URL [--primary-token TOKEN] [--primary-name NAME] [--misses N] [--interval-s SECONDS] [--data-dir DIR] [--dispatcher-url URL] [--dispatcher-token TOKEN]`
 
 A second orchestrator that watches the first one and takes its registry over when the first goes silent. Nothing is served and nothing is dispatched: every `--interval-s` seconds
 (5 by default, 1 to 3600) it asks `GET /health` of the primary (any 2xx answer counts as alive) and, when it is alive, keeps the newest readable copy of `GET /replica?owner=NAME`
@@ -175,8 +175,11 @@ silent rounds, so a primary that flaps is not replaced. After `--misses` silent 
 (`data/missions.json`) **once**, prints what it did (`adopted`, `requeued`, `unconfirmed`, `already held`, `rejected`) and exits 0; whoever supervises the process then starts
 `serve` on the same data directory. A mission the registry already holds is never overwritten.
 
-No robot can acknowledge a stop to the standby yet, so no proof of a stop is ever gathered: every mission that was in flight on the primary is kept as `Unknown` and is not
-dispatched a second time while it may still be running; only the missions that were still queued are adopted as they were. An option that cannot be used (no `--primary-url`, an
+Without `--dispatcher-url` no proof of a stop is gathered: every mission that was in flight on the primary is kept as `Unknown` and is not dispatched a second time while it may
+still be running; only the missions that were still queued are adopted as they were. With `--dispatcher-url` (an `http://` or `https://` address; the token is `--dispatcher-token` or
+`ORCHESTRATOR_DISPATCHER_TOKEN`) the standby reads `GET /jobs/stop-acks` of the job-dispatcher once, at the takeover, and a mission in flight goes back to pending with a newer attempt only
+when that list holds the acknowledgement of the same robot, the same job name and the same attempt; the list exists only when the dispatcher runs with `replan.persist_stop_acks`, and a list
+that cannot be read proves nothing. An option that cannot be used (no `--primary-url`, an
 address that does not start with `http://` or `https://`, a limit out of range, a name that is not plain, a registry file that cannot be read) is `fatal:` with exit status 1.
 
 Any argument other than `mission-demo`, `serve` or `standby` (including no argument at all)

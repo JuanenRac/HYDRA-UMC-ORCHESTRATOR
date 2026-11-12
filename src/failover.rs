@@ -217,6 +217,72 @@ impl StopSource for NoStopProof {
     }
 }
 
+/// One kept stop acknowledgement of the job-dispatcher (`GET /jobs/stop-acks`, on only with `replan.persist_stop_acks`).
+#[derive(Debug, Clone, serde::Deserialize)]
+struct DispatcherAck {
+    #[serde(rename = "jobId")]
+    job_id: String,
+    #[serde(rename = "robotId")]
+    robot_id: String,
+    attempt: u32,
+}
+
+/// The stop proof read from the job-dispatcher: a mission is proven stopped when the dispatcher kept the acknowledgement of that robot for the job of
+/// the same name and the same attempt. The list is fetched once, when the first mission asks, and a failure to read it proves nothing (every mission
+/// then stays `Unknown`, the safe answer).
+pub struct HttpStopProof {
+    base: String,
+    token: Option<String>,
+    agent: ureq::Agent,
+    acks: Option<Vec<DispatcherAck>>,
+}
+
+impl HttpStopProof {
+    pub fn new(base_url: &str, token: Option<String>) -> Self {
+        HttpStopProof {
+            base: base_url.trim_end_matches('/').to_string(),
+            token,
+            agent: ureq::AgentBuilder::new()
+                .timeout_connect(CONNECT_TIMEOUT)
+                .timeout(CALL_TIMEOUT)
+                .build(),
+            acks: None,
+        }
+    }
+
+    fn fetch(&self) -> Result<Vec<DispatcherAck>, String> {
+        let request = self.agent.get(&format!("{}/jobs/stop-acks", self.base));
+        let request = match &self.token {
+            Some(token) => request.set("Authorization", &format!("Bearer {token}")),
+            None => request,
+        };
+        let response = request.call().map_err(|error| match error {
+            ureq::Error::Status(code, _) => format!("the dispatcher answered {code}"),
+            other => other.to_string(),
+        })?;
+        let mut text = String::new();
+        response
+            .into_reader()
+            .take(MAX_RECORDS_BYTES)
+            .read_to_string(&mut text)
+            .map_err(|error| error.to_string())?;
+        serde_json::from_str::<Vec<DispatcherAck>>(&text).map_err(|error| error.to_string())
+    }
+}
+
+impl StopSource for HttpStopProof {
+    fn confirms_stopped(&mut self, owner: &str, mission_id: &str, attempt: u32) -> bool {
+        if self.acks.is_none() {
+            // an unreadable list is remembered as empty: asking again for every mission would only repeat the failure
+            self.acks = Some(self.fetch().unwrap_or_default());
+        }
+        self.acks.as_ref().is_some_and(|acks| {
+            acks.iter()
+                .any(|a| a.robot_id == owner && a.job_id == mission_id && a.attempt == attempt)
+        })
+    }
+}
+
 /// Polls until the takeover happens and returns its report. `wait` is called between two rounds that did not end in a takeover, `seen`
 /// is told what each round found.
 pub fn run_until_takeover(
@@ -249,6 +315,9 @@ pub struct StandbyOptions {
     pub misses: u32,
     pub interval: Duration,
     pub data_dir: String,
+    /// The job-dispatcher whose kept stop acknowledgements prove a stop (`--dispatcher-url`); none by default, and then no stop is ever proven.
+    pub dispatcher_url: Option<String>,
+    pub dispatcher_token: Option<String>,
 }
 
 impl StandbyOptions {
@@ -297,7 +366,20 @@ impl StandbyOptions {
         let token = flag("--primary-token")
             .or_else(|| env("ORCHESTRATOR_PRIMARY_TOKEN"))
             .filter(|t| !t.is_empty());
+        let dispatcher_url = flag("--dispatcher-url").filter(|u| !u.is_empty());
+        if let Some(u) = &dispatcher_url {
+            if !(u.starts_with("http://") || u.starts_with("https://")) {
+                return Err(format!(
+                    "--dispatcher-url must start with http:// or https://, not {u:?}"
+                ));
+            }
+        }
+        let dispatcher_token = flag("--dispatcher-token")
+            .or_else(|| env("ORCHESTRATOR_DISPATCHER_TOKEN"))
+            .filter(|t| !t.is_empty());
         Ok(StandbyOptions {
+            dispatcher_url,
+            dispatcher_token,
             primary_url: url,
             token,
             primary_name,
@@ -826,6 +908,123 @@ mod tests {
         assert!(options(&[base, ("--primary-token", "")], &[])
             .unwrap()
             .token
+            .is_none());
+    }
+
+    // ---- the stop proof kept by the job-dispatcher ----
+
+    /// A fake dispatcher: `GET /jobs/stop-acks` answers `(status, body)`; the request text goes to the channel.
+    fn fake_dispatcher(answer: (u16, String)) -> (String, mpsc::Receiver<String>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { break };
+                let mut raw = Vec::new();
+                let mut buf = [0u8; 4096];
+                loop {
+                    let n = stream.read(&mut buf).unwrap_or(0);
+                    raw.extend_from_slice(&buf[..n]);
+                    if n == 0
+                        || raw.windows(4).any(|w| {
+                            w == b"
+
+"
+                        })
+                    {
+                        break;
+                    }
+                }
+                let text = String::from_utf8_lossy(&raw).to_string();
+                let (status, body) = if text.starts_with("GET /jobs/stop-acks") {
+                    answer.clone()
+                } else {
+                    (404, "{}".to_string())
+                };
+                let _ = tx.send(text);
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 {status} X
+Content-Type: application/json
+Content-Length: {}
+Connection: close
+
+{body}",
+                    body.len()
+                );
+            }
+        });
+        (url, rx)
+    }
+
+    const ACKS: &str = r#"[{"jobId":"m-1","robotId":"node-a","attempt":1,"ackedAtMs":5}]"#;
+
+    #[test]
+    fn a_kept_acknowledgement_proves_the_stop_of_that_robot_job_and_attempt() {
+        let (url, rx) = fake_dispatcher((200, ACKS.to_string()));
+        let mut proof = HttpStopProof::new(&url, Some("secret".to_string()));
+        assert!(proof.confirms_stopped("node-a", "m-1", 1));
+        // another robot, another job and another attempt are not proven
+        assert!(!proof.confirms_stopped("node-b", "m-1", 1));
+        assert!(!proof.confirms_stopped("node-a", "m-2", 1));
+        assert!(!proof.confirms_stopped("node-a", "m-1", 2));
+        let asked = rx.recv().unwrap();
+        assert!(asked.starts_with("GET /jobs/stop-acks "), "{asked}");
+        assert!(asked.contains("Bearer secret"), "{asked}");
+        // the list is fetched once, whatever the number of missions
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn an_unreadable_list_of_acknowledgements_proves_nothing() {
+        for answer in [
+            (404, "{}".to_string()),
+            (200, "not json".to_string()),
+            (200, r#"{"jobId":"m-1"}"#.to_string()),
+        ] {
+            let (url, _rx) = fake_dispatcher(answer);
+            let mut proof = HttpStopProof::new(&url, None);
+            assert!(!proof.confirms_stopped("node-a", "m-1", 1));
+        }
+        // nobody listens
+        let mut proof = HttpStopProof::new("http://127.0.0.1:1", None);
+        assert!(!proof.confirms_stopped("node-a", "m-1", 1));
+    }
+
+    #[test]
+    fn the_standby_takes_over_with_the_proof_of_the_dispatcher() {
+        let (url, _rx) = fake_dispatcher((200, ACKS.to_string()));
+        let mut proof = HttpStopProof::new(&url, None);
+        let mut standby = Standby::new(Limits { misses: 1 }).unwrap();
+        let mut primary = FakePrimary::new(vec![true, false], three_records());
+        let mut reg = MissionRegistry::new();
+        standby.tick(&mut primary, &mut proof, &mut reg);
+        let Step::TookOver(report) = standby.tick(&mut primary, &mut proof, &mut reg) else {
+            panic!("must take over");
+        };
+        // m-1 has an acknowledgement kept by the dispatcher and goes back to pending; m-2 has none and stays unknown
+        assert_eq!(report.requeued, vec!["m-1".to_string()]);
+        assert_eq!(report.unconfirmed, vec!["m-2".to_string()]);
+    }
+
+    #[test]
+    fn the_dispatcher_options_are_off_by_default_and_checked() {
+        let base = ("--primary-url", "http://x");
+        let o = options(&[base], &[]).unwrap();
+        assert!(o.dispatcher_url.is_none() && o.dispatcher_token.is_none());
+        let error = options(&[base, ("--dispatcher-url", "ftp://d")], &[]).unwrap_err();
+        assert!(error.contains("--dispatcher-url"), "{error}");
+        let o = options(
+            &[base, ("--dispatcher-url", "http://d:8080")],
+            &[("ORCHESTRATOR_DISPATCHER_TOKEN", "t")],
+        )
+        .unwrap();
+        assert_eq!(o.dispatcher_url.as_deref(), Some("http://d:8080"));
+        assert_eq!(o.dispatcher_token.as_deref(), Some("t"));
+        assert!(options(&[base, ("--dispatcher-url", "")], &[])
+            .unwrap()
+            .dispatcher_url
             .is_none());
     }
 }
