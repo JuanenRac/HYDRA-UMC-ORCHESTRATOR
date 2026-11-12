@@ -93,6 +93,8 @@ Previsto: planeamento global de missões, equilíbrio de carga na frota e sincro
 
 O **HYDRA-UMC-ORCHESTRATOR** é o coordenador de missões: um serviço em Rust que acompanha as missões numa máquina de estados, entrega-as ao `HYDRA-UMC-JOB-DISPATCHER` e retoma-as quando o `HYDRA-UMC-NODE-HEALING` indica que um nó está inalcançável. Não sincroniza robôs nem evita colisões.
 
+> **Plataforma:** onde este README diz CM5, refere-se ao banco piloto que funciona hoje; a plataforma objetivo do HYDRA-UMC é uma NVIDIA Jetson Orin NX de 16 GB, um desenho que não foi construído nem testado.
+
 ## 🏛️ Arquitetura
 
 <p align="center">

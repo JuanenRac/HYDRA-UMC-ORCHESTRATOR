@@ -93,6 +93,8 @@ GPL-3.0-or-later - see LICENSE
 
 **HYDRA-UMC-ORCHESTRATOR** 是任务协调器：一个 Rust 服务，用状态机跟踪任务，把任务交给 `HYDRA-UMC-JOB-DISPATCHER`，并在 `HYDRA-UMC-NODE-HEALING` 报告节点不可达时收回任务。它不同步机器人，也不避免碰撞。
 
+> **平台：** 本 README 中的 CM5 指的是目前正在运行的试验台；HYDRA-UMC 的目标平台是 NVIDIA Jetson Orin NX 16 GB，这是尚未制造或测试的设计。
+
 ## 🏛️ 架构
 
 <p align="center">

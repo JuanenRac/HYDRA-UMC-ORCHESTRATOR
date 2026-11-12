@@ -93,6 +93,8 @@ GPL-3.0-or-later - see LICENSE
 
 **HYDRA-UMC-ORCHESTRATOR** はミッションのコーディネーターです。Rust のサービスで、ミッションをステートマシンで追跡し、`HYDRA-UMC-JOB-DISPATCHER` に渡し、`HYDRA-UMC-NODE-HEALING` がノードを到達不能と報告したときはそのミッションを取り戻します。ロボットの同期や衝突の回避は行いません。
 
+> **プラットフォーム：** この README の「CM5」は、現在動作している試験用ベンチを指します。HYDRA-UMC の目標プラットフォームは NVIDIA Jetson Orin NX 16 GB ですが、これは製作も試験もされていない設計です。
+
 ## 🏛️ アーキテクチャ
 
 <p align="center">
