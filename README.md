@@ -19,14 +19,14 @@ GPL-3.0-or-later - see LICENSE
   <img src="https://img.shields.io/badge/Language-Rust-orange.svg" alt="Language">
   <img src="https://img.shields.io/badge/Architecture-Distributed%20Edge-blue.svg" alt="Architecture">
   <img src="https://img.shields.io/badge/Sync-JSON%2FHTTP-yellow.svg" alt="Sync">
-  <img src="https://img.shields.io/badge/Tests-292%20passing-2ea44f.svg" alt="Tests">
+  <img src="https://img.shields.io/badge/Tests-297%20passing-2ea44f.svg" alt="Tests">
   <img src="https://img.shields.io/badge/Version-0.2.6-0f6cbd.svg" alt="Version">
   <img src="https://img.shields.io/badge/Maturity-functional-0F6CBD.svg" alt="Maturity">
 </p>
 
 ---
 
-**Honesty check - what actually runs today:** the mission state machine (`src/mission.rs`: `Mission`/`MissionRegistry`, every `Pending -> Dispatched -> InProgress -> Completed`/`Cancelled`/`Failed` transition, idempotent cancel, node-failure recovery), its own disk persistence (`MissionRegistry::load`/`persist`, `data/missions.json`), the durable pending-remote-close outbox (`src/outbox.rs`), the real HTTP client to HYDRA-UMC-JOB-DISPATCHER (`src/job_dispatcher.rs`), and the plain JSON/HTTP server exposing all of it (`src/server.rs`, `tiny_http`, no async runtime) are real and tested (292 tests, `cargo test`). The `mission-demo` CLI subcommand runs a real end-to-end scenario against that same `MissionRegistry` - not a mock. What is still aspirational: the "Planned internal layers" in section 3 below (API layer, PTP-synced dispatch, fleet health aggregation as a standing service) describe design intent, not code that exists yet; there is no gRPC wiring from this repo to a live JOB-DISPATCHER or NODE-HEALING process, no PATH-PLANNER-3D/SWARM-SYNC integration, and no live multi-node fleet has ever run against this binary - `docker-compose.yml` builds and starts the 3 sibling services together, but that has not been exercised against real robot hardware. See `CHANGELOG.md` for exactly what has shipped so far, and the ROADMAP below for what remains open.
+**Honesty check - what actually runs today:** the mission state machine (`src/mission.rs`: `Mission`/`MissionRegistry`, every `Pending -> Dispatched -> InProgress -> Completed`/`Cancelled`/`Failed` transition, idempotent cancel, node-failure recovery), its own disk persistence (`MissionRegistry::load`/`persist`, `data/missions.json`), the durable pending-remote-close outbox (`src/outbox.rs`), the real HTTP client to HYDRA-UMC-JOB-DISPATCHER (`src/job_dispatcher.rs`), and the plain JSON/HTTP server exposing all of it (`src/server.rs`, `tiny_http`, no async runtime) are real and tested (297 tests, `cargo test`). The `mission-demo` CLI subcommand runs a real end-to-end scenario against that same `MissionRegistry` - not a mock. What is still aspirational: the "Planned internal layers" in section 3 below (API layer, PTP-synced dispatch, fleet health aggregation as a standing service) describe design intent, not code that exists yet; there is no gRPC wiring from this repo to a live JOB-DISPATCHER or NODE-HEALING process, no PATH-PLANNER-3D/SWARM-SYNC integration, and no live multi-node fleet has ever run against this binary - `docker-compose.yml` builds and starts the 3 sibling services together, but that has not been exercised against real robot hardware. See `CHANGELOG.md` for exactly what has shipped so far, and the ROADMAP below for what remains open.
 
 ---
 
@@ -40,7 +40,7 @@ GPL-3.0-or-later - see LICENSE
 |---|---|
 | Version | `0.2.6` |
 | Maturity | Functional |
-| Tests | 292 (`cargo test`) |
+| Tests | 297 (`cargo test`) |
 | Stack | Rust / tiny_http / ureq / JSON/HTTP |
 | Target | The Raspberry Pi CM5 of a HYDRA-UMC cell |
 | On real hardware | Not yet: no run on real hardware is recorded for this version |
@@ -56,7 +56,7 @@ Each line is one part of this repository and the light says how far it is today.
 | Area | State | What it means here |
 |---|---|---|
 | Software | 🟡 | Works for its main purpose; the honesty check above lists what is still missing |
-| Tests | 🟢 | 292 automated tests, run on every change |
+| Tests | 🟢 | 297 automated tests, run on every change |
 | Real hardware | 🔴 | Not yet: no run on real hardware is recorded for this version |
 | Interface and protocols | 🟡 | The routes or messages it offers are documented and tested with a client; not every client has used them yet |
 | Integration | 🟠 | It runs together with the other services on the CM5 test bench and its messages follow the shared contracts of the SDK |
@@ -191,7 +191,7 @@ cargo test
 
 ## 🧪 Testing
 
-292 automated tests run with `cargo test`. They need no hardware and nothing outside this machine.
+297 automated tests run with `cargo test`. They need no hardware and nothing outside this machine.
 
 The CI runs `HYDRA_UMC_CI=1 python tools/ci_validate.py`, which checks the manifest, the documents, the eight READMEs and the pictures.
 
@@ -238,7 +238,7 @@ run.bat mission-demo
 ```
 
 ```bash
-cargo test   # 292 tests: mission.rs's transitions/invalid-transition
+cargo test   # 297 tests: mission.rs's transitions/invalid-transition
              # rejections/idempotent cancel/node-failure recovery, plus
              # outbox.rs's crash-safe persistence, job_dispatcher.rs's
              # real HTTP client, and server.rs's HTTP handlers
