@@ -926,9 +926,7 @@ mod tests {
                 loop {
                     let n = stream.read(&mut buf).unwrap_or(0);
                     raw.extend_from_slice(&buf[..n]);
-                    if n == 0
-                        || raw.windows(4).any(|w| w == b"\r\n\r\n")
-                    {
+                    if n == 0 || raw.windows(4).any(|w| w == b"\r\n\r\n") {
                         break;
                     }
                 }
