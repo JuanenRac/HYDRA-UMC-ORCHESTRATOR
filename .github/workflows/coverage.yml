@@ -1,0 +1,42 @@
+# =============================================================================
+# HYDRA-UMC-ORCHESTRATOR - Coverage
+# Copyright (C) 2026 JuanenRac (Electro Hobby 3D) <electrohobby3d@gmail.com>
+# GPL-3.0-or-later - see LICENSE
+#
+# Measures the line coverage of the tests with cargo-llvm-cov and fails when it falls under the floor.
+# Raise the floor when the coverage rises; never lower it to make a change pass.
+# =============================================================================
+name: Coverage
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  COVERAGE_FLOOR_LINES: "94"
+
+jobs:
+  coverage:
+    name: Measure the coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@ccc8c1f930153b792217f06c65a38f23a882993a # 1.85.1
+        with:
+          toolchain: 1.85.1
+          components: llvm-tools-preview
+      - name: Cache the Cargo registry and the build directory
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      - name: Install the coverage tool
+        run: cargo install cargo-llvm-cov --locked --version 0.6.16
+      - name: Run the tests with coverage
+        run: cargo llvm-cov --locked --summary-only --show-missing-lines --fail-under-lines "$COVERAGE_FLOOR_LINES"
