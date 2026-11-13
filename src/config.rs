@@ -24,6 +24,8 @@ pub struct FileConfig {
     pub job_events: Option<JobEventsSection>,
     pub health_grpc: Option<HealthGrpcSection>,
     pub metrics: Option<MetricsSection>,
+    /// The watched node (the name NODE-HEALING dials, usually a service) -> the robot id the missions were dispatched with. Without it a node is its own robot.
+    pub node_robots: Option<std::collections::BTreeMap<String, String>>,
 }
 
 /// The "metrics" section: `GET /metrics` in the text format of Prometheus. Off unless enabled (closed, the route answers `404` like an unknown
@@ -38,6 +40,40 @@ pub struct MetricsSection {
 /// Whether the configuration opens `GET /metrics` (off by default).
 pub fn metrics_enabled(file: &FileConfig) -> bool {
     file.metrics.as_ref().is_some_and(|s| s.enabled)
+}
+
+/// The longest name of a node or a robot the table accepts.
+const MAX_NAME_CHARS: usize = 128;
+
+/// The table `node_robots` of the file, checked: every name is non-empty, at most 128 characters and free of control characters. A robot may have several nodes,
+/// a node has one robot. Empty when the file has none (a node is then its own robot, as it always was).
+pub fn node_robots(
+    file: &FileConfig,
+) -> Result<std::collections::BTreeMap<String, String>, String> {
+    let Some(table) = &file.node_robots else {
+        return Ok(Default::default());
+    };
+    for (node, robot) in table {
+        for (what, name) in [("node", node), ("robot", robot)] {
+            if name.trim().is_empty()
+                || name.chars().count() > MAX_NAME_CHARS
+                || name.chars().any(char::is_control)
+            {
+                return Err(format!(
+                    "node_robots: a {what} name must be 1 to {MAX_NAME_CHARS} characters without control characters, not {name:?}"
+                ));
+            }
+        }
+    }
+    Ok(table.clone())
+}
+
+/// The robot a watched node stands for: the one the table says, else the node itself.
+pub fn robot_for_node<'a>(
+    table: &'a std::collections::BTreeMap<String, String>,
+    node: &'a str,
+) -> &'a str {
+    table.get(node).map_or(node, String::as_str)
 }
 
 /// The "estop" section. The stop itself is always available; this only says where it is forwarded and who may release it.
@@ -211,6 +247,37 @@ pub fn health_grpc(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_node_table_joins_a_watched_service_with_its_robot() {
+        let file = parse(r#"{"node_robots": {"hydra-umc-bridge-cnc": "arm-1", "hydra-umc-bridge-laser": "arm-1"}}"#).unwrap();
+        let table = node_robots(&file).unwrap();
+        assert_eq!(robot_for_node(&table, "hydra-umc-bridge-cnc"), "arm-1");
+        assert_eq!(robot_for_node(&table, "hydra-umc-bridge-laser"), "arm-1");
+        assert_eq!(robot_for_node(&table, "arm-2"), "arm-2");
+        assert!(node_robots(&parse("{}").unwrap()).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_bad_name_in_the_node_table_stops_the_start() {
+        for text in [
+            r#"{"node_robots": {"": "arm-1"}}"#,
+            r#"{"node_robots": {"svc": "  "}}"#,
+            r#"{"node_robots": {"svc": "arm\u0001"}}"#,
+        ] {
+            let file = parse(text).unwrap();
+            assert!(
+                node_robots(&file).unwrap_err().contains("node_robots"),
+                "{text}"
+            );
+        }
+        let long = format!(r#"{{"node_robots": {{"svc": "{}"}}}}"#, "r".repeat(129));
+        assert!(node_robots(&parse(&long).unwrap()).is_err());
+        assert!(
+            parse(r#"{"node_robot": {}}"#).is_err(),
+            "a misspelt key is an error"
+        );
+    }
 
     #[test]
     fn empty_and_missing_sections_change_nothing() {
