@@ -48,8 +48,9 @@ import sys
 from pathlib import Path
 
 RED, ORANGE, YELLOW, GREEN = "\U0001F534", "\U0001F7E0", "\U0001F7E1", "\U0001F7E2"
+WHITE = "\u26AA"                                 # not a step of the scale: the row does not apply here (it is never green)
 ORDER = (RED, ORANGE, YELLOW, GREEN)            # worst to best
-NAMES = {"red": RED, "orange": ORANGE, "yellow": YELLOW, "green": GREEN}
+NAMES = {"red": RED, "orange": ORANGE, "yellow": YELLOW, "green": GREEN, "white": WHITE}
 WORDS = {value: key for key, value in NAMES.items()}
 EVIDENCE_LEVELS = ("none", "host-test", "simulator", "bench", "field")
 EVIDENCE_CEILING = {"none": ORANGE, "host-test": ORANGE, "simulator": ORANGE, "bench": YELLOW, "field": GREEN}
@@ -218,11 +219,20 @@ def problems_of(root: Path, state: dict) -> list[str]:
     elif evidence not in EVIDENCE_LEVELS:
         problems.append(f"{root.name}: manifest evidence {evidence!r} is not one of {', '.join(EVIDENCE_LEVELS)}")
     problems.extend(hydra_problems(root, manifest))
+    unbound = manifest.get("hardware_bound", True) is False
     for item in state["items"]:
-        if item["light"] not in ORDER:
+        if item["light"] == WHITE:
+            # white says "does not apply": it is for a line that has nothing to run (a repository with no hardware has no hardware to test), never for a line that does
+            if item["kind"] in ("software", "tests", "docs"):
+                problems.append(f"{root.name}: row {item['label']!r} is white but a software, tests or documentation line always applies")
+            elif item["kind"] in ("hardware", "integration") and not unbound:
+                problems.append(f"{root.name}: row {item['label']!r} is white but the manifest does not say hardware_bound false")
+        elif item["light"] not in ORDER:
             problems.append(f"{root.name}: row {item['label']!r} holds {item['light']!r}, not a light")
         elif ORDER.index(item["light"]) > ORDER.index(item["ceiling"]):
             problems.append(f"{root.name}: row {item['label']!r} is {WORDS[item['light']]} but the ceiling is {WORDS[item['ceiling']]} ({item['why']})")
+        if item["kind"] == "hardware" and unbound and is_hydra(root) and item["light"] in ORDER:
+            problems.append(f"{root.name}: row {item['label']!r} is {WORDS[item['light']]} but the repository has no hardware: it is white (not applicable), never green")
     english = lights_of([[i["label"], i["light"]] for i in state["items"]])
     for name in LANGUAGE_FILES[1:]:
         path = root / name
