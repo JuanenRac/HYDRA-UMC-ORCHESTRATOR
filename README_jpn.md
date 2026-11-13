@@ -19,14 +19,14 @@ GPL-3.0-or-later - see LICENSE
   <img src="https://img.shields.io/badge/Language-Rust-orange.svg" alt="Language">
   <img src="https://img.shields.io/badge/Architecture-Distributed%20Edge-blue.svg" alt="Architecture">
   <img src="https://img.shields.io/badge/Sync-JSON%2FHTTP-yellow.svg" alt="Sync">
-  <img src="https://img.shields.io/badge/Tests-297%20passing-2ea44f.svg" alt="Tests">
+  <img src="https://img.shields.io/badge/Tests-315%20passing-2ea44f.svg" alt="Tests">
   <img src="https://img.shields.io/badge/Version-0.2.6-0f6cbd.svg" alt="Version">
   <img src="https://img.shields.io/badge/Maturity-functional-0F6CBD.svg" alt="Maturity">
 </p>
 
 ---
 
-**正直な現状確認 - 実際に今動くもの:** ミッション状態機械（`src/mission.rs`: `Mission`/`MissionRegistry`、`Pending -> Dispatched -> InProgress -> Completed`/`Cancelled`/`Failed` の全遷移、冪等なキャンセル、ノード障害時の復旧）、その独自のディスク永続化（`MissionRegistry::load`/`persist`、`data/missions.json`）、保留中のリモートクローズを扱う永続outbox（`src/outbox.rs`）、HYDRA-UMC-JOB-DISPATCHER への実際のHTTPクライアント（`src/job_dispatcher.rs`）、そしてこれらすべてを公開するシンプルなJSON/HTTPサーバー（`src/server.rs`、`tiny_http`、非同期ランタイムなし）は本物であり、テスト済みです（297件のテスト、`cargo test`）。CLIサブコマンド `mission-demo` は、モックではなく、まさにこの `MissionRegistry` に対して実際のシナリオをエンドツーエンドで実行します。まだ構想段階にとどまっているもの: 下記セクション3の「計画中の内部レイヤー」（APIレイヤー、PTP同期ディスパッチ、常駐サービスとしてのフリート健全性集約）は設計意図を記したものであり、すでに存在するコードではありません。本リポジトリから実際に稼働中のJOB-DISPATCHERやNODE-HEALINGプロセスへのgRPC配線は存在せず、PATH-PLANNER-3Dとの統合もなく、ミッション台帳をSWARM-SYNCへ送る処理（`src/swarm_push.rs`、`--swarm-sync-url` を指定しない限りオフ）は代替ノードに対してのみテスト済みで実際のスウォームでは未検証であり、、このバイナリに対して実際のマルチノード・フリートが動いたことも一度もありません - `docker-compose.yml` は4つの兄弟サービスをまとめてビルド・起動しますが、実機のロボットハードウェアに対しては検証されていません。これまでに実際に出荷されたものの詳細は `CHANGELOG.md` を、残っている未完了事項は下記のROADMAPを参照してください。
+**正直な現状確認 - 実際に今動くもの:** ミッション状態機械（`src/mission.rs`: `Mission`/`MissionRegistry`、`Pending -> Dispatched -> InProgress -> Completed`/`Cancelled`/`Failed` の全遷移、冪等なキャンセル、ノード障害時の復旧）、その独自のディスク永続化（`MissionRegistry::load`/`persist`、`data/missions.json`）、保留中のリモートクローズを扱う永続outbox（`src/outbox.rs`）、HYDRA-UMC-JOB-DISPATCHER への実際のHTTPクライアント（`src/job_dispatcher.rs`）、そしてこれらすべてを公開するシンプルなJSON/HTTPサーバー（`src/server.rs`、`tiny_http`、非同期ランタイムなし）は本物であり、テスト済みです（315件のテスト、`cargo test`）。CLIサブコマンド `mission-demo` は、モックではなく、まさにこの `MissionRegistry` に対して実際のシナリオをエンドツーエンドで実行します。まだ構想段階にとどまっているもの: 下記セクション3の「計画中の内部レイヤー」（APIレイヤー、PTP同期ディスパッチ、常駐サービスとしてのフリート健全性集約）は設計意図を記したものであり、すでに存在するコードではありません。本リポジトリから実際に稼働中のJOB-DISPATCHERやNODE-HEALINGプロセスへのgRPC配線は存在せず、PATH-PLANNER-3Dとの統合もなく、ミッション台帳をSWARM-SYNCへ送る処理（`src/swarm_push.rs`、`--swarm-sync-url` を指定しない限りオフ）は代替ノードに対してのみテスト済みで実際のスウォームでは未検証であり、、このバイナリに対して実際のマルチノード・フリートが動いたことも一度もありません - `docker-compose.yml` は4つの兄弟サービスをまとめてビルド・起動しますが、実機のロボットハードウェアに対しては検証されていません。これまでに実際に出荷されたものの詳細は `CHANGELOG.md` を、残っている未完了事項は下記のROADMAPを参照してください。
 
 ---
 
@@ -40,7 +40,7 @@ GPL-3.0-or-later - see LICENSE
 |---|---|
 | バージョン | `0.2.6` |
 | 成熟度 | 機能する |
-| テスト | 297 (`cargo test`) |
+| テスト | 315 (`cargo test`) |
 | 技術 | Rust / tiny_http / ureq / JSON/HTTP |
 | 対象 | HYDRA-UMC セルの Raspberry Pi CM5 |
 | 実機での確認 | シミュレーションのみ：エミュレーター、模擬部品、シミュレーターで試験済み。このバージョンについて実機での動作記録はありません |
@@ -56,7 +56,7 @@ GPL-3.0-or-later - see LICENSE
 | 領域 | 状態 | ここでの意味 |
 |---|---|---|
 | ソフトウェア | 🟡 | 主な目的では動作します。足りない点は上の正直さの確認に書かれています |
-| テスト | 🟢 | 自動テスト 297 件。変更のたびに実行されます |
+| テスト | 🟢 | 自動テスト 315 件。変更のたびに実行されます |
 | 実機 | 🟠 | シミュレーションのみ：エミュレーター、模擬部品、シミュレーターで試験済み。このバージョンについて実機での動作記録はありません |
 | インターフェースとプロトコル | 🟡 | 提供するルートやメッセージは文書化され、クライアントで試験済みです。すべてのクライアントがまだ使ったわけではありません |
 | 連携 | 🟠 | CM5 のテストベンチで他のサービスと一緒に動作し、メッセージは SDK の共通契約に従います |
@@ -170,7 +170,7 @@ cargo test
 
 ## 🧪 テスト
 
-`cargo test` で自動テスト 297 件を実行します。 ハードウェアも、このマシンの外にあるものも必要ありません。
+`cargo test` で自動テスト 315 件を実行します。 ハードウェアも、このマシンの外にあるものも必要ありません。
 
 CI は `HYDRA_UMC_CI=1 python tools/ci_validate.py` を実行し、マニフェスト、文書、8 つの README、図を検査します。
 
@@ -219,7 +219,7 @@ run.bat mission-demo
 ```
 
 ```bash
-cargo test   # 297 件のテスト：mission.rs の全状態遷移・不正な遷移の拒否・
+cargo test   # 315 件のテスト：mission.rs の全状態遷移・不正な遷移の拒否・
              # 冪等なキャンセル・ノード障害後のリカバリーに加え、
              # outbox.rs のクラッシュに強い永続化、job_dispatcher.rs の
              # 実際のHTTPクライアント、server.rs のHTTPハンドラー
