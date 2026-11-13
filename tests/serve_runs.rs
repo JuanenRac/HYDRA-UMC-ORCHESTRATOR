@@ -19,6 +19,13 @@ fn free_port() -> u16 {
 struct Node {
     child: Child,
     port: u16,
+    log: std::path::PathBuf,
+}
+
+impl Node {
+    fn said(&self) -> String {
+        std::fs::read_to_string(&self.log).unwrap_or_default()
+    }
 }
 
 impl Drop for Node {
@@ -30,15 +37,17 @@ impl Drop for Node {
 
 fn start(extra: &[&str]) -> Node {
     let port = free_port();
+    let log = std::env::temp_dir().join(format!("serve-runs-{}-{}.log", std::process::id(), port));
+    let stderr_file = std::fs::File::create(&log).expect("a log file");
     let child = Command::new(env!("CARGO_BIN_EXE_hydra-umc-orchestrator"))
         .args(["serve", "--addr", "127.0.0.1", "--port", &port.to_string()])
         .args(extra)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(Stdio::from(stderr_file))
         .spawn()
         .expect("the binary must run");
-    let node = Node { child, port };
+    let node = Node { child, port, log };
     // ready = it ANSWERS a request (a node may bind first and finish its start after), not only accepts a connection
     let deadline = Instant::now() + Duration::from_secs(90);
     while Instant::now() < deadline {
@@ -49,7 +58,7 @@ fn start(extra: &[&str]) -> Node {
         }
         std::thread::sleep(Duration::from_millis(200));
     }
-    panic!("the node never answered on port {port}");
+    panic!("the node never answered on port {port}: {}", node.said());
 }
 
 /// The status line of one request, or None when the node does not answer within a few seconds.
@@ -87,16 +96,28 @@ Connection: close
 fn the_health_route_answers_on_a_node_that_starts() {
     let node = start(&[]);
     let (status, answer) = get(node.port, "/health");
-    assert!(status.contains("200"), "{answer}");
+    assert!(
+        status.contains("200"),
+        "{answer} | the node said: {}",
+        node.said()
+    );
 }
 
 #[test]
 fn a_route_that_does_not_exist_is_a_404_and_the_node_keeps_answering() {
     let node = start(&[]);
     let (status, _) = get(node.port, "/no/such/route");
-    assert!(status.contains("404"), "{status}");
+    assert!(
+        status.contains("404"),
+        "{status} | the node said: {}",
+        node.said()
+    );
     let (status, answer) = get(node.port, "/health");
-    assert!(status.contains("200"), "{answer}");
+    assert!(
+        status.contains("200"),
+        "{answer} | the node said: {}",
+        node.said()
+    );
 }
 
 #[test]
