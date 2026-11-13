@@ -43,7 +43,7 @@ GPL-3.0-or-later - see LICENSE
 | Tests | 297 (`cargo test`) |
 | Stack | Rust / tiny_http / ureq / JSON/HTTP |
 | Target | The Raspberry Pi CM5 of a HYDRA-UMC cell |
-| On real hardware | Not yet: no run on real hardware is recorded for this version |
+| On real hardware | Simulated only: tested against emulators, fakes or simulators; no run on real hardware is recorded for this version |
 
 **Jump to:** [Overview](#-overview) · [Architecture](#-architecture) · [Quick start](#-quick-start) · [Testing](#-testing) · [Repository Structure](#-repository-structure) · [Related Projects](#-related-projects)
 
@@ -57,7 +57,7 @@ Each line is one part of this repository and the light says how far it is today.
 |---|---|---|
 | Software | 🟡 | Works for its main purpose; the honesty check above lists what is still missing |
 | Tests | 🟢 | 297 automated tests, run on every change |
-| Real hardware | 🔴 | Not yet: no run on real hardware is recorded for this version |
+| Real hardware | 🟠 | Simulated only: tested against emulators, fakes or simulators; no run on real hardware is recorded for this version |
 | Interface and protocols | 🟡 | The routes or messages it offers are documented and tested with a client; not every client has used them yet |
 | Integration | 🟠 | It runs together with the other services on the CM5 test bench and its messages follow the shared contracts of the SDK |
 | Security | 🟡 | Access control, input limits or signatures are implemented and tested on a computer; nobody outside the project has reviewed them |
