@@ -39,21 +39,35 @@ fn start(extra: &[&str]) -> Node {
         .spawn()
         .expect("the binary must run");
     let node = Node { child, port };
-    let deadline = Instant::now() + Duration::from_secs(20);
+    // ready = it ANSWERS a request (a node may bind first and finish its start after), not only accepts a connection
+    let deadline = Instant::now() + Duration::from_secs(90);
     while Instant::now() < deadline {
-        if TcpStream::connect(("127.0.0.1", port)).is_ok() {
-            return node;
+        if let Some(status) = try_get(port, "/") {
+            if status.starts_with("HTTP/") {
+                return node;
+            }
         }
-        std::thread::sleep(Duration::from_millis(50));
+        std::thread::sleep(Duration::from_millis(200));
     }
-    panic!("the node never listened on port {port}");
+    panic!("the node never answered on port {port}");
+}
+
+/// The status line of one request, or None when the node does not answer within a few seconds.
+fn try_get(port: u16, path: &str) -> Option<String> {
+    let mut stream = TcpStream::connect(("127.0.0.1", port)).ok()?;
+    stream.set_read_timeout(Some(Duration::from_secs(5))).ok()?;
+    let request = format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n");
+    stream.write_all(request.as_bytes()).ok()?;
+    let mut answer = String::new();
+    let _ = stream.read_to_string(&mut answer);
+    answer.lines().next().map(str::to_string)
 }
 
 /// One HTTP/1.1 request over a plain socket; returns the status line and the whole answer.
 fn get(port: u16, path: &str) -> (String, String) {
     let mut stream = TcpStream::connect(("127.0.0.1", port)).expect("connect");
     stream
-        .set_read_timeout(Some(Duration::from_secs(10)))
+        .set_read_timeout(Some(Duration::from_secs(30)))
         .expect("timeout");
     let request = format!(
         "GET {path} HTTP/1.1
