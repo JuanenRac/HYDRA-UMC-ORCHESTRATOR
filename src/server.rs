@@ -88,6 +88,8 @@ pub struct AppState {
     pub job_event_counters: crate::job_events::JobEventCounters,
     /// whether `GET /metrics` is open (the `metrics` section of the configuration file)
     pub metrics: bool,
+    /// watched node -> robot id (`node_robots` of the configuration file); a node that is not in it is its own robot
+    pub node_robots: std::collections::BTreeMap<String, String>,
 }
 
 /// How the HTTP surface is protected. The default - no token, attempt
