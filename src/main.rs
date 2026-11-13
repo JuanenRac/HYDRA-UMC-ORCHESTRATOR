@@ -55,6 +55,8 @@ mod replica;
 mod server;
 mod server_identity;
 mod service_metrics;
+#[cfg(test)]
+mod simulation_bench;
 mod swarm_push;
 
 use mission::{CancelOutcome, MissionRegistry, MissionState};
