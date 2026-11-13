@@ -61,14 +61,42 @@ fn start(extra: &[&str]) -> Node {
     panic!("the node never answered on port {port}: {}", node.said());
 }
 
+/// Reads one HTTP answer without waiting for the node to close the connection: the headers, then as many body bytes as
+/// Content-Length says. Whatever arrived before the timeout is returned (lossy), so a missing answer shows up as empty.
+fn read_answer(stream: &mut TcpStream) -> String {
+    let mut raw: Vec<u8> = Vec::new();
+    let mut chunk = [0u8; 4096];
+    loop {
+        match stream.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(n) => raw.extend_from_slice(&chunk[..n]),
+            Err(_) => break,
+        }
+        let text = String::from_utf8_lossy(&raw).to_string();
+        if let Some(end) = text.find("\r\n\r\n") {
+            let head = text[..end].to_ascii_lowercase();
+            let wanted = head
+                .lines()
+                .find_map(|l| {
+                    l.strip_prefix("content-length:")
+                        .map(|v| v.trim().parse::<usize>().unwrap_or(0))
+                })
+                .unwrap_or(0);
+            if raw.len() >= end + 4 + wanted {
+                break;
+            }
+        }
+    }
+    String::from_utf8_lossy(&raw).to_string()
+}
+
 /// The status line of one request, or None when the node does not answer within a few seconds.
 fn try_get(port: u16, path: &str) -> Option<String> {
     let mut stream = TcpStream::connect(("127.0.0.1", port)).ok()?;
     stream.set_read_timeout(Some(Duration::from_secs(5))).ok()?;
     let request = format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n");
     stream.write_all(request.as_bytes()).ok()?;
-    let mut answer = String::new();
-    let _ = stream.read_to_string(&mut answer);
+    let answer = read_answer(&mut stream);
     answer.lines().next().map(str::to_string)
 }
 
@@ -86,8 +114,7 @@ Connection: close
 "
     );
     stream.write_all(request.as_bytes()).expect("write");
-    let mut answer = String::new();
-    let _ = stream.read_to_string(&mut answer);
+    let answer = read_answer(&mut stream);
     let status = answer.lines().next().unwrap_or("").to_string();
     (status, answer)
 }
