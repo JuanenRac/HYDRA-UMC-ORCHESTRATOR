@@ -319,6 +319,13 @@ fn run_serve(args: &[String]) -> bool {
             }
         },
     };
+    let node_robots = match config::node_robots(&file_config) {
+        Ok(table) => table,
+        Err(e) => {
+            crate::log_line!("fatal: {e}");
+            return false;
+        }
+    };
     let (estop_config, job_events_config) = match config::build(&file_config, &data_dir) {
         Ok(built) => built,
         Err(e) => {
@@ -415,6 +422,7 @@ fn run_serve(args: &[String]) -> bool {
                     job_events: job_events_config,
                     health_grpc: health_grpc_config,
                     metrics: config::metrics_enabled(&file_config),
+                    node_robots,
                 },
             );
             true

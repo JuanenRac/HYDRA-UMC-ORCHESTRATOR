@@ -88,6 +88,8 @@ pub struct AppState {
     pub job_event_counters: crate::job_events::JobEventCounters,
     /// whether `GET /metrics` is open (the `metrics` section of the configuration file)
     pub metrics: bool,
+    /// watched node -> robot id (`node_robots` of the configuration file); a node that is not in it is its own robot
+    pub node_robots: std::collections::BTreeMap<String, String>,
 }
 
 /// How the HTTP surface is protected. The default - no token, attempt
@@ -125,6 +127,8 @@ pub struct ServerOptions {
     pub health_grpc: Option<crate::health_grpc::HealthGrpcConfig>,
     /// `GET /metrics` answers only with this (off by default: the route answers like an unknown one)
     pub metrics: bool,
+    /// watched node -> robot id (`node_robots` of the configuration file); a node that is not in it is its own robot
+    pub node_robots: std::collections::BTreeMap<String, String>,
 }
 
 /// Request bodies here are a few dozen bytes; anything past this is refused
@@ -323,6 +327,7 @@ pub fn run(
         job_dispatcher_url,
         close_outbox: Arc::new(close_outbox),
         metrics: options.metrics,
+        node_robots: options.node_robots.clone(),
         token: options.token.filter(|t| !t.is_empty()),
         identity_key: options.identity_key,
         require_attempt: options.require_attempt,
@@ -1940,6 +1945,9 @@ fn handle_recover(
         );
         return;
     }
+    // NODE-HEALING names the node it watches (a service); the missions carry the id of the robot they were dispatched to: the table of the configuration joins them
+    let robot = crate::config::robot_for_node(&state.node_robots, node).to_string();
+    let node = robot.as_str();
     let requeued: Vec<(String, JobSpec)> = {
         let mut reg = state.registry.lock().unwrap();
         let ids = reg.recover_node_unavailable(node);
@@ -1970,7 +1978,7 @@ fn handle_recover(
     write_json(
         request,
         200,
-        &json!({"requeuedMissions": requeued, "jobDispatcherNotNotified": not_notified}),
+        &json!({"requeuedMissions": requeued, "jobDispatcherNotNotified": not_notified, "robot": robot}),
     );
 }
 
@@ -2418,6 +2426,56 @@ mod tests {
 
         let (_, m1_body) = get(port, "/missions/m1");
         assert!(m1_body.contains("\"Pending\""));
+    }
+
+    #[test]
+    fn recover_by_the_name_of_a_watched_service_requeues_the_missions_of_its_robot() {
+        let _guard = net_test_lock();
+        let mut table = std::collections::BTreeMap::new();
+        table.insert("hydra-umc-bridge-cnc".to_string(), "arm-1".to_string());
+        let port = start_test_server_with(
+            None,
+            ServerOptions {
+                node_robots: table,
+                ..Default::default()
+            },
+        );
+        post(port, "/missions", r#"{"id":"m1"}"#);
+        post(port, "/missions", r#"{"id":"m2"}"#);
+        post(port, "/missions/m1/dispatch", r#"{"node":"arm-1"}"#);
+        post(port, "/missions/m2/dispatch", r#"{"node":"arm-2"}"#);
+
+        let (status, body) = post(port, "/nodes/hydra-umc-bridge-cnc/recover", "");
+        assert_eq!(status, 200);
+        assert!(body.contains("\"m1\""), "{body}");
+        assert!(!body.contains("\"m2\""), "{body}");
+        assert!(body.contains("\"robot\":\"arm-1\""), "{body}");
+        let (_, m1_body) = get(port, "/missions/m1");
+        assert!(m1_body.contains("\"Pending\""));
+        let (_, m2_body) = get(port, "/missions/m2");
+        assert!(!m2_body.contains("\"Pending\""), "{m2_body}");
+    }
+
+    #[test]
+    fn a_node_that_is_not_in_the_table_is_its_own_robot() {
+        let _guard = net_test_lock();
+        let mut table = std::collections::BTreeMap::new();
+        table.insert("hydra-umc-bridge-cnc".to_string(), "arm-1".to_string());
+        let port = start_test_server_with(
+            None,
+            ServerOptions {
+                node_robots: table,
+                ..Default::default()
+            },
+        );
+        post(port, "/missions", r#"{"id":"m1"}"#);
+        post(port, "/missions/m1/dispatch", r#"{"node":"arm-3"}"#);
+        let (status, body) = post(port, "/nodes/arm-3/recover", "");
+        assert_eq!(status, 200);
+        assert!(
+            body.contains("\"m1\"") && body.contains("\"robot\":\"arm-3\""),
+            "{body}"
+        );
     }
 
     #[test]
