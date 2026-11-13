@@ -13,10 +13,25 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import warnings
 from pathlib import Path
+
+
+def _seconds_from_environment(name: str, default: float) -> float:
+    """A positive, finite number of seconds from the environment variable `name`; anything else means `default`."""
+    try:
+        value = float(os.environ.get(name, ""))
+    except ValueError:
+        return default
+    return value if 0 < value < float("inf") else default
+
+
+# Every child process of this tool has a time limit, so a stuck git or build step ends with a message instead of holding a runner for hours.
+GIT_TIMEOUT_S = _seconds_from_environment("HYDRA_UMC_GIT_TIMEOUT_S", 120.0)
+COMMAND_TIMEOUT_S = _seconds_from_environment("HYDRA_UMC_COMMAND_TIMEOUT_S", 3600.0)
 
 # Split across string concatenation so this module's own source is never
 # itself flagged by the very check it defines.
@@ -60,10 +75,29 @@ def _is_git_work_tree(root: Path) -> bool:
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             check=False,
+            timeout=GIT_TIMEOUT_S,
         )
-    except OSError:
+    except (OSError, subprocess.TimeoutExpired):
         return False
     return result.returncode == 0 and result.stdout.strip() == "true"
+
+
+def _git_grep(root: Path, command: tuple[str, ...]) -> "subprocess.CompletedProcess[str]":
+    """`git grep` with a time limit; one that runs out of time answers 2, which the callers read as "could not check"."""
+    try:
+        return subprocess.run(
+            command,
+            cwd=root,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            timeout=GIT_TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(command, 2, "", "")
 
 
 def _text_files(root: Path):
@@ -126,16 +160,7 @@ def check_public_private_boundary(root: Path) -> str | None:
     if not _is_git_work_tree(root):
         return _boundary_without_git(root)
     for marker in PRIVATE_MARKERS:
-        result = subprocess.run(
-            ("git", "grep", "-n", "-I", "--", marker),
-            cwd=root,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            check=False,
-        )
+        result = _git_grep(root, ("git", "grep", "-n", "-I", "--", marker))
         if result.returncode == 0:
             return "public files must not reference private documentation"
         if result.returncode not in (0, 1):
@@ -144,31 +169,13 @@ def check_public_private_boundary(root: Path) -> str | None:
     phrase_cmd = ["git", "grep", "-n", "-I", "-i", "-F"]
     for phrase in PRIVATE_PHRASES:
         phrase_cmd += ["-e", phrase]
-    prose_result = subprocess.run(
-        tuple(phrase_cmd),
-        cwd=root,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        check=False,
-    )
+    prose_result = _git_grep(root, tuple(phrase_cmd))
     if prose_result.returncode == 0:
         return "public files must not reference private planning or audit documents"
     if prose_result.returncode not in (0, 1):
         return "could not check public/private documentation boundary"
 
-    code_result = subprocess.run(
-        ("git", "grep", "-n", "-I", "-E", "-e", TRACKING_CODE_REGEX),
-        cwd=root,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        check=False,
-    )
+    code_result = _git_grep(root, ("git", "grep", "-n", "-I", "-E", "-e", TRACKING_CODE_REGEX))
     if code_result.returncode == 0:
         return "public files must not carry internal tracking codes"
     if code_result.returncode not in (0, 1):

@@ -19,6 +19,7 @@ jobs:
   notify:
     name: Request dashboard refresh
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     env:
       DASHBOARD_DISPATCH_TOKEN: ${{ secrets.ECOSYSTEM_DASHBOARD_DISPATCH_TOKEN }}
     steps:
@@ -50,4 +51,3 @@ jobs:
             --data "${payload}"
 
           echo "Dashboard refresh requested for ${GITHUB_REPOSITORY} at ${GITHUB_SHA}."
-

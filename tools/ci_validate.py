@@ -24,6 +24,20 @@ from _doc_policy import (
 )
 from _readme_parity import check_readme_section_parity
 
+
+def _seconds_from_environment(name: str, default: float) -> float:
+    """A positive, finite number of seconds from the environment variable `name`; anything else means `default`."""
+    try:
+        value = float(os.environ.get(name, ""))
+    except ValueError:
+        return default
+    return value if 0 < value < float("inf") else default
+
+
+# Every child process of this tool has a time limit, so a stuck git or build step ends with a message instead of holding a runner for hours.
+GIT_TIMEOUT_S = _seconds_from_environment("HYDRA_UMC_GIT_TIMEOUT_S", 120.0)
+COMMAND_TIMEOUT_S = _seconds_from_environment("HYDRA_UMC_COMMAND_TIMEOUT_S", 3600.0)
+
 ROOT = Path(__file__).resolve().parent.parent
 MANIFEST_PATH = ROOT / "hydra-umc.project.json"
 REQUIRED_DOCUMENTS = (
@@ -286,10 +300,13 @@ def check_glance(root: Path, environment: dict[str, str] | None = None) -> list[
         return ["the glance data file of the documentation repository cannot be read"]
     if root.name not in listed:
         return []
-    result = subprocess.run(
-        [sys.executable, "-I", str(script), "--check", "--repo", root.name, "--workspace", str(root.parent)],
-        cwd=docs, text=True, encoding="utf-8", errors="replace", capture_output=True, check=False,
-    )
+    try:
+        result = subprocess.run(
+            [sys.executable, "-I", str(script), "--check", "--repo", root.name, "--workspace", str(root.parent)],
+            cwd=docs, text=True, encoding="utf-8", errors="replace", capture_output=True, check=False, timeout=COMMAND_TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired:
+        return [f"make_glance.py --check timed out after {COMMAND_TIMEOUT_S:g} s"]
     if result.returncode == 0:
         return []
     lines = [line for line in (result.stdout + result.stderr).splitlines() if line.strip()]
@@ -328,14 +345,14 @@ def check_ecosystem_release(root: Path, environment: dict[str, str] | None = Non
         problems.append("ecosystem-release.json has an entry for this repository that cannot be compared with the manifest")
     try:
         commit = str(entry.get("commit", ""))
-        shallow = subprocess.run(["git", "rev-parse", "--is-shallow-repository"], cwd=root, text=True, capture_output=True, check=False)
+        shallow = subprocess.run(["git", "rev-parse", "--is-shallow-repository"], cwd=root, text=True, capture_output=True, check=False, timeout=GIT_TIMEOUT_S)
         if not re.fullmatch(r"[0-9a-f]{40}", commit):
             problems.append("ecosystem-release.json lists a commit that is not 40 hexadecimal characters")
         elif shallow.returncode == 0 and shallow.stdout.strip() == "false":
-            known = subprocess.run(["git", "cat-file", "-e", commit + "^{commit}"], cwd=root, capture_output=True, check=False)
+            known = subprocess.run(["git", "cat-file", "-e", commit + "^{commit}"], cwd=root, capture_output=True, check=False, timeout=GIT_TIMEOUT_S)
             if known.returncode != 0:
                 problems.append(f"ecosystem-release.json lists commit {commit[:12]}, which is not in the history of this repository")
-    except OSError:
+    except (OSError, subprocess.TimeoutExpired):
         pass
     return problems
 

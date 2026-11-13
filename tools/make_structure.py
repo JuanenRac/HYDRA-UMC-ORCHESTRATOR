@@ -47,6 +47,7 @@ from __future__ import annotations
 import argparse
 import fnmatch
 import json
+import os
 import re
 import subprocess
 import sys
@@ -54,6 +55,20 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import _readme_svg as K  # noqa: E402
+
+
+def _seconds_from_environment(name: str, default: float) -> float:
+    """A positive, finite number of seconds from the environment variable `name`; anything else means `default`."""
+    try:
+        value = float(os.environ.get(name, ""))
+    except ValueError:
+        return default
+    return value if 0 < value < float("inf") else default
+
+
+# Every child process of this tool has a time limit, so a stuck git or build step ends with a message instead of holding a runner for hours.
+GIT_TIMEOUT_S = _seconds_from_environment("HYDRA_UMC_GIT_TIMEOUT_S", 120.0)
+COMMAND_TIMEOUT_S = _seconds_from_environment("HYDRA_UMC_COMMAND_TIMEOUT_S", 3600.0)
 
 W = 1200
 GRID_X, GRID_W, GRID_GAP, ROW_GAP = 360, 780, 25, 30
@@ -195,8 +210,8 @@ def tree_names(spec: dict) -> tuple[set[str], list[str], list[str]]:
 # --------------------------------------------------------------------------- the disk
 def tracked_files(root: Path) -> list[str] | None:
     try:
-        result = subprocess.run(["git", "ls-files", "-z"], cwd=root, capture_output=True, check=True)
-    except (OSError, subprocess.CalledProcessError):
+        result = subprocess.run(["git", "ls-files", "-z"], cwd=root, capture_output=True, check=True, timeout=GIT_TIMEOUT_S)
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
         return None
     files = [x for x in result.stdout.decode("utf-8", "replace").split("\0") if x]
     return files or None

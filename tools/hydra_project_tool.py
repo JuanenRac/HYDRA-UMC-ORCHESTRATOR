@@ -45,6 +45,20 @@ import subprocess
 import sys
 from pathlib import Path
 
+
+def _seconds_from_environment(name: str, default: float) -> float:
+    """A positive, finite number of seconds from the environment variable `name`; anything else means `default`."""
+    try:
+        value = float(os.environ.get(name, ""))
+    except ValueError:
+        return default
+    return value if 0 < value < float("inf") else default
+
+
+# Every child process of this tool has a time limit, so a stuck git or build step ends with a message instead of holding a runner for hours.
+GIT_TIMEOUT_S = _seconds_from_environment("HYDRA_UMC_GIT_TIMEOUT_S", 120.0)
+COMMAND_TIMEOUT_S = _seconds_from_environment("HYDRA_UMC_COMMAND_TIMEOUT_S", 3600.0)
+
 ROOT = Path(__file__).resolve().parent.parent
 MANIFEST = ROOT / "hydra-umc.project.json"
 
@@ -75,11 +89,18 @@ def next_version(root: Path = ROOT) -> str | None:
 
 def _run(command: list[str], root: Path, env: dict[str, str] | None = None) -> int:
     print("+", " ".join(command), flush=True)
-    return subprocess.run(command, cwd=root, env=env).returncode
+    try:
+        return subprocess.run(command, cwd=root, env=env, timeout=COMMAND_TIMEOUT_S).returncode
+    except subprocess.TimeoutExpired:
+        print(f"timed out after {COMMAND_TIMEOUT_S:g} s: {' '.join(command)}", file=sys.stderr, flush=True)
+        return 124
 
 
 def _git(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(["git", *args], cwd=root, capture_output=True, text=True)
+    try:
+        return subprocess.run(["git", *args], cwd=root, capture_output=True, text=True, timeout=GIT_TIMEOUT_S)
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(["git", *args], 124, "", f"git timed out after {GIT_TIMEOUT_S:g} s")
 
 
 def non_mutating(script: str, root: Path = ROOT) -> int:
@@ -294,10 +315,13 @@ def doctor_glance(root: Path, environment: dict[str, str]) -> list[Finding]:
         return [("the glance data of HYDRA-UMC-DOCS cannot be read", "restore data/glance.json there")]
     if root.name not in listed:
         raise Skipped("this repository is not listed in the glance data")
-    result = subprocess.run(
-        [sys.executable, "-I", str(docs / "tools" / "make_glance.py"), "--check", "--repo", root.name, "--workspace", str(root.parent)],
-        cwd=docs, text=True, encoding="utf-8", errors="replace", capture_output=True, check=False,
-    )
+    try:
+        result = subprocess.run(
+            [sys.executable, "-I", str(docs / "tools" / "make_glance.py"), "--check", "--repo", root.name, "--workspace", str(root.parent)],
+            cwd=docs, text=True, encoding="utf-8", errors="replace", capture_output=True, check=False, timeout=COMMAND_TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired:
+        return [(f"make_glance.py --check timed out after {COMMAND_TIMEOUT_S:g} s", "run it by hand in HYDRA-UMC-DOCS")]
     if result.returncode == 0:
         return []
     lines = [line for line in (result.stdout + result.stderr).splitlines() if line.strip()]
@@ -348,7 +372,10 @@ def sdk_references(root: Path) -> list[tuple[str, str]]:
 
 
 def _newest_sdk_tag(sdk: Path) -> str | None:
-    result = subprocess.run(["git", "tag", "--list", "v*"], cwd=sdk, capture_output=True, text=True)
+    try:
+        result = subprocess.run(["git", "tag", "--list", "v*"], cwd=sdk, capture_output=True, text=True, timeout=GIT_TIMEOUT_S)
+    except subprocess.TimeoutExpired:
+        return None
     tags = [t for t in result.stdout.split() if _SDK_TAG.match(t)]
     return max(tags, key=lambda tag: tuple(int(part) for part in tag[1:].split("."))) if tags else None
 
@@ -424,7 +451,10 @@ def parse_node_total(text: str) -> float | None:
 
 
 def _capture(command: list[str], cwd: Path, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(command, cwd=cwd, env=env, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    try:
+        return subprocess.run(command, cwd=cwd, env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=COMMAND_TIMEOUT_S)
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(command, 124, "", f"timed out after {COMMAND_TIMEOUT_S:g} s")
 
 
 def measure_coverage(entry: dict, root: Path) -> float | None:
