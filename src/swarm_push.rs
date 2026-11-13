@@ -383,4 +383,144 @@ mod tests {
         );
         let _ = std::fs::remove_file(path);
     }
+
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+
+    /// A stand-in swarm-sync node: answers the given (status, body) pairs in order, one connection each, and hands back the requests it saw.
+    fn stand_in(
+        answers: Vec<(u16, &'static str)>,
+    ) -> (String, std::thread::JoinHandle<Vec<String>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let handle = std::thread::spawn(move || {
+            let mut seen = Vec::new();
+            for (status, body) in answers {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut raw = Vec::new();
+                let mut chunk = [0u8; 1024];
+                let mut wanted: Option<usize> = None;
+                loop {
+                    let n = stream.read(&mut chunk).unwrap_or(0);
+                    if n == 0 {
+                        break;
+                    }
+                    raw.extend_from_slice(&chunk[..n]);
+                    let text = String::from_utf8_lossy(&raw).to_string();
+                    if let Some(end) = text.find("\r\n\r\n") {
+                        let length = wanted.get_or_insert_with(|| {
+                            text[..end]
+                                .lines()
+                                .find_map(|l| {
+                                    l.to_ascii_lowercase()
+                                        .strip_prefix("content-length:")
+                                        .and_then(|v| v.trim().parse::<usize>().ok())
+                                })
+                                .unwrap_or(0)
+                        });
+                        if raw.len() >= end + 4 + *length {
+                            break;
+                        }
+                    }
+                }
+                seen.push(String::from_utf8_lossy(&raw).to_string());
+                let reply = format!(
+                    "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(reply.as_bytes());
+            }
+            seen
+        });
+        (url, handle)
+    }
+
+    fn config(url: &str, token: Option<&str>) -> PushConfig {
+        PushConfig {
+            url: url.to_string(),
+            token: token.map(str::to_string),
+            owner: "orch-a".into(),
+            interval: Duration::from_millis(10),
+        }
+    }
+
+    #[test]
+    fn the_newest_time_is_the_largest_one_of_the_map_and_zero_when_it_holds_nothing() {
+        let (url, server) = stand_in(vec![
+            (
+                200,
+                r#"{"entries":[{"time":5},{"time":9},{"key":"no time"},{"time":"x"}]}"#,
+            ),
+            (200, r#"{"entries":[]}"#),
+            (200, r#"{"other":1}"#),
+        ]);
+        let cfg = config(&format!("{url}/"), Some("t0k"));
+        assert_eq!(newest_time(&cfg), Ok(9));
+        assert_eq!(newest_time(&cfg), Ok(0));
+        assert_eq!(newest_time(&cfg), Ok(0));
+        let seen = server.join().unwrap();
+        assert!(seen[0].starts_with("GET /state?full=1 "), "{}", seen[0]);
+        assert!(
+            seen[0]
+                .to_ascii_lowercase()
+                .contains("authorization: bearer t0k"),
+            "{}",
+            seen[0]
+        );
+    }
+
+    #[test]
+    fn a_map_that_cannot_be_read_is_an_error_and_so_is_a_node_that_is_not_there() {
+        let (url, server) = stand_in(vec![(200, "not json"), (500, "{}")]);
+        let cfg = config(&url, None);
+        assert!(newest_time(&cfg).is_err());
+        assert!(newest_time(&cfg).is_err());
+        server.join().unwrap();
+        let closed = TcpListener::bind("127.0.0.1:0").unwrap();
+        let gone = format!("http://{}", closed.local_addr().unwrap());
+        drop(closed);
+        assert!(newest_time(&config(&gone, None)).is_err());
+    }
+
+    #[test]
+    fn a_round_sends_what_changed_once_and_a_refusal_keeps_it_for_the_next_round() {
+        let registry = Mutex::new(MissionRegistry::new());
+        let mut pusher = Pusher::new(0);
+        // nothing to send: the node is not even asked
+        let idle = config("http://127.0.0.1:1", None);
+        assert_eq!(push_round(&mut pusher, &idle, &registry), Ok(0));
+
+        registry.lock().unwrap().add("m1");
+        registry
+            .lock()
+            .unwrap()
+            .add("m2")
+            .dispatch("node-a")
+            .unwrap();
+        let (url, server) = stand_in(vec![(409, r#"{"error":"stale seal"}"#), (200, "{}")]);
+        let cfg = config(&url, Some("t0k"));
+        let refused = push_round(&mut pusher, &cfg, &registry).unwrap_err();
+        assert!(refused.contains("swarm-sync answered 409"), "{refused}");
+        assert!(refused.contains("stale seal"), "{refused}");
+        // the refusal confirmed nothing: both records go out again, and then nothing is left
+        assert_eq!(push_round(&mut pusher, &cfg, &registry), Ok(2));
+        let seen = server.join().unwrap();
+        assert!(seen[0].starts_with("POST /reconcile "), "{}", seen[0]);
+        assert!(
+            seen[1].contains("mission/m1") && seen[1].contains("mission/m2"),
+            "{}",
+            seen[1]
+        );
+        assert_eq!(push_round(&mut pusher, &idle, &registry), Ok(0));
+    }
+
+    #[test]
+    fn a_problem_is_logged_once_while_it_lasts() {
+        let mut last = None;
+        note_error(&mut last, "down");
+        assert_eq!(last.as_deref(), Some("down"));
+        note_error(&mut last, "down");
+        note_error(&mut last, "other");
+        assert_eq!(last.as_deref(), Some("other"));
+    }
 }
