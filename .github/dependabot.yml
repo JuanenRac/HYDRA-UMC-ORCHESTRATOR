@@ -10,6 +10,19 @@ updates:
       default-days: 7
     labels:
       - "dependencies"
+    ignore:
+      - dependency-name: "ureq"
+        update-types:
+          - "version-update:semver-major"
+      - dependency-name: "tonic"
+        update-types:
+          - "version-update:semver-patch"
+      - dependency-name: "tonic-prost"
+        update-types:
+          - "version-update:semver-patch"
+      - dependency-name: "tonic-prost-build"
+        update-types:
+          - "version-update:semver-patch"
     groups:
       cargo_updates:
         patterns:
