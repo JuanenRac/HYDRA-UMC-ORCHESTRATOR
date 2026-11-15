@@ -8,7 +8,7 @@
 // (`MissionRegistry::pending_remote_closes()`) was purely in-memory,
 // same as every other mission this process knows about (see mission.rs's
 // own module doc). A real process restart between a mission's local
-// terminal transition and Job-Dispatcher's own ACK used to lose the
+// terminal transition and Job-Dispatcher's own ACK would lose the
 // pending intent entirely along with the mission itself - Job-Dispatcher
 // could be left believing a robot's reservation was still active
 // forever, with no path back to consistency short of a human noticing.

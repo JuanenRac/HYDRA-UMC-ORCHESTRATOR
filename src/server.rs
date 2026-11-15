@@ -2055,21 +2055,18 @@ mod tests {
     /// this module's own tests need to survive both the /jobs/submit
     /// call handle_add makes AND a later /dispatch call in the same test.
     ///
-    /// this used to read the incoming request with one single,
-    /// non-looping `stream.read()` call, then immediately write the
-    /// canned response and let the connection close. `ureq`'s own
-    /// `send_string()` can write a request's headers and body as
-    /// separate TCP writes - a real client (Orchestrator's own
+    /// A single, non-looping `stream.read()` would answer too early:
+    /// `ureq`'s own `send_string()` can write a request's headers and body
+    /// as separate TCP writes, so a real client (Orchestrator's own
     /// `job_dispatcher::run_dispatch`/`submit_job`) racing this fake
-    /// server could have its socket closed mid-write, the exact real
-    /// cause behind the intermittent
+    /// server could have its socket closed mid-write. That race is the
+    /// cause of the transport-error flake of
     /// `add_submits_the_real_mission_to_job_dispatcher_when_configured`
-    /// transport-error flake `net_test_lock` above only papered over the
-    /// INTER-test-contention half of. `read_full_request` below loops
+    /// that `net_test_lock` above only reduces (it covers the
+    /// contention between tests). `read_full_request` below loops
     /// until it has actually seen the full request (headers, plus every
     /// declared `Content-Length` body byte) before ever answering - the
-    /// same real fix `job_dispatcher.rs`'s own `fake_server` test helper
-    /// already uses for the identical race.
+    /// same approach as `job_dispatcher.rs`'s own `fake_server` test helper.
     fn read_full_request(stream: &mut TcpStream) -> Vec<u8> {
         let mut raw = Vec::new();
         let mut buf = [0u8; 4096];
@@ -2819,9 +2816,8 @@ mod tests {
         );
     }
 
-    // a failed
-    // confirmation to Job-Dispatcher used to be invisible to any real
-    // caller - the mission looked identical to a confirmed one.
+    // a failed confirmation to Job-Dispatcher has to stay visible to the
+    // caller - the mission must not look identical to a confirmed one.
     #[test]
     fn complete_marks_remote_close_pending_when_job_dispatcher_call_fails() {
         let _guard = net_test_lock();

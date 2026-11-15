@@ -153,16 +153,13 @@ fn find_flag(args: &[String], flag: &str) -> Option<String> {
         .cloned()
 }
 
-/// every fatal startup failure below used to `eprintln!` and fall
-/// through to the end of this function (or an early `return;`) with no
-/// way for `main()` to tell a real failure apart from a clean shutdown -
-/// the process always exited 0. A process supervisor (systemd, Docker,
-/// a deploy script's own health check) watching the exit code for a
-/// crash would see "0 = success" and never restart/alert, even though
-/// this Orchestrator never actually started serving at all. Returns
-/// `false` for every fatal path, `true` only once `server::run()` itself
-/// returns (a real, intentional clean shutdown) - `main()` maps `false`
-/// to a real nonzero exit code.
+/// Runs the `serve` command. `main()` has to tell a fatal startup failure
+/// apart from a clean shutdown, because a process supervisor (systemd,
+/// Docker, a deploy script's health check) that watches the exit code must
+/// not see "0 = success" for an Orchestrator that never started serving.
+/// Returns `false` for every fatal path, `true` only once `server::run()`
+/// itself returns (an intentional clean shutdown); `main()` maps `false`
+/// to a nonzero exit code.
 fn run_serve(args: &[String]) -> bool {
     let addr = find_flag(args, "--addr").unwrap_or_else(|| "127.0.0.1".to_string());
     let port = find_flag(args, "--port").unwrap_or_else(|| "8114".to_string());
