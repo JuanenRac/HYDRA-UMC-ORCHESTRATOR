@@ -4,6 +4,7 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+- **The SDK pin and the shared tools are up to date:** the SDK dependency names the newest release tag, and the shared tools are the canonical copies again.
 - **Comments describe what the code does, not what it used to do:** four comments in `main.rs`, `outbox.rs` and `server.rs` (and the test notes that go with them) say the present behaviour and the reason for it. Comments only: no behaviour changes.
 - **The shared tools and the CI jobs have time limits:** the project tool, the validators and the build test pass a timeout to every child process (`HYDRA_UMC_GIT_TIMEOUT_S`, 120 s by default, and `HYDRA_UMC_COMMAND_TIMEOUT_S`, 3600 s by default; a value that is not a positive number means the default), and the baseline and notify jobs of the workflows carry `timeout-minutes`, so a stuck step ends with a message instead of holding a runner.
 - **The push of the mission records to swarm-sync is tested against a stand-in node:** the reading of the newest time of its map (the largest one, zero for an empty or unlabelled map, an error for text that is not JSON, a server error or a node that is not there), the token on the request, a round that sends only what changed, and a refusal that keeps the records for the next round. The floor of the coverage job rises to 94.4 % of the lines.
