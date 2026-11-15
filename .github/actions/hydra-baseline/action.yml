@@ -54,6 +54,10 @@ inputs:
     description: Packages installed besides the ARM GNU toolchain for the firmware projects
     required: false
     default: ""
+  slow:
+    description: "true (run the slow steps: Rust, Flutter, Android or Wear OS and firmware) or false (leave them out because the change touches nothing but documents or pictures; the manifest, the documents and the tests of the tools always run)"
+    required: false
+    default: "true"
 
 runs:
   using: composite
@@ -146,15 +150,15 @@ runs:
         npm test --if-present
         npm run lint --if-present
     - name: Set up Rust
-      if: ${{ hashFiles('Cargo.toml') != '' }}
+      if: ${{ hashFiles('Cargo.toml') != '' && inputs.slow != 'false' }}
       uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
       with:
         components: rustfmt, clippy
     - name: Cache the Cargo registry and the build directory
-      if: ${{ hashFiles('Cargo.toml') != '' }}
+      if: ${{ hashFiles('Cargo.toml') != '' && inputs.slow != 'false' }}
       uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
     - name: Validate Rust project
-      if: ${{ hashFiles('Cargo.toml') != '' }}
+      if: ${{ hashFiles('Cargo.toml') != '' && inputs.slow != 'false' }}
       shell: bash
       run: |
         cargo fmt --check
@@ -208,27 +212,27 @@ runs:
         go test -race ./...
         go build ./...
     - name: Set up Flutter from its repository
-      if: ${{ hashFiles('pubspec.yaml') != '' }}
+      if: ${{ hashFiles('pubspec.yaml') != '' && inputs.slow != 'false' }}
       shell: bash
       run: |
         git clone --depth 1 --branch 3.47.9 https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
         echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
     - name: Validate Flutter project
-      if: ${{ hashFiles('pubspec.yaml') != '' }}
+      if: ${{ hashFiles('pubspec.yaml') != '' && inputs.slow != 'false' }}
       shell: bash
       run: |
         flutter pub get
         flutter analyze
         flutter test
     - name: Set up Java for Android or Wear OS
-      if: ${{ hashFiles('gradlew') != '' }}
+      if: ${{ hashFiles('gradlew') != '' && inputs.slow != 'false' }}
       uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
       with:
         distribution: temurin
         java-version: "21"
         cache: gradle
     - name: Validate Android or Wear OS project without a version bump
-      if: ${{ hashFiles('gradlew') != '' }}
+      if: ${{ hashFiles('gradlew') != '' && inputs.slow != 'false' }}
       env:
         HYDRA_UMC_CI: "1"
         ANDROID_TASKS: ${{ inputs.android-tasks }}
@@ -237,7 +241,7 @@ runs:
         chmod +x gradlew
         ./gradlew $ANDROID_TASKS
     - name: Install ARM GNU Toolchain for firmware projects
-      if: ${{ hashFiles('build_firmware.sh') != '' }}
+      if: ${{ hashFiles('build_firmware.sh') != '' && inputs.slow != 'false' }}
       env:
         ARM_PACKAGES: ${{ inputs.arm-packages }}
       shell: bash
@@ -245,7 +249,7 @@ runs:
         sudo apt-get update
         sudo apt-get install --yes gcc-arm-none-eabi binutils-arm-none-eabi $ARM_PACKAGES
     - name: Compile firmware without a version bump
-      if: ${{ hashFiles('build_firmware.sh') != '' }}
+      if: ${{ hashFiles('build_firmware.sh') != '' && inputs.slow != 'false' }}
       env:
         HYDRA_UMC_CI: "1"
       shell: bash
