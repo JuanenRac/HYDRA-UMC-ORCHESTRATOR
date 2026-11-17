@@ -56,15 +56,15 @@ Cada linha é uma parte deste repositório e a luz diz até onde chega hoje. É 
 | Área | Estado | O que significa aqui |
 |---|---|---|
 | Software | 🟡 | Funciona para o seu propósito principal; a verificação de honestidade deste README lista o que ainda falta |
-| Testes | 🟢 | 315 testes automáticos, executados a cada alteração |
+| Testes | 🟡 | 315 testes automáticos registados; o número exato, ou um fluxo de trabalho que os execute a cada alteração, ainda não está confirmado |
 | Hardware real | 🟠 | Só simulado: testado com emuladores, dublês de teste ou simuladores; não há registo de execução em hardware real para esta versão |
 | Interface e protocolos | 🟡 | As rotas ou mensagens que oferece estão documentadas e testadas com um cliente; ainda nem todos os clientes as usaram |
-| Integração | 🟠 | Funciona em conjunto com os outros serviços na bancada de testes da CM5 e as suas mensagens seguem os contratos partilhados do SDK |
+| Integração | 🟠 | As suas mensagens e rotas são verificadas contra os contratos partilhados do SDK; ainda não funcionou em conjunto com o equipamento real |
 | Segurança | 🟡 | O controlo de acesso, os limites de entrada ou as assinaturas estão implementados e testados num computador; ninguém fora do projeto os reviu |
 | Implantação | 🟡 | Instalado como serviço na bancada de testes da CM5 com o seu instalador e a sua unidade; reiniciado em cada atualização |
 | Operação | 🟡 | Oferece /metrics no formato de texto do Prometheus com um resumo de saúde quando o ficheiro de configuração o ativa (desligado por predefinição); ainda não está ligado a um painel de monitorização |
 | Atualizações | 🟡 | Atualiza-se através do HYDRA-UMC-UPDATER (comboios assinados, cópias de segurança e reversão testados num computador) |
-| Paragem e segurança | 🟠 | O caminho de paragem e os seus limites estão implementados e testados com simuladores; nunca funcionaram numa máquina real, e isto não é um sistema de segurança certificado |
+| Paragem e segurança | 🔴 | O comando de paragem existe, mas ainda nada o liga ao equipamento nem à sua fonte de estado; a paragem tem de vir de outra parte do sistema |
 | Documentação | 🟢 | README em oito idiomas, verificado contra o manifesto a cada alteração |
 
 ## 🎯 Visão geral
