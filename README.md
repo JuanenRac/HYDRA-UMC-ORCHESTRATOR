@@ -56,15 +56,15 @@ Each line is one part of this repository and the light says how far it is today.
 | Area | State | What it means here |
 |---|---|---|
 | Software | 🟡 | Works for its main purpose; the honesty check of this README lists what is still missing |
-| Tests | 🟢 | 315 automated tests, run on every change |
+| Tests | 🟡 | 315 automated tests recorded; the exact count, or a workflow that runs them on every change, is not confirmed yet |
 | Real hardware | 🟠 | Simulated only: tested against emulators, fakes or simulators; no run on real hardware is recorded for this version |
 | Interface and protocols | 🟡 | The routes or messages it offers are documented and tested with a client; not every client has used them yet |
-| Integration | 🟠 | It runs together with the other services on the CM5 test bench and its messages follow the shared contracts of the SDK |
+| Integration | 🟠 | Its messages and routes are checked against the shared contracts of the SDK; it has not run together with the real equipment |
 | Security | 🟡 | Access control, input limits or signatures are implemented and tested on a computer; nobody outside the project has reviewed them |
 | Deployment | 🟡 | Installed as a service on the CM5 test bench with its installer and unit; restarted on every update |
 | Operation | 🟡 | Offers /metrics in the Prometheus text format with a health summary once the configuration file enables it (off by default); it is not wired to a monitoring dashboard yet |
 | Updates | 🟡 | Updated through HYDRA-UMC-UPDATER (signed trains, backups and rollback tested on a computer) |
-| Stop and safety | 🟠 | The stop path and its limits are implemented and tested against simulators; they have never run on a real machine, and this is not a certified safety system |
+| Stop and safety | 🔴 | The stop command exists, but nothing connects it to the equipment or to its source of status yet; a stop has to come from another part of the system |
 | Documentation | 🟢 | README in eight languages, checked against the manifest on every change |
 
 ## 🎯 Overview
