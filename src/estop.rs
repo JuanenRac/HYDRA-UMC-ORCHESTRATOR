@@ -32,6 +32,8 @@ use std::sync::{mpsc, Mutex, MutexGuard};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
+
+use crate::job_dispatcher::http;
 use serde_json::{json, Value};
 
 const MAX_BY: usize = 128;
@@ -309,7 +311,7 @@ impl Estop {
         let timeout = self.cfg.fanout_timeout;
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
-            let agent = ureq::AgentBuilder::new()
+            let agent = http::AgentBuilder::new()
                 .timeout_connect(timeout)
                 .timeout(timeout)
                 .build();
@@ -319,7 +321,7 @@ impl Estop {
             }
             let result = match request.send_string("{}") {
                 Ok(_) => Ok(()),
-                Err(ureq::Error::Status(code, _)) => Err(format!("the server answered {code}")),
+                Err(http::Error::Status(code, _)) => Err(format!("the server answered {code}")),
                 Err(e) => Err(format!("the server could not be reached: {e}")),
             };
             let _ = tx.send(result);

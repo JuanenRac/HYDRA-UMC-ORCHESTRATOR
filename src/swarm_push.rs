@@ -19,6 +19,7 @@ use std::time::Duration;
 
 use serde_json::json;
 
+use crate::job_dispatcher::http;
 use crate::mission::MissionRegistry;
 use crate::replica::{records, ReplicaRecord};
 
@@ -98,14 +99,14 @@ impl Pusher {
     }
 }
 
-fn agent() -> ureq::Agent {
-    ureq::AgentBuilder::new()
+fn agent() -> http::Agent {
+    http::AgentBuilder::new()
         .timeout_connect(CONNECT_TIMEOUT)
         .timeout(CALL_TIMEOUT)
         .build()
 }
 
-fn with_token(request: ureq::Request, token: &Option<String>) -> ureq::Request {
+fn with_token(request: http::Request, token: &Option<String>) -> http::Request {
     match token {
         Some(t) => request.set("Authorization", &format!("Bearer {t}")),
         None => request,
@@ -138,7 +139,7 @@ fn post_reconcile(config: &PushConfig, body: &str) -> Result<(), String> {
         .send_string(body)
         .map(|_| ())
         .map_err(|e| match e {
-            ureq::Error::Status(code, resp) => {
+            http::Error::Status(code, resp) => {
                 let text = resp.into_string().unwrap_or_default();
                 format!(
                     "swarm-sync answered {code}: {}",
