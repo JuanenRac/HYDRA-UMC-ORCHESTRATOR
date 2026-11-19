@@ -164,6 +164,13 @@ pub mod http {
 
         /// Sends the call without a body.
         pub fn call(self) -> Result<Response, Error> {
+            if self.post {
+                let mut request = self.agent.post(&self.url);
+                for (name, value) in &self.headers {
+                    request = request.header(name.as_str(), value.as_str());
+                }
+                return finish(request.send_empty());
+            }
             let mut request = self.agent.get(&self.url);
             for (name, value) in &self.headers {
                 request = request.header(name.as_str(), value.as_str());
