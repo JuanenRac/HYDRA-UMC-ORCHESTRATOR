@@ -22,6 +22,193 @@ use serde::{Deserialize, Serialize};
 
 use crate::mission::JobSpec;
 
+/// The blocking HTTP client of the orchestrator, a thin layer over `ureq` 3 that keeps the behaviour the callers rely on: no proxy from the
+/// environment, a connect and a total timeout, and an answer with a status of 400 or more comes back as `Error::Status` together with its body.
+pub mod http {
+    use std::io::Read;
+    use std::time::Duration;
+
+    /// The most a body is read for `Response::into_string`.
+    const MAX_TEXT_BYTES: u64 = 10 * 1024 * 1024;
+
+    /// A failure to reach the other side or to read its answer.
+    #[derive(Debug)]
+    pub struct Transport(String);
+
+    impl std::fmt::Display for Transport {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "{}", self.0)
+        }
+    }
+
+    /// What a call can end in besides an answer: the answer carried a status of 400 or more, or there was no answer.
+    #[derive(Debug)]
+    pub enum Error {
+        Status(u16, Response),
+        Transport(Transport),
+    }
+
+    impl std::fmt::Display for Error {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            match self {
+                Error::Status(code, _) => write!(f, "status code {code}"),
+                Error::Transport(t) => write!(f, "{t}"),
+            }
+        }
+    }
+
+    impl std::error::Error for Error {}
+
+    /// The answer to a call.
+    pub struct Response {
+        body: ureq::Body,
+    }
+
+    impl std::fmt::Debug for Response {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("Response")
+        }
+    }
+
+    impl Response {
+        /// The whole body as text (at most 10 MiB).
+        pub fn into_string(self) -> std::io::Result<String> {
+            let mut text = String::new();
+            self.into_reader()
+                .take(MAX_TEXT_BYTES)
+                .read_to_string(&mut text)?;
+            Ok(text)
+        }
+
+        /// The body as a reader.
+        pub fn into_reader(self) -> impl Read {
+            self.body.into_reader()
+        }
+    }
+
+    /// Settings of an `Agent`.
+    pub struct AgentBuilder {
+        connect: Option<Duration>,
+        total: Option<Duration>,
+    }
+
+    impl AgentBuilder {
+        pub fn new() -> Self {
+            AgentBuilder {
+                connect: None,
+                total: None,
+            }
+        }
+
+        pub fn timeout_connect(mut self, timeout: Duration) -> Self {
+            self.connect = Some(timeout);
+            self
+        }
+
+        pub fn timeout(mut self, timeout: Duration) -> Self {
+            self.total = Some(timeout);
+            self
+        }
+
+        pub fn build(self) -> Agent {
+            let config = ureq::Agent::config_builder()
+                .timeout_connect(self.connect)
+                .timeout_global(self.total)
+                .http_status_as_error(false)
+                .proxy(None)
+                .build();
+            Agent {
+                inner: ureq::Agent::new_with_config(config),
+            }
+        }
+    }
+
+    /// A client with its own settings.
+    #[derive(Clone)]
+    pub struct Agent {
+        inner: ureq::Agent,
+    }
+
+    impl Agent {
+        pub fn get(&self, url: &str) -> Request {
+            Request::new(&self.inner, false, url)
+        }
+
+        pub fn post(&self, url: &str) -> Request {
+            Request::new(&self.inner, true, url)
+        }
+    }
+
+    /// A call that is being put together.
+    pub struct Request {
+        agent: ureq::Agent,
+        post: bool,
+        url: String,
+        headers: Vec<(String, String)>,
+    }
+
+    impl Request {
+        fn new(agent: &ureq::Agent, post: bool, url: &str) -> Self {
+            Request {
+                agent: agent.clone(),
+                post,
+                url: url.to_string(),
+                headers: Vec::new(),
+            }
+        }
+
+        pub fn set(mut self, name: &str, value: &str) -> Self {
+            self.headers.push((name.to_string(), value.to_string()));
+            self
+        }
+
+        /// Sends the call without a body.
+        pub fn call(self) -> Result<Response, Error> {
+            if self.post {
+                let mut request = self.agent.post(&self.url);
+                for (name, value) in &self.headers {
+                    request = request.header(name.as_str(), value.as_str());
+                }
+                return finish(request.send_empty());
+            }
+            let mut request = self.agent.get(&self.url);
+            for (name, value) in &self.headers {
+                request = request.header(name.as_str(), value.as_str());
+            }
+            finish(request.call())
+        }
+
+        /// Sends the call with `body` as its text.
+        pub fn send_string(self, body: &str) -> Result<Response, Error> {
+            debug_assert!(self.post, "a body goes with a POST");
+            let mut request = self.agent.post(&self.url);
+            for (name, value) in &self.headers {
+                request = request.header(name.as_str(), value.as_str());
+            }
+            finish(request.send(body))
+        }
+    }
+
+    fn finish(
+        result: Result<ureq::http::Response<ureq::Body>, ureq::Error>,
+    ) -> Result<Response, Error> {
+        match result {
+            Ok(response) => {
+                let code = response.status().as_u16();
+                let answer = Response {
+                    body: response.into_body(),
+                };
+                if code >= 400 {
+                    Err(Error::Status(code, answer))
+                } else {
+                    Ok(answer)
+                }
+            }
+            Err(error) => Err(Error::Transport(Transport(error.to_string()))),
+        }
+    }
+}
+
 /// Bearer token sent on every call to Job-Dispatcher, set once at startup
 /// from `--job-dispatcher-token` / `JOB_DISPATCHER_TOKEN`. Job-Dispatcher
 /// refuses to listen on a network address without one, so an orchestrator
@@ -77,17 +264,17 @@ pub fn set_token(token: String) {
     let _ = TOKEN.set(token);
 }
 
-fn agent() -> &'static ureq::Agent {
-    static AGENT: OnceLock<ureq::Agent> = OnceLock::new();
+fn agent() -> &'static http::Agent {
+    static AGENT: OnceLock<http::Agent> = OnceLock::new();
     AGENT.get_or_init(|| {
-        ureq::AgentBuilder::new()
+        http::AgentBuilder::new()
             .timeout_connect(CONNECT_TIMEOUT)
             .timeout(CALL_TIMEOUT)
             .build()
     })
 }
 
-fn authed(request: ureq::Request) -> ureq::Request {
+fn authed(request: http::Request) -> http::Request {
     match TOKEN.get() {
         Some(token) => request.set("Authorization", &format!("Bearer {token}")),
         None => request,
@@ -173,14 +360,14 @@ impl std::fmt::Display for ClientError {
     }
 }
 
-fn bad_status(code: u16, resp: ureq::Response) -> ClientError {
+fn bad_status(code: u16, resp: http::Response) -> ClientError {
     ClientError::BadResponse(format!(
         "HTTP {code}: {}",
         resp.into_string().unwrap_or_default()
     ))
 }
 
-fn transport(t: ureq::Transport) -> ClientError {
+fn transport(t: http::Transport) -> ClientError {
     ClientError::Unreachable(t.to_string())
 }
 
@@ -240,9 +427,9 @@ fn submit_job_inner(base_url: &str, mission_id: &str, spec: &JobSpec) -> Result<
         // ureq treats 409 as an Err(Status(..)) - Job-Dispatcher's own
         // real "job ID already exists" response for a job this exact
         // mission id already submitted successfully before.
-        Err(ureq::Error::Status(409, _)) => Ok(()),
-        Err(ureq::Error::Status(code, resp)) => Err(bad_status(code, resp)),
-        Err(ureq::Error::Transport(t)) => Err(transport(t)),
+        Err(http::Error::Status(409, _)) => Ok(()),
+        Err(http::Error::Status(code, resp)) => Err(bad_status(code, resp)),
+        Err(http::Error::Transport(t)) => Err(transport(t)),
     }
 }
 
@@ -265,7 +452,7 @@ fn fetch_job(base_url: &str, mission_id: &str) -> Result<Option<JobView>, Client
                 .map(Some)
                 .map_err(|e| ClientError::BadResponse(e.to_string()))
         }
-        Err(ureq::Error::Status(404, resp)) => {
+        Err(http::Error::Status(404, resp)) => {
             let text = resp.into_string().unwrap_or_default();
             if is_json_error(&text) {
                 Ok(None)
@@ -276,8 +463,8 @@ fn fetch_job(base_url: &str, mission_id: &str) -> Result<Option<JobView>, Client
                 ))
             }
         }
-        Err(ureq::Error::Status(code, resp)) => Err(bad_status(code, resp)),
-        Err(ureq::Error::Transport(t)) => Err(transport(t)),
+        Err(http::Error::Status(code, resp)) => Err(bad_status(code, resp)),
+        Err(http::Error::Transport(t)) => Err(transport(t)),
     }
 }
 
@@ -317,9 +504,9 @@ fn close_job_inner(base_url: &str, mission_id: &str, success: bool) -> Result<()
             {
                 Ok(_) => Ok(()),
                 // the job (or its robot) is gone: nothing left to close
-                Err(ureq::Error::Status(404, _)) => Ok(()),
-                Err(ureq::Error::Status(code, resp)) => Err(bad_status(code, resp)),
-                Err(ureq::Error::Transport(t)) => Err(transport(t)),
+                Err(http::Error::Status(404, _)) => Ok(()),
+                Err(http::Error::Status(code, resp)) => Err(bad_status(code, resp)),
+                Err(http::Error::Transport(t)) => Err(transport(t)),
             }
         }
         "pending" | "blocked" | "unreachable" => {
@@ -329,9 +516,9 @@ fn close_job_inner(base_url: &str, mission_id: &str, success: bool) -> Result<()
                 .send_string(&json_body(&CancelRequest { id: mission_id })?)
             {
                 Ok(_) => Ok(()),
-                Err(ureq::Error::Status(404, _)) => Ok(()),
-                Err(ureq::Error::Status(code, resp)) => Err(bad_status(code, resp)),
-                Err(ureq::Error::Transport(t)) => Err(transport(t)),
+                Err(http::Error::Status(404, _)) => Ok(()),
+                Err(http::Error::Status(code, resp)) => Err(bad_status(code, resp)),
+                Err(http::Error::Transport(t)) => Err(transport(t)),
             }
         }
         other => Err(ClientError::BadResponse(format!(
@@ -378,7 +565,7 @@ fn requeue_job_inner(
         .send_string(&json_body(&body)?)
     {
         Ok(_) => Ok(()),
-        Err(ureq::Error::Status(404, resp)) => {
+        Err(http::Error::Status(404, resp)) => {
             let text = resp.into_string().unwrap_or_default();
             if is_json_error(&text) {
                 // unknown job there: put it back in the queue
@@ -390,8 +577,8 @@ fn requeue_job_inner(
                 ))
             }
         }
-        Err(ureq::Error::Status(code, resp)) => Err(bad_status(code, resp)),
-        Err(ureq::Error::Transport(t)) => Err(transport(t)),
+        Err(http::Error::Status(code, resp)) => Err(bad_status(code, resp)),
+        Err(http::Error::Transport(t)) => Err(transport(t)),
     }
 }
 
@@ -416,8 +603,8 @@ fn run_dispatch_inner(base_url: &str) -> Result<Vec<Assignment>, ClientError> {
             serde_json::from_str::<Vec<Assignment>>(&text)
                 .map_err(|e| ClientError::BadResponse(e.to_string()))
         }
-        Err(ureq::Error::Status(code, resp)) => Err(bad_status(code, resp)),
-        Err(ureq::Error::Transport(t)) => Err(transport(t)),
+        Err(http::Error::Status(code, resp)) => Err(bad_status(code, resp)),
+        Err(http::Error::Transport(t)) => Err(transport(t)),
     }
 }
 
@@ -459,8 +646,8 @@ fn jobs_for_robot_inner(base_url: &str, robot_id: &str) -> Result<Vec<RobotJob>,
                 .filter(|j| j.assigned_robot == robot_id)
                 .collect())
         }
-        Err(ureq::Error::Status(code, resp)) => Err(bad_status(code, resp)),
-        Err(ureq::Error::Transport(t)) => Err(transport(t)),
+        Err(http::Error::Status(code, resp)) => Err(bad_status(code, resp)),
+        Err(http::Error::Transport(t)) => Err(transport(t)),
     }
 }
 

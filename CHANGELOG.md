@@ -4,6 +4,7 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+- **The HTTP client library moves to its third major version:** the calls to the job dispatcher, the primary, the swarm-sync node and the server go through one small client layer that keeps what the callers rely on (no proxy from the environment, a connect and a total timeout, a status of 400 or more as an error that still carries its body).
 
 ## [0.2.7]
 

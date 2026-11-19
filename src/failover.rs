@@ -20,6 +20,7 @@
 use std::io::Read;
 use std::time::Duration;
 
+use crate::job_dispatcher::http;
 use crate::mission::MissionRegistry;
 use crate::replica::{takeover, ReplicaRecord, StopEvidence, TakeoverReport};
 
@@ -152,7 +153,7 @@ pub struct HttpPeer {
     base: String,
     token: Option<String>,
     owner: String,
-    agent: ureq::Agent,
+    agent: http::Agent,
 }
 
 impl HttpPeer {
@@ -162,14 +163,14 @@ impl HttpPeer {
             base: base_url.trim_end_matches('/').to_string(),
             token,
             owner: owner.to_string(),
-            agent: ureq::AgentBuilder::new()
+            agent: http::AgentBuilder::new()
                 .timeout_connect(CONNECT_TIMEOUT)
                 .timeout(CALL_TIMEOUT)
                 .build(),
         }
     }
 
-    fn get(&self, path: &str) -> ureq::Request {
+    fn get(&self, path: &str) -> http::Request {
         let request = self.agent.get(&format!("{}{}", self.base, path));
         match &self.token {
             Some(token) => request.set("Authorization", &format!("Bearer {token}")),
@@ -192,7 +193,7 @@ impl Peer for HttpPeer {
             .get(&format!("/replica?owner={}", self.owner))
             .call()
             .map_err(|error| match error {
-                ureq::Error::Status(code, _) => format!("the primary answered {code}"),
+                http::Error::Status(code, _) => format!("the primary answered {code}"),
                 other => other.to_string(),
             })?;
         let mut text = String::new();
@@ -233,7 +234,7 @@ struct DispatcherAck {
 pub struct HttpStopProof {
     base: String,
     token: Option<String>,
-    agent: ureq::Agent,
+    agent: http::Agent,
     acks: Option<Vec<DispatcherAck>>,
 }
 
@@ -242,7 +243,7 @@ impl HttpStopProof {
         HttpStopProof {
             base: base_url.trim_end_matches('/').to_string(),
             token,
-            agent: ureq::AgentBuilder::new()
+            agent: http::AgentBuilder::new()
                 .timeout_connect(CONNECT_TIMEOUT)
                 .timeout(CALL_TIMEOUT)
                 .build(),
@@ -257,7 +258,7 @@ impl HttpStopProof {
             None => request,
         };
         let response = request.call().map_err(|error| match error {
-            ureq::Error::Status(code, _) => format!("the dispatcher answered {code}"),
+            http::Error::Status(code, _) => format!("the dispatcher answered {code}"),
             other => other.to_string(),
         })?;
         let mut text = String::new();
