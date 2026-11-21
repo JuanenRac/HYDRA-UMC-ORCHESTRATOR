@@ -247,6 +247,7 @@ jobs:
       VERSION: ${{ needs.plan.outputs.version }}
       SHA: ${{ needs.plan.outputs.sha }}
       GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
       ACTOR: ${{ github.actor }}
       OWNER: ${{ github.repository_owner }}
     steps:
