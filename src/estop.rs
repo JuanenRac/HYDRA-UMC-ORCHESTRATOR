@@ -13,6 +13,9 @@
 //!   short timeout on its own thread;
 //! * it is idempotent: engaging an engaged latch changes nothing and only retries the call to
 //!   the server when the previous attempt was not confirmed;
+//! * it does not give up: while the latch is engaged and the server has not confirmed, the
+//!   call is repeated in the background with a growing wait (`estop.retry_server`, on by
+//!   default), also for a stop that was found engaged at the start;
 //! * it is audited: every trigger, repeat and release is one JSON line in the audit file and in
 //!   the log, written after the stop took effect (a file that cannot be written never blocks it);
 //! * it does not clear by itself: the latch is saved to disk and survives a restart, and only an
@@ -51,6 +54,12 @@ pub struct EstopConfig {
     pub fanout_timeout: Duration,
     /// the token that may release the stop; without it the general token (or none) decides
     pub admin_token: Option<String>,
+    /// repeat the call to the server in the background while the stop is engaged and not confirmed
+    pub retry_server: bool,
+    /// the first wait of that repetition; it doubles after each failure
+    pub retry_initial: Duration,
+    /// the longest wait between two repetitions
+    pub retry_max: Duration,
 }
 
 impl Default for EstopConfig {
@@ -62,6 +71,9 @@ impl Default for EstopConfig {
             server_token: None,
             fanout_timeout: Duration::from_secs(3),
             admin_token: None,
+            retry_server: true,
+            retry_initial: Duration::from_secs(1),
+            retry_max: Duration::from_secs(30),
         }
     }
 }
@@ -206,6 +218,7 @@ impl Estop {
             "since_ms": latch.since_ms,
             "server_confirmed": latch.server_confirmed,
             "server_configured": self.cfg.server_url.is_some(),
+            "server_retry": self.retries_server(),
             "triggers": latch.triggers,
         })
     }
@@ -295,6 +308,70 @@ impl Estop {
             json!({"was_engaged": was, "server_released": false}),
         );
         json!({"engaged": false, "was_engaged": was, "server_released": false})
+    }
+
+    /// True when a stop the server has not confirmed is repeated in the background.
+    pub fn retries_server(&self) -> bool {
+        self.cfg.retry_server && self.cfg.server_url.is_some()
+    }
+
+    /// One more call to the server for a stop that is engaged and not confirmed by it; `None` when there is nothing to repeat.
+    pub fn retry_unconfirmed(&self) -> Option<Result<(), String>> {
+        if !self.retries_server() {
+            return None;
+        }
+        let since = {
+            let latch = self.lock();
+            if !latch.engaged || latch.server_confirmed {
+                return None;
+            }
+            latch.since_ms
+        };
+        let outcome = self.forward_to_server();
+        if outcome.is_ok() {
+            let confirmed = {
+                let mut latch = self.lock();
+                // the confirmation belongs to the stop it was asked for, not to one released in the meantime
+                let same = latch.engaged && latch.since_ms == since && !latch.server_confirmed;
+                if same {
+                    latch.server_confirmed = true;
+                    self.save(&latch);
+                }
+                same
+            };
+            if confirmed {
+                self.audit("server_confirmed", "retry", json!({}));
+            }
+        }
+        Some(outcome)
+    }
+
+    /// The wait before the next repetition: the first wait again once there is nothing pending or the server answered, twice the last one (up to the longest) after a failure.
+    fn next_wait(&self, last: Duration, outcome: Option<&Result<(), String>>) -> Duration {
+        match outcome {
+            Some(Err(_)) => last.saturating_mul(2).min(self.cfg.retry_max),
+            _ => self.cfg.retry_initial,
+        }
+    }
+
+    /// Repeats the call for as long as the process lives. Run it on its own thread: it never holds the latch while it waits.
+    pub fn run_retries(&self) {
+        let mut wait = self.cfg.retry_initial;
+        let mut failing = false;
+        loop {
+            std::thread::sleep(wait);
+            let outcome = self.retry_unconfirmed();
+            match &outcome {
+                Some(Err(e)) => {
+                    if !failing {
+                        crate::log_line!("the server has not confirmed the global stop ({e}): it is asked again until it does");
+                    }
+                    failing = true;
+                }
+                _ => failing = false,
+            }
+            wait = self.next_wait(wait, outcome.as_ref());
+        }
     }
 
     /// Records a release that was refused.
@@ -675,6 +752,76 @@ mod tests {
             "already_confirmed"
         );
         assert!(rx.recv_timeout(Duration::from_millis(300)).is_err());
+    }
+
+    #[test]
+    fn a_stop_the_server_did_not_confirm_is_repeated_until_it_does() {
+        let dir = temp_dir("background-retry");
+        let (url, rx) = server_with_statuses(vec![
+            "503 Service Unavailable",
+            "503 Service Unavailable",
+            "200 OK",
+        ]);
+        let cfg = EstopConfig {
+            state_file: Some(dir.join("estop.json")),
+            server_url: Some(url),
+            ..EstopConfig::default()
+        };
+        let estop = Estop::new(cfg.clone());
+        assert!(estop.retry_unconfirmed().is_none(), "nothing is engaged");
+        estop.trigger("ana", "r", None);
+        // a restart finds the unconfirmed latch and goes on asking
+        let restarted = Estop::new(cfg);
+        assert!(restarted.retry_unconfirmed().unwrap().is_err());
+        assert_eq!(restarted.status()["server_confirmed"], false);
+        assert!(restarted.retry_unconfirmed().unwrap().is_ok());
+        assert_eq!(restarted.status()["server_confirmed"], true);
+        assert!(restarted.retry_unconfirmed().is_none(), "confirmed once");
+        for _ in 0..3 {
+            assert!(rx.recv_timeout(Duration::from_secs(2)).is_ok());
+        }
+    }
+
+    #[test]
+    fn nothing_is_repeated_when_it_is_off_released_or_not_configured() {
+        let off = Estop::new(EstopConfig {
+            server_url: Some("http://127.0.0.1:1".into()),
+            retry_server: false,
+            fanout_timeout: Duration::from_millis(300),
+            ..EstopConfig::default()
+        });
+        off.trigger("ana", "r", None);
+        assert!(off.retry_unconfirmed().is_none());
+        assert_eq!(off.status()["server_retry"], false);
+
+        let alone = Estop::new(EstopConfig::default());
+        alone.trigger("ana", "r", None);
+        assert!(alone.retry_unconfirmed().is_none());
+
+        let released = Estop::new(EstopConfig {
+            server_url: Some("http://127.0.0.1:1".into()),
+            fanout_timeout: Duration::from_millis(300),
+            ..EstopConfig::default()
+        });
+        released.trigger("ana", "r", None);
+        assert_eq!(released.status()["server_retry"], true);
+        released.release("admin");
+        assert!(released.retry_unconfirmed().is_none());
+    }
+
+    #[test]
+    fn the_wait_doubles_up_to_the_longest_and_starts_again() {
+        let estop = Estop::new(EstopConfig::default());
+        let failed: Result<(), String> = Err("down".into());
+        let mut wait = Duration::from_secs(1);
+        let mut seen = Vec::new();
+        for _ in 0..7 {
+            wait = estop.next_wait(wait, Some(&failed));
+            seen.push(wait.as_secs());
+        }
+        assert_eq!(seen, [2, 4, 8, 16, 30, 30, 30]);
+        assert_eq!(estop.next_wait(wait, Some(&Ok(()))).as_secs(), 1);
+        assert_eq!(estop.next_wait(wait, None).as_secs(), 1);
     }
 
     #[test]
