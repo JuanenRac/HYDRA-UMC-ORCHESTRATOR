@@ -86,6 +86,10 @@ pub struct AppState {
     /// the receiving end of the events of Job-Dispatcher; `None` leaves the route unknown
     pub job_events: Option<crate::job_events::JobEventsConfig>,
     pub job_event_counters: crate::job_events::JobEventCounters,
+    /// the events already taken, so that a delivery sent again changes nothing
+    pub job_events_seen: Mutex<crate::job_events::SeenEvents>,
+    /// whether the proofs of `POST /replica/takeover` are checked against the acknowledgements of the job-dispatcher
+    pub verify_takeover: bool,
     /// whether `GET /metrics` is open (the `metrics` section of the configuration file)
     pub metrics: bool,
     /// watched node -> robot id (`node_robots` of the configuration file); a node that is not in it is its own robot
@@ -112,6 +116,9 @@ pub struct ServerOptions {
     pub keep_finished: usize,
     /// when set, `POST /replica/takeover` takes a replicated registry over (off by default: the route answers like an unknown one)
     pub takeover: bool,
+    /// when set, the proofs a takeover brings are taken as given even with a job-dispatcher configured (`takeover.verify_with_dispatcher`
+    /// false). Not set (the default): with a job-dispatcher, only a proof it also holds counts
+    pub trust_takeover_proofs: bool,
     /// when set, `POST /nodes/{node}/recover` is only accepted from the holder of a healer lease (off by default: a recovery without a lease
     /// is still accepted while no healer lease is held)
     pub require_healer_lease: bool,
@@ -342,6 +349,8 @@ pub fn run(
         estop: crate::estop::Estop::new(options.estop.clone().unwrap_or_default()),
         job_events: options.job_events.clone(),
         job_event_counters: crate::job_events::JobEventCounters::default(),
+        job_events_seen: Mutex::new(crate::job_events::SeenEvents::default()),
+        verify_takeover: !options.trust_takeover_proofs,
     });
 
     // kept alive until `serve` below returns: dropping the handle would stop the service
@@ -701,6 +710,19 @@ fn handle_job_event(request: tiny_http::Request, state: &AppState, raw: &str) {
         );
         return;
     }
+    if !state
+        .job_events_seen
+        .lock()
+        .unwrap()
+        .take(event.id, event.attempt)
+    {
+        write_json(
+            request,
+            200,
+            &json!({"applied": false, "reason": "this event was already taken"}),
+        );
+        return;
+    }
     if state.estop.engaged() {
         write_json(
             request,
@@ -713,6 +735,10 @@ fn handle_job_event(request: tiny_http::Request, state: &AppState, raw: &str) {
         let mut reg = state.registry.lock().unwrap();
         let outcome = match reg.get_mut(&event.job_id) {
             None => Err("not one of this orchestrator's missions"),
+            // an assignment of an attempt the mission has already left behind (0 = not stated)
+            Some(m) if event.attempt != 0 && event.attempt < m.attempt => {
+                Err("the event is for an earlier attempt of this mission")
+            }
             Some(m) => m
                 .dispatch(event.robot_id.clone())
                 .map_err(|_| "the mission is not pending"),
@@ -1069,9 +1095,27 @@ fn handle_takeover(request: tiny_http::Request, state: &AppState, raw: &str) {
         );
         return;
     }
+    let mut proofs = req.confirmed_stopped;
+    // asked before the registry is locked: the call to the job-dispatcher takes as long as the network does
+    if let Some(url) = state
+        .job_dispatcher_url
+        .as_ref()
+        .filter(|_| state.verify_takeover)
+    {
+        use crate::failover::StopSource;
+        let given = proofs.len();
+        let mut kept = crate::failover::HttpStopProof::new(url, crate::job_dispatcher::token());
+        proofs.retain(|p| kept.confirms_stopped(&p.owner, &p.mission_id, p.attempt));
+        if proofs.len() < given {
+            crate::log_line!(
+                "takeover: {} of {given} proof(s) are not held by the job-dispatcher and do not count",
+                given - proofs.len()
+            );
+        }
+    }
     let report = {
         let mut reg = state.registry.lock().unwrap();
-        crate::replica::takeover(&mut reg, &req.records, &req.confirmed_stopped)
+        crate::replica::takeover(&mut reg, &req.records, &proofs)
     };
     crate::log_line!(
         "takeover: {} adopted ({} requeued on proof, {} unconfirmed), {} already held, {} rejected",
@@ -3849,6 +3893,31 @@ mod tests {
         // posting it again changes nothing: the mission is held now
         let (_, again) = post(port, "/replica/takeover", &takeover_body(proofs));
         assert_eq!(json_of(&again)["existing"][0], "m1");
+    }
+
+    #[test]
+    fn with_a_dispatcher_a_proof_it_does_not_hold_does_not_count() {
+        let _guard = net_test_lock();
+        // nothing listens on this address: no acknowledgement can be read, so no proof counts
+        let nobody = Some("http://127.0.0.1:9".to_string());
+        let proofs = r#"[{"owner":"node-a","mission_id":"m1","attempt":0}]"#;
+        let on = ServerOptions {
+            takeover: true,
+            ..ServerOptions::default()
+        };
+        let port = start_test_server_with(nobody.clone(), on.clone());
+        let (status, body) = post(port, "/replica/takeover", &takeover_body(proofs));
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(json_of(&body)["unconfirmed"][0], "m1");
+
+        let trusting = ServerOptions {
+            trust_takeover_proofs: true,
+            ..on
+        };
+        let port = start_test_server_with(nobody, trusting);
+        let (status, body) = post(port, "/replica/takeover", &takeover_body(proofs));
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(json_of(&body)["requeued"][0], "m1");
     }
 
     #[test]
