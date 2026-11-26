@@ -419,6 +419,7 @@ fn run_serve(args: &[String]) -> bool {
                     swarm_push,
                     estop: Some(estop_config),
                     job_events: job_events_config,
+                    trust_takeover_proofs: config::trust_takeover_proofs(&file_config),
                     health_grpc: health_grpc_config,
                     metrics: config::metrics_enabled(&file_config),
                     node_robots,

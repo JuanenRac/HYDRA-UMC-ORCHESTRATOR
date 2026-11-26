@@ -260,6 +260,11 @@ fn is_zero(value: &u32) -> bool {
     *value == 0
 }
 
+/// The token set with `set_token`, for a client of the job-dispatcher built elsewhere.
+pub fn token() -> Option<String> {
+    TOKEN.get().cloned()
+}
+
 pub fn set_token(token: String) {
     let _ = TOKEN.set(token);
 }

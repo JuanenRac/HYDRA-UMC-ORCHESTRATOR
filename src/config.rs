@@ -24,6 +24,7 @@ pub struct FileConfig {
     pub job_events: Option<JobEventsSection>,
     pub health_grpc: Option<HealthGrpcSection>,
     pub metrics: Option<MetricsSection>,
+    pub takeover: Option<TakeoverSection>,
     /// The watched node (the name NODE-HEALING dials, usually a service) -> the robot id the missions were dispatched with. Without it a node is its own robot.
     pub node_robots: Option<std::collections::BTreeMap<String, String>>,
 }
@@ -40,6 +41,20 @@ pub struct MetricsSection {
 /// Whether the configuration opens `GET /metrics` (off by default).
 pub fn metrics_enabled(file: &FileConfig) -> bool {
     file.metrics.as_ref().is_some_and(|s| s.enabled)
+}
+
+/// The "takeover" section: how `POST /replica/takeover` (switched on with `--takeover`) treats the proofs it receives.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TakeoverSection {
+    pub verify_with_dispatcher: Option<bool>,
+}
+
+/// Whether a takeover takes its proofs as given: only when the configuration says `verify_with_dispatcher: false`.
+pub fn trust_takeover_proofs(file: &FileConfig) -> bool {
+    file.takeover
+        .as_ref()
+        .is_some_and(|s| s.verify_with_dispatcher == Some(false))
 }
 
 /// The longest name of a node or a robot the table accepts.
@@ -287,6 +302,17 @@ mod tests {
         assert!(estop.server_url.is_none() && estop.admin_token.is_none());
         assert!(estop.state_file.is_some(), "the latch is saved by default");
         assert!(build(&parse("{}").unwrap(), "data").unwrap().1.is_none());
+    }
+
+    #[test]
+    fn takeover_proofs_are_verified_unless_the_file_says_otherwise() {
+        assert!(!trust_takeover_proofs(&parse("{}").unwrap()));
+        assert!(!trust_takeover_proofs(
+            &parse(r#"{"takeover":{}}"#).unwrap()
+        ));
+        let off = parse(r#"{"takeover":{"verify_with_dispatcher":false}}"#).unwrap();
+        assert!(trust_takeover_proofs(&off));
+        assert!(parse(r#"{"takeover":{"verify":false}}"#).is_err());
     }
 
     #[test]

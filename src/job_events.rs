@@ -105,6 +105,29 @@ impl JobEventCounters {
     }
 }
 
+/// How many accepted events are remembered, to refuse one that is delivered again.
+pub const REMEMBERED_EVENTS: usize = 1024;
+
+/// The last `(id, attempt)` pairs of the events taken, oldest first. A signed delivery stays valid for as long as the clock skew allows, so
+/// a captured one could be sent again; the pair includes the attempt, so a dispatcher that restarts its ids is not confused with a replay of
+/// an earlier assignment of another attempt. Kept in memory: a restart of this process forgets it.
+#[derive(Debug, Default)]
+pub struct SeenEvents(std::collections::VecDeque<(u64, u32)>);
+
+impl SeenEvents {
+    /// Remembers the pair; `false` when it was already there.
+    pub fn take(&mut self, id: u64, attempt: u32) -> bool {
+        if self.0.contains(&(id, attempt)) {
+            return false;
+        }
+        if self.0.len() == REMEMBERED_EVENTS {
+            self.0.pop_front();
+        }
+        self.0.push_back((id, attempt));
+        true
+    }
+}
+
 /// Checks the signature and the age of a delivery and parses it.
 pub fn verify(
     config: &JobEventsConfig,
@@ -240,6 +263,21 @@ mod tests {
             verify(&config(), Some("5"), Some(&signed("5", junk)), junk, 5).unwrap_err(),
             Refusal::BadBody(_)
         ));
+    }
+
+    #[test]
+    fn an_event_is_taken_once_and_only_the_last_ones_are_remembered() {
+        let mut seen = SeenEvents::default();
+        assert!(seen.take(1, 1));
+        assert!(!seen.take(1, 1));
+        assert!(
+            seen.take(1, 2),
+            "the same id for another attempt is another event"
+        );
+        for id in 0..REMEMBERED_EVENTS as u64 {
+            assert!(seen.take(100 + id, 1));
+        }
+        assert!(seen.take(1, 1), "the oldest pair was forgotten");
     }
 
     #[test]
