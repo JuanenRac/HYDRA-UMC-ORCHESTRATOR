@@ -1,0 +1,39 @@
+# =============================================================================
+# HYDRA-UMC - Static analysis of the workflows
+# Copyright (C) 2026 JuanenRac (Electro Hobby 3D) <electrohobby3d@gmail.com>
+# GPL-3.0-or-later - see LICENSE
+# =============================================================================
+# Calls the shared reusable workflow (zizmor), pinned by its full commit SHA.
+# Only findings of high severity fail the job.
+
+name: zizmor
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/**"
+      - ".github/actions/**"
+      - ".github/zizmor.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/**"
+      - ".github/actions/**"
+      - ".github/zizmor.yml"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: zizmor-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  zizmor:
+    name: zizmor
+    permissions:
+      contents: read
+    uses: JuanenRac/JuanenRac/.github/workflows/zizmor.yml@4609932f4333e76a4e08d513abc62e37cafafc65 # main
+    with:
+      min-severity: high
