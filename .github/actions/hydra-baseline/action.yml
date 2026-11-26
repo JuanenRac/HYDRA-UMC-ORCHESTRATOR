@@ -214,7 +214,7 @@ runs:
     - name: Set up Flutter from its repository
       if: ${{ hashFiles('pubspec.yaml') != '' && inputs.slow != 'false' }}
       shell: bash
-      run: |
+      run: | # zizmor: ignore[github-env] the only entry added to GITHUB_PATH is a fixed directory under RUNNER_TEMP that this step clones
         git clone --depth 1 --branch 3.47.9 https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
         echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
     - name: Validate Flutter project
