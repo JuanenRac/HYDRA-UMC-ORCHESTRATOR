@@ -101,6 +101,12 @@ pub struct EstopSection {
     pub fanout_timeout_seconds: Option<f64>,
     /// environment variable with the token of the administrator, the only one that may release the stop
     pub admin_token_env: Option<String>,
+    /// repeat the call to the server while it has not confirmed an engaged stop (default true)
+    pub retry_server: Option<bool>,
+    /// the first wait of that repetition in seconds (default 1); it doubles after each failure
+    pub retry_initial_seconds: Option<f64>,
+    /// the longest wait between two repetitions in seconds (default 30)
+    pub retry_max_seconds: Option<f64>,
 }
 
 /// The "job_events" section: off unless enabled.
@@ -181,6 +187,31 @@ pub fn build(
                 );
             }
             estop.fanout_timeout = Duration::from_secs_f64(seconds);
+        }
+        estop.retry_server = section.retry_server.unwrap_or(true);
+        for (name, value, target) in [
+            (
+                "estop.retry_initial_seconds",
+                section.retry_initial_seconds,
+                &mut estop.retry_initial,
+            ),
+            (
+                "estop.retry_max_seconds",
+                section.retry_max_seconds,
+                &mut estop.retry_max,
+            ),
+        ] {
+            if let Some(seconds) = value {
+                if !(0.1..=3600.0).contains(&seconds) {
+                    return Err(format!("{name} must be between 0.1 and 3600"));
+                }
+                *target = Duration::from_secs_f64(seconds);
+            }
+        }
+        if estop.retry_max < estop.retry_initial {
+            return Err(
+                "estop.retry_max_seconds must not be below estop.retry_initial_seconds".into(),
+            );
         }
     }
     let job_events = match &file.job_events {
@@ -331,6 +362,26 @@ mod tests {
         assert!(build(&file, "data").is_err());
         let off = parse(r#"{"job_events":{"enabled":false}}"#).unwrap();
         assert!(build(&off, "data").unwrap().1.is_none());
+    }
+
+    #[test]
+    fn the_repetition_of_the_stop_is_on_by_default_and_its_waits_are_checked() {
+        let (estop, _) = build(&parse(r#"{"estop":{}}"#).unwrap(), "data").unwrap();
+        assert!(estop.retry_server);
+        assert_eq!(estop.retry_initial, Duration::from_secs(1));
+        assert_eq!(estop.retry_max, Duration::from_secs(30));
+        let given =
+            r#"{"estop":{"retry_server":false,"retry_initial_seconds":2,"retry_max_seconds":60}}"#;
+        let (estop, _) = build(&parse(given).unwrap(), "data").unwrap();
+        assert!(!estop.retry_server);
+        assert_eq!(estop.retry_max, Duration::from_secs(60));
+        for bad in [
+            r#"{"estop":{"retry_initial_seconds":0}}"#,
+            r#"{"estop":{"retry_max_seconds":7200}}"#,
+            r#"{"estop":{"retry_initial_seconds":10,"retry_max_seconds":5}}"#,
+        ] {
+            assert!(build(&parse(bad).unwrap(), "data").is_err(), "{bad}");
+        }
     }
 
     #[test]

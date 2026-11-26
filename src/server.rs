@@ -373,6 +373,12 @@ pub fn run(
         crate::swarm_push::spawn(Arc::clone(&state.registry), config);
     }
 
+    // a global stop the server has not confirmed (it was down, or the process restarted) is asked again until it does
+    if state.estop.retries_server() {
+        let shared = Arc::clone(&state);
+        thread::spawn(move || shared.estop.run_retries());
+    }
+
     if keep_finished > 0 {
         let registry = Arc::clone(&state.registry);
         thread::spawn(move || loop {

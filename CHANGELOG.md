@@ -4,6 +4,7 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+- **A global stop the server did not confirm is asked again until it does:** while the latch is engaged and `POST /api/stop-all` has not succeeded, also after a restart, the call is repeated in the background with a wait that doubles from 1 s to 30 s (`estop.retry_server`, on by default; `estop.retry_initial_seconds`, `estop.retry_max_seconds`). `GET /estop` says `server_retry`. Unit tests.
 - **A takeover checks its proofs with the job dispatcher, and a job event is taken once:** with a job dispatcher configured, `POST /replica/takeover` counts only the stop proofs the dispatcher also holds (`takeover.verify_with_dispatcher`, on by default; a mission without one stays `Unknown`). A signed event delivered again (same `id` and `attempt`, last 1024) changes nothing, and neither does an assignment of an attempt the mission has left behind. Unit and route tests.
 - **The Rust toolchain of the build is 1.88.0, and the gRPC libraries move to their newest patch:** the pinned compiler of the workflows and the minimum Rust version of the crate go from 1.85 to 1.88.
 - **The HTTP client library moves to its third major version:** the calls to the job dispatcher, the primary, the swarm-sync node and the server go through one small client layer that keeps what the callers rely on (no proxy from the environment, a connect and a total timeout, a status of 400 or more as an error that still carries its body).
