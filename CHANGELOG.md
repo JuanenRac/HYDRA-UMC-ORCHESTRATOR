@@ -2,6 +2,10 @@
 
 All notable changes to this project are documented here.
 
+## [Unreleased]
+
+- **The program installs on the CM5 again:** it is built with Rust 1.85, the compiler of Debian trixie that the installer uses on the device. The gRPC libraries go back to the last release that builds with 1.85 (tonic 0.14.5); the minimum Rust version of the crate is 1.85 again and CI builds and tests with it.
+
 ## [0.2.8] - Confirmed global stop, takeover proofs checked and secret files with a byte order mark
 
 - **Key and token files saved with a byte order mark are read:** a file written by an editor of Windows as "UTF-8 with BOM" kept the mark in front of the secret, so the tokens of the server were refused. The mark is dropped now; a file in another encoding (UTF-16) is refused.

@@ -30,9 +30,9 @@ jobs:
         with:
           persist-credentials: false
       - name: Set up Rust
-        uses: dtolnay/rust-toolchain@5445741acf05630efa19e221cc588ebe0842b13d # 1.88.0
+        uses: dtolnay/rust-toolchain@33280e014b87ec2afd73c872fdd38a9ebebf4df9 # 1.85.1
         with:
-          toolchain: 1.88.0
+          toolchain: 1.85.1
           components: llvm-tools-preview
       - name: Cache the Cargo registry and the build directory
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
