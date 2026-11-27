@@ -37,7 +37,11 @@ impl Identity {
 pub fn load_identity_key(path: &str) -> Result<Vec<u8>, String> {
     let raw = std::fs::read_to_string(path)
         .map_err(|_| "cannot read the identity key file".to_string())?;
-    let key = raw.trim();
+    // A byte order mark (an editor of Windows) is not part of the key; UTF-16 with no mark shows as NULs and is refused.
+    let key = raw.trim_start_matches('\u{feff}').trim();
+    if key.contains('\0') {
+        return Err("cannot read the identity key file".to_string());
+    }
     if key.len() < MIN_KEY_LENGTH {
         return Err(format!(
             "the identity key must have at least {MIN_KEY_LENGTH} characters"
@@ -271,5 +275,20 @@ mod tests {
         assert!(!error.contains("too-short"));
         assert!(load_identity_key(dir.join("missing.key").to_str().unwrap()).is_err());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_byte_order_mark_is_not_part_of_the_key() {
+        let path = std::env::temp_dir().join(format!("identity-bom-{}.key", std::process::id()));
+        let key = "k".repeat(MIN_KEY_LENGTH);
+        std::fs::write(&path, format!("\u{feff}{key}\r\n")).unwrap();
+        assert_eq!(
+            load_identity_key(path.to_str().unwrap()).unwrap(),
+            key.as_bytes()
+        );
+        let wide: Vec<u8> = key.encode_utf16().flat_map(u16::to_le_bytes).collect();
+        std::fs::write(&path, wide).unwrap();
+        assert!(load_identity_key(path.to_str().unwrap()).is_err());
+        let _ = std::fs::remove_file(&path);
     }
 }
