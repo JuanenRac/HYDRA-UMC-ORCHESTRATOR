@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented here.
 
-## [Unreleased]
+## [0.2.9] - Built again with the Rust compiler of the CM5
 
 - **The program installs on the CM5 again:** it is built with Rust 1.85, the compiler of Debian trixie that the installer uses on the device. The gRPC libraries go back to the last release that builds with 1.85 (tonic 0.14.5); the minimum Rust version of the crate is 1.85 again and CI builds and tests with it.
 
