@@ -416,14 +416,14 @@ def check_file(name: str, language: str, readme: Readme, english: Readme | None)
 
 def run_tests(root: Path) -> int | None:
     """The number of tests that the repository's own suite reports, or None when it cannot be found out here."""
-    environment = dict(os.environ, PYTHONPATH=os.pathsep.join(str(p) for p in (root / "src", root) if p.exists()))
+    environment = dict(os.environ, PYTHONPATH=os.pathsep.join(str(p) for p in (root / "src", root) if p.exists()), PYTHONIOENCODING="utf-8")
     candidates = []
     if (root / "tests").is_dir():
         candidates.append(([sys.executable, "-m", "unittest", "discover", "-s", "tests"], r"Ran (\d+) tests?"))
         candidates.append(([sys.executable, "-m", "pytest", "-q", "tests"], r"(\d+) passed"))
     for command, pattern in candidates:
         try:
-            result = subprocess.run(command, cwd=root, env=environment, capture_output=True, text=True, timeout=1800, check=False)
+            result = subprocess.run(command, cwd=root, env=environment, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=1800, check=False)
         except (OSError, subprocess.TimeoutExpired):
             continue
         match = re.search(pattern, result.stderr + result.stdout)

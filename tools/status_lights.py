@@ -112,7 +112,7 @@ def has_ci(root: Path) -> bool:
 def ci_state(root: Path) -> str:
     """'green', 'red' or 'unknown' from the last completed run of the default branch (needs gh)."""
     try:
-        out = subprocess.run(["gh", "run", "list", "--limit", "5", "--json", "conclusion,status,headBranch"], cwd=root, capture_output=True, text=True, timeout=60)
+        out = subprocess.run(["gh", "run", "list", "--limit", "5", "--json", "conclusion,status,headBranch"], cwd=root, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
         runs = [r for r in json.loads(out.stdout or "[]") if r.get("status") == "completed" and r.get("headBranch") in ("main", "master")]
     except (OSError, subprocess.SubprocessError, json.JSONDecodeError):
         return "unknown"
