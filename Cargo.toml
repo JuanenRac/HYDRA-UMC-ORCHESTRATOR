@@ -2,7 +2,10 @@
 name = "hydra-umc-orchestrator"
 version = "0.2.8"
 edition = "2021"
-rust-version = "1.88"
+# The CM5 (Raspberry Pi OS trixie) compiles this program on the device with the rustc of Debian, 1.85.
+# Do not raise this number (or lock a library that needs a newer one) without upgrading the CM5 first;
+# the CI job "Build with Rust 1.85.1" fails if the lock file needs more.
+rust-version = "1.85"
 description = "Distributed system manager for multi-robot swarm coordination across the HYDRA-UMC ecosystem."
 license = "GPL-3.0-or-later"
 authors = ["JuanenRac (Electro Hobby 3D) <electrohobby3d@gmail.com>"]
