@@ -4,6 +4,7 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+- **Key and token files saved with a byte order mark are read:** a file written by an editor of Windows as "UTF-8 with BOM" kept the mark in front of the secret, so the tokens of the server were refused. The mark is dropped now; a file in another encoding (UTF-16) is refused.
 - **A global stop the server did not confirm is asked again until it does:** while the latch is engaged and `POST /api/stop-all` has not succeeded, also after a restart, the call is repeated in the background with a wait that doubles from 1 s to 30 s (`estop.retry_server`, on by default; `estop.retry_initial_seconds`, `estop.retry_max_seconds`). `GET /estop` says `server_retry`. Unit tests.
 - **A takeover checks its proofs with the job dispatcher, and a job event is taken once:** with a job dispatcher configured, `POST /replica/takeover` counts only the stop proofs the dispatcher also holds (`takeover.verify_with_dispatcher`, on by default; a mission without one stays `Unknown`). A signed event delivered again (same `id` and `attempt`, last 1024) changes nothing, and neither does an assignment of an attempt the mission has left behind. Unit and route tests.
 - **The Rust toolchain of the build is 1.88.0, and the gRPC libraries move to their newest patch:** the pinned compiler of the workflows and the minimum Rust version of the crate go from 1.85 to 1.88.
