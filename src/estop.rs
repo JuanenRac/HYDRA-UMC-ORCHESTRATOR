@@ -721,6 +721,37 @@ mod tests {
     }
 
     #[test]
+    fn a_hold_that_was_not_confirmed_is_asked_again_until_it_is() {
+        let dir = std::env::temp_dir().join(format!("orch-estop-hold-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("estop.json");
+        // a stop saved before the dispatcher confirmed anything (a file of an earlier version has no such field)
+        std::fs::write(
+            &path,
+            r#"{"engaged":true,"by":"ana","reason":"r","since_ms":1,"server_confirmed":true,"triggers":1}"#,
+        )
+        .unwrap();
+        let down = Estop::new(EstopConfig {
+            state_file: Some(path.clone()),
+            hold_url: Some("http://127.0.0.1:1".into()),
+            fanout_timeout: Duration::from_millis(300),
+            ..EstopConfig::default()
+        });
+        assert!(down.retry_hold().unwrap().is_err());
+        assert_eq!(down.status()["dispatcher_held"], false);
+        let (url, _rx) = fake_server("200 OK");
+        let up = Estop::new(EstopConfig {
+            state_file: Some(path),
+            hold_url: Some(url),
+            ..EstopConfig::default()
+        });
+        assert!(up.retry_hold().unwrap().is_ok());
+        assert_eq!(up.status()["dispatcher_held"], true);
+        assert!(up.retry_hold().is_none(), "nothing left to repeat");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn without_a_dispatcher_address_the_answers_are_the_ones_of_before() {
         let estop = Estop::new(EstopConfig::default());
         let out = estop.trigger("ana", "r", None);

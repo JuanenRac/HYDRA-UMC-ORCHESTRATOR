@@ -357,6 +357,21 @@ mod tests {
     }
 
     #[test]
+    fn the_hold_of_the_dispatcher_takes_an_http_address_and_is_off_without_one() {
+        let (estop, _) = build(&parse(r#"{"estop":{}}"#).unwrap(), "data").unwrap();
+        assert!(estop.hold_url.is_none() && estop.hold_token.is_none());
+        let given = r#"{"estop":{"hold_dispatcher_url":"http://127.0.0.1:18090"}}"#;
+        let (estop, _) = build(&parse(given).unwrap(), "data").unwrap();
+        assert_eq!(estop.hold_url.as_deref(), Some("http://127.0.0.1:18090"));
+        for wrong in [
+            r#"{"estop":{"hold_dispatcher_url":"ftp://x"}}"#,
+            r#"{"estop":{"hold_dispatcher_token_env":"HYDRA_TEST_NOT_SET_ANYWHERE"}}"#,
+        ] {
+            assert!(build(&parse(wrong).unwrap(), "data").is_err(), "{wrong}");
+        }
+    }
+
+    #[test]
     fn a_misspelt_field_is_an_error() {
         assert!(parse(r#"{"estopp":{}}"#).is_err());
         assert!(parse(r#"{"job_events":{"enabeld":true}}"#).is_err());
