@@ -98,6 +98,9 @@ pub struct EstopSection {
     /// base URL of HYDRA-UMC-SERVER; the stop is forwarded to its POST /api/stop-all
     pub server_url: Option<String>,
     pub server_token_env: Option<String>,
+    /// base URL of HYDRA-UMC-JOB-DISPATCHER; a stop also holds its assignments (POST /dispatch/hold). Not set by default.
+    pub hold_dispatcher_url: Option<String>,
+    pub hold_dispatcher_token_env: Option<String>,
     pub fanout_timeout_seconds: Option<f64>,
     /// environment variable with the token of the administrator, the only one that may release the stop
     pub admin_token_env: Option<String>,
@@ -179,6 +182,13 @@ pub fn build(
             estop.server_url = Some(url.clone());
         }
         estop.server_token = env_value(&section.server_token_env)?;
+        if let Some(url) = &section.hold_dispatcher_url {
+            if !(url.starts_with("http://") || url.starts_with("https://")) {
+                return Err("estop.hold_dispatcher_url must start with http:// or https://".into());
+            }
+            estop.hold_url = Some(url.clone());
+        }
+        estop.hold_token = env_value(&section.hold_dispatcher_token_env)?;
         estop.admin_token = env_value(&section.admin_token_env)?;
         if let Some(seconds) = section.fanout_timeout_seconds {
             if !(seconds > 0.0 && seconds <= 60.0) {

@@ -374,7 +374,7 @@ pub fn run(
     }
 
     // a global stop the server has not confirmed (it was down, or the process restarted) is asked again until it does
-    if state.estop.retries_server() {
+    if state.estop.retries_server() || state.estop.retries_hold() {
         let shared = Arc::clone(&state);
         thread::spawn(move || shared.estop.run_retries());
     }
