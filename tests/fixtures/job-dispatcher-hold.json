@@ -1,0 +1,41 @@
+{
+  "note": "The global hold of assignments of HYDRA-UMC-JOB-DISPATCHER and the call of HYDRA-UMC-ORCHESTRATOR when its global stop engages. The origin is HYDRA-UMC-SDK (conformance/fixtures/v1/job-dispatcher-hold.json); both programs hold byte copies and compare what they send or answer with it. The routes exist only with the hold switched on (404 otherwise). Nothing here releases a hold on its own: releasing is a separate, explicit act.",
+  "version": 1,
+  "hold": {
+    "method": "POST",
+    "path": "/dispatch/hold",
+    "authorization": "Bearer",
+    "status": 200,
+    "response": {
+      "held": true
+    }
+  },
+  "state": {
+    "method": "GET",
+    "path": "/dispatch/hold",
+    "authorization": "Bearer",
+    "status": 200,
+    "response": {
+      "held": false
+    }
+  },
+  "release": {
+    "method": "POST",
+    "path": "/dispatch/release",
+    "authorization": "Bearer",
+    "status": 200,
+    "response": {
+      "held": false
+    }
+  },
+  "dispatchWhileHeld": {
+    "method": "POST",
+    "path": "/dispatch",
+    "status": 423
+  },
+  "refusals": {
+    "switchedOff": 404,
+    "releaseWithoutRight": 403,
+    "notSaved": 503
+  }
+}

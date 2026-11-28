@@ -27,6 +27,10 @@
 //! The latch also asks HYDRA-UMC-SERVER to stop every robot (`POST /api/stop-all`), which is the
 //! part that announces the retained stop on the MQTT bridge when that option is on there.
 //! Releasing here does not release the server: its stop is rearmed explicitly on its own side.
+//!
+//! With `estop.hold_dispatcher_url` (not set by default) the latch also asks HYDRA-UMC-JOB-DISPATCHER to hold its assignments
+//! (`POST /dispatch/hold`), at the same time as the server is called, so the queue hands no job to a robot either. It is
+//! repeated like the call to the server until the dispatcher confirms it. Releasing here never releases the dispatcher.
 
 use std::io::Write;
 use std::path::PathBuf;
@@ -51,6 +55,9 @@ pub struct EstopConfig {
     /// base URL of HYDRA-UMC-SERVER; the stop is forwarded to `<url>/api/stop-all` (None: not forwarded)
     pub server_url: Option<String>,
     pub server_token: Option<String>,
+    /// base URL of HYDRA-UMC-JOB-DISPATCHER; its assignments are held at `<url>/dispatch/hold` (None: not asked)
+    pub hold_url: Option<String>,
+    pub hold_token: Option<String>,
     pub fanout_timeout: Duration,
     /// the token that may release the stop; without it the general token (or none) decides
     pub admin_token: Option<String>,
@@ -69,6 +76,8 @@ impl Default for EstopConfig {
             audit_file: None,
             server_url: None,
             server_token: None,
+            hold_url: None,
+            hold_token: None,
             fanout_timeout: Duration::from_secs(3),
             admin_token: None,
             retry_server: true,
@@ -88,6 +97,9 @@ struct Latch {
     server_confirmed: bool,
     /// how many times a stop was asked for while engaged, the first one included
     triggers: u64,
+    /// the job dispatcher confirmed it holds its assignments (only asked with `hold_url`)
+    #[serde(default)]
+    dispatcher_held: bool,
 }
 
 pub struct Estop {
@@ -126,6 +138,7 @@ impl Estop {
                             since_ms: crate::logging::now_ms(),
                             server_confirmed: false,
                             triggers: 1,
+                            dispatcher_held: false,
                         };
                     }
                 },
@@ -142,6 +155,7 @@ impl Estop {
                         since_ms: crate::logging::now_ms(),
                         server_confirmed: false,
                         triggers: 1,
+                        dispatcher_held: false,
                     };
                 }
             }
@@ -211,7 +225,7 @@ impl Estop {
 
     pub fn status(&self) -> Value {
         let latch = self.lock();
-        json!({
+        let mut status = json!({
             "engaged": latch.engaged,
             "by": latch.by,
             "reason": latch.reason,
@@ -220,7 +234,11 @@ impl Estop {
             "server_configured": self.cfg.server_url.is_some(),
             "server_retry": self.retries_server(),
             "triggers": latch.triggers,
-        })
+        });
+        if self.cfg.hold_url.is_some() {
+            status["dispatcher_held"] = Value::Bool(latch.dispatcher_held);
+        }
+        status
     }
 
     /// Engages the stop. `affected` is what the caller could read of the missions that were moving (informative only).
@@ -235,6 +253,7 @@ impl Estop {
         };
         let reason = clean(reason, MAX_REASON);
         let need_forward;
+        let need_hold;
         let snapshot;
         {
             let mut latch = self.lock();
@@ -245,13 +264,17 @@ impl Estop {
                 latch.reason = reason.clone();
                 latch.since_ms = crate::logging::now_ms();
                 latch.server_confirmed = false;
+                latch.dispatcher_held = false;
                 latch.triggers = 0;
             }
             latch.triggers += 1;
             need_forward = self.cfg.server_url.is_some() && !latch.server_confirmed;
+            need_hold = self.cfg.hold_url.is_some() && !latch.dispatcher_held;
             snapshot = latch.clone();
             self.save(&latch);
         }
+        // asked before the server is waited for, so neither of the two delays the other
+        let hold = if need_hold { self.ask_hold() } else { None };
         let server = if need_forward {
             let outcome = self.forward_to_server();
             if outcome.is_ok() {
@@ -268,20 +291,34 @@ impl Estop {
         } else {
             "not_configured".to_string()
         };
+        let dispatcher = self.cfg.hold_url.as_ref().map(|_| match hold {
+            Some(pending) => match self.wait_for(pending, "the job dispatcher") {
+                Ok(()) => {
+                    let mut latch = self.lock();
+                    latch.dispatcher_held = true;
+                    self.save(&latch);
+                    "held".to_string()
+                }
+                Err(e) => format!("failed: {e}"),
+            },
+            None => "already_held".to_string(),
+        });
         let repeat = was_engaged || !snapshot.engaged || snapshot.triggers > 1;
-        self.audit(
-            if repeat { "estop_repeat" } else { "estop" },
-            &by,
-            json!({"reason": reason, "server": server, "affected_missions": affected}),
-        );
-        json!({
+        let mut record = json!({"reason": reason, "server": server, "affected_missions": affected});
+        let mut answer = json!({
             "engaged": true,
             "already_engaged": repeat,
             "by": snapshot.by,
             "since_ms": snapshot.since_ms,
             "server": server,
             "affected_missions": affected,
-        })
+        });
+        if let Some(dispatcher) = dispatcher {
+            record["dispatcher"] = Value::String(dispatcher.clone());
+            answer["dispatcher"] = Value::String(dispatcher);
+        }
+        self.audit(if repeat { "estop_repeat" } else { "estop" }, &by, record);
+        answer
     }
 
     /// Ends the stop. The caller has already checked that the requester is an administrator.
@@ -346,6 +383,41 @@ impl Estop {
         Some(outcome)
     }
 
+    /// True when a hold the job dispatcher has not confirmed is repeated in the background.
+    pub fn retries_hold(&self) -> bool {
+        self.cfg.retry_server && self.cfg.hold_url.is_some()
+    }
+
+    /// One more hold for a stop that is engaged and that the dispatcher has not confirmed; `None` when there is nothing to repeat.
+    pub fn retry_hold(&self) -> Option<Result<(), String>> {
+        if !self.retries_hold() {
+            return None;
+        }
+        let since = {
+            let latch = self.lock();
+            if !latch.engaged || latch.dispatcher_held {
+                return None;
+            }
+            latch.since_ms
+        };
+        let outcome = self.wait_for(self.ask_hold()?, "the job dispatcher");
+        if outcome.is_ok() {
+            let held = {
+                let mut latch = self.lock();
+                let same = latch.engaged && latch.since_ms == since && !latch.dispatcher_held;
+                if same {
+                    latch.dispatcher_held = true;
+                    self.save(&latch);
+                }
+                same
+            };
+            if held {
+                self.audit("dispatcher_held", "retry", json!({}));
+            }
+        }
+        Some(outcome)
+    }
+
     /// The wait before the next repetition: the first wait again once there is nothing pending or the server answered, twice the last one (up to the longest) after a failure.
     fn next_wait(&self, last: Duration, outcome: Option<&Result<(), String>>) -> Duration {
         match outcome {
@@ -360,6 +432,7 @@ impl Estop {
         let mut failing = false;
         loop {
             std::thread::sleep(wait);
+            let held = self.retry_hold();
             let outcome = self.retry_unconfirmed();
             match &outcome {
                 Some(Err(e)) => {
@@ -370,7 +443,11 @@ impl Estop {
                 }
                 _ => failing = false,
             }
-            wait = self.next_wait(wait, outcome.as_ref());
+            // a hold that keeps failing is asked again with the same growing wait as the server
+            wait = match (&outcome, &held) {
+                (None, Some(held)) => self.next_wait(wait, Some(held)),
+                _ => self.next_wait(wait, outcome.as_ref()),
+            };
         }
     }
 
@@ -384,7 +461,24 @@ impl Estop {
             return Ok(());
         };
         let url = format!("{}/api/stop-all", base.trim_end_matches('/'));
-        let token = self.cfg.server_token.clone();
+        let pending = self.post_aside(url, self.cfg.server_token.clone(), "the server");
+        self.wait_for(pending, "the server")
+    }
+
+    /// Starts the hold of the job dispatcher; `None` when none is configured.
+    fn ask_hold(&self) -> Option<mpsc::Receiver<Result<(), String>>> {
+        let base = self.cfg.hold_url.as_ref()?;
+        let url = format!("{}/dispatch/hold", base.trim_end_matches('/'));
+        Some(self.post_aside(url, self.cfg.hold_token.clone(), "the job dispatcher"))
+    }
+
+    /// One POST on its own thread, with the short timeout of the stop.
+    fn post_aside(
+        &self,
+        url: String,
+        token: Option<String>,
+        who: &'static str,
+    ) -> mpsc::Receiver<Result<(), String>> {
         let timeout = self.cfg.fanout_timeout;
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
@@ -398,14 +492,22 @@ impl Estop {
             }
             let result = match request.send_string("{}") {
                 Ok(_) => Ok(()),
-                Err(http::Error::Status(code, _)) => Err(format!("the server answered {code}")),
-                Err(e) => Err(format!("the server could not be reached: {e}")),
+                Err(http::Error::Status(code, _)) => Err(format!("{who} answered {code}")),
+                Err(e) => Err(format!("{who} could not be reached: {e}")),
             };
             let _ = tx.send(result);
         });
-        match rx.recv_timeout(timeout + Duration::from_millis(500)) {
+        rx
+    }
+
+    fn wait_for(
+        &self,
+        pending: mpsc::Receiver<Result<(), String>>,
+        who: &str,
+    ) -> Result<(), String> {
+        match pending.recv_timeout(self.cfg.fanout_timeout + Duration::from_millis(500)) {
             Ok(result) => result,
-            Err(_) => Err("the server did not answer in time".to_string()),
+            Err(_) => Err(format!("{who} did not answer in time")),
         }
     }
 }
@@ -565,6 +667,97 @@ mod tests {
         let again = estop.trigger("ana", "r", None);
         assert_eq!(again["server"], "already_confirmed");
         assert!(rx.recv_timeout(Duration::from_millis(300)).is_err());
+    }
+
+    #[test]
+    fn the_dispatcher_is_asked_to_hold_as_the_shared_fixture_says() {
+        let fixture: Value =
+            serde_json::from_str(include_str!("../tests/fixtures/job-dispatcher-hold.json"))
+                .unwrap();
+        let (url, rx) = fake_server("200 OK");
+        let estop = Estop::new(EstopConfig {
+            hold_url: Some(url),
+            hold_token: Some("tok".into()),
+            ..EstopConfig::default()
+        });
+        let out = estop.trigger("ana", "r", None);
+        assert_eq!(out["dispatcher"], "held");
+        assert_eq!(out["server"], "not_configured");
+        let request = rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        let line = format!(
+            "{} {}",
+            fixture["hold"]["method"].as_str().unwrap(),
+            fixture["hold"]["path"].as_str().unwrap()
+        );
+        assert!(request.starts_with(&line), "{request}");
+        assert!(request
+            .to_ascii_lowercase()
+            .contains("authorization: bearer tok"));
+        assert_eq!(estop.status()["dispatcher_held"], true);
+        // already held: a repeat does not call again, and releasing here releases nothing there
+        assert_eq!(
+            estop.trigger("ana", "r", None)["dispatcher"],
+            "already_held"
+        );
+        estop.release("admin");
+        assert!(rx.recv_timeout(Duration::from_millis(300)).is_err());
+    }
+
+    #[test]
+    fn a_dispatcher_that_does_not_hold_never_stops_the_stop() {
+        let (url, _rx) = fake_server("404 Not Found");
+        let estop = Estop::new(EstopConfig {
+            hold_url: Some(url),
+            fanout_timeout: Duration::from_millis(500),
+            ..EstopConfig::default()
+        });
+        let out = estop.trigger("ana", "r", None);
+        assert!(estop.engaged());
+        assert!(
+            out["dispatcher"].as_str().unwrap().starts_with("failed"),
+            "{out}"
+        );
+        assert_eq!(estop.status()["dispatcher_held"], false);
+    }
+
+    #[test]
+    fn a_hold_that_was_not_confirmed_is_asked_again_until_it_is() {
+        let dir = std::env::temp_dir().join(format!("orch-estop-hold-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("estop.json");
+        // a stop saved before the dispatcher confirmed anything (a file of an earlier version has no such field)
+        std::fs::write(
+            &path,
+            r#"{"engaged":true,"by":"ana","reason":"r","since_ms":1,"server_confirmed":true,"triggers":1}"#,
+        )
+        .unwrap();
+        let down = Estop::new(EstopConfig {
+            state_file: Some(path.clone()),
+            hold_url: Some("http://127.0.0.1:1".into()),
+            fanout_timeout: Duration::from_millis(300),
+            ..EstopConfig::default()
+        });
+        assert!(down.retry_hold().unwrap().is_err());
+        assert_eq!(down.status()["dispatcher_held"], false);
+        let (url, _rx) = fake_server("200 OK");
+        let up = Estop::new(EstopConfig {
+            state_file: Some(path),
+            hold_url: Some(url),
+            ..EstopConfig::default()
+        });
+        assert!(up.retry_hold().unwrap().is_ok());
+        assert_eq!(up.status()["dispatcher_held"], true);
+        assert!(up.retry_hold().is_none(), "nothing left to repeat");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn without_a_dispatcher_address_the_answers_are_the_ones_of_before() {
+        let estop = Estop::new(EstopConfig::default());
+        let out = estop.trigger("ana", "r", None);
+        assert!(out.get("dispatcher").is_none());
+        assert!(estop.status().get("dispatcher_held").is_none());
+        assert!(estop.retry_hold().is_none());
     }
 
     #[test]

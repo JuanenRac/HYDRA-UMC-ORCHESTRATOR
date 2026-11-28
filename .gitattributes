@@ -5,3 +5,6 @@
 *.sh text eol=lf
 *.bat text eol=crlf
 *.cmd text eol=crlf
+
+# byte copy of the fixture of HYDRA-UMC-SDK
+tests/fixtures/job-dispatcher-hold.json -text
