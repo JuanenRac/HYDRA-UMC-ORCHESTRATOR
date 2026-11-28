@@ -1,0 +1,26 @@
+{
+  "schema": 1,
+  "files": {
+    ".github/ISSUE_TEMPLATE/bug-report.yml": "9bce49b99885e4a13a2366d4c343022b394785250121d7e060d748bd1c14a3b5",
+    ".github/ISSUE_TEMPLATE/config.yml": "2f9dbf87d5b1546b77a1e4e1a72b13bb8cec81647d3c168166568a1a5db30eb1",
+    ".github/ISSUE_TEMPLATE/documentation.yml": "842e988ffaa140587041f9aa6cec29086df1878b734612c99e2770b7b3bd1c4b",
+    ".github/ISSUE_TEMPLATE/hardware-validation.yml": "b7a91cfbba5b2ddbbcce188114bd0dca2c6b323c6ee1bd22490c58c93bd1b434",
+    ".github/ISSUE_TEMPLATE/improvement.yml": "f94bba6979199d97656d3e521b4f6b28755f0bd29da128230e82c1f02fb463af",
+    ".github/PULL_REQUEST_TEMPLATE.md": "355978d6171e953cc6a7f11bd6bf46dbed43627be64d7ad32bde2c99f5751295",
+    ".github/actions/hydra-baseline/action.yml": "07c7146eeddcab37e3bb5277e811ccd35dec78a15e38add482c05b333242b077",
+    ".github/workflows/dashboard-dispatch.yml": "3d5217a90b7f4ac86004ab73acb3d7b89a840a4c5ab9c60b25a4b701fa301118",
+    "bump_manifest_version.py": "25cc896936eabf025810c2ee4cf81a250e6ef4a64b2d59c789859a7f2b913cb6",
+    "src/service_metrics.rs": "4e4e16c7f75081b71abbc4ab371e6d87d8ad934f129a1126a7a23cf70027ee7d",
+    "tools/_doc_policy.py": "bb3b557498f8d77413868bdf3f8e9a775a2c1fb7119c98aad380f0c72f7b9373",
+    "tools/_readme_parity.py": "4140029bd07366a9aaea57a527bde5b0da342f166d591a60af4b2d2d15d3ed01",
+    "tools/build_test.py": "a94f109778a8b2d7b4628236af11c54b2b548b396d5564ae43349ec1ff35d4bc",
+    "tools/ci_validate.py": "5b00c5b5bd1e86f1140a8a61cb0e012c47178e1fa37a8e2af41296df4f66b878",
+    "tools/hydra_project_tool.py": "ed789839aa5bed60ed59bd481a9c9a6bf8d3f34e21cab341c92edd9d7ff3ec95",
+    "tools/lessons_lint.py": "1b6e941119ca7a3162b9e39cfec6dbcce39accd22231f031a9179adec73e245b",
+    "tools/local_build.py": "b072d6454c7ad52d1b008bc304ee09f518d150dc5095a9419315f25145c6f0e2",
+    "tools/pretty_run.py": "6bf5bc86321529eee6252b858295f8e1f34a5af55a261761a7e2cf636442b004",
+    "tools/status_lights.py": "275bc893d1a561dcbc2ac713d9df2384f61dd0a7b1a15beffb8c1be9f046aaa2",
+    "tools/universal_readme_check.py": "26b7475d528d80c9e697a6f3d0954a96e6344d776f04bc281d9277b3f9afba21",
+    "tools/workflow_hygiene.py": "f381bcba9db3457b11e0875b9567d9b45c83d3403ef1d5c6171de30d7f7dc793"
+  }
+}
